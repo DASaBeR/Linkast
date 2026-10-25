@@ -112,7 +112,8 @@
                 <Border Margin="0,12,0,0" CornerRadius="{StaticResource Linkast.Radius.Preview}" Background="#FF07080F" MinHeight="220"
                         BorderBrush="{DynamicResource Linkast.BorderStrong}" BorderThickness="1" ClipToBounds="True">
                     <Grid>
-                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24">
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24"
+                                    Visibility="{Binding State, Converter={x:Static vm:Converters.NotRunningToVisibility}}">
                             <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE960;" FontSize="30" HorizontalAlignment="Center" Foreground="#FF8993B8" />
                             <TextBlock Text="{Binding StatusText}" Foreground="#FFB5BCD9" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,0" />
                             <TextBlock Foreground="#FF8993B8" FontSize="11" TextAlignment="Center" TextWrapping="Wrap" Margin="0,4,0,0" MaxWidth="320"

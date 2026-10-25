@@ -57,6 +57,10 @@ public static class Converters
     public static IValueConverter RunningToVisibility { get; } = new Lambda(v =>
         v is Core.Camera.CameraState.Running ? Visibility.Visible : Visibility.Collapsed);
 
+    /// <summary>The camera placeholder: hidden while pictures arrive, so it never shows through a removed background.</summary>
+    public static IValueConverter NotRunningToVisibility { get; } = new Lambda(v =>
+        v is Core.Camera.CameraState.Running ? Visibility.Collapsed : Visibility.Visible);
+
     public static IValueConverter NotCircle { get; } = new Lambda(v => v is not Core.Camera.LayerShape.Circle);
 
     public static IValueConverter RoundedToVisibility { get; } = new Lambda(v =>

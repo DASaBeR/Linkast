@@ -29,7 +29,10 @@ internal sealed partial class CameraSession : IAsyncDisposable
     private Task? _run;
     private CameraFormatRequest _request = CameraFormatRequest.Auto;
     private volatile bool _restartRequested;
-    private TaskCompletionSource _failed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private TaskCompletionSource<string> _failed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    // Set when Windows says the camera's driver can't start because something else holds it.
+    private volatile bool _failedBusy;
 
     private MediaCapture? _capture;
     private MediaFrameReader? _reader;
@@ -258,10 +261,10 @@ internal sealed partial class CameraSession : IAsyncDisposable
             ?? throw new CameraOpenException(new StreamError(ErrorCategory.Capture, "camera.disconnected",
                 $"'{Device.Name}' is not connected. Linkast will use it as soon as it returns."), fatal: false);
 
-        _failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _failed = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var shared = false;
         _capture = new MediaCapture();
-        _capture.Failed += (_, e) => _failed.TrySetResult();
+        _capture.Failed += (_, e) => OnCaptureFailed(e);
         try
         {
             await _capture.InitializeAsync(Settings(group, MediaCaptureSharingMode.ExclusiveControl)).AsTask(ct).ConfigureAwait(false);
@@ -277,7 +280,7 @@ internal sealed partial class CameraSession : IAsyncDisposable
             // but the format and hardware controls are locked by the other app.
             _capture.Dispose();
             _capture = new MediaCapture();
-            _capture.Failed += (_, e) => _failed.TrySetResult();
+            _capture.Failed += (_, e) => OnCaptureFailed(e);
             try
             {
                 await _capture.InitializeAsync(Settings(group, MediaCaptureSharingMode.SharedReadOnly)).AsTask(ct).ConfigureAwait(false);
@@ -341,6 +344,19 @@ internal sealed partial class CameraSession : IAsyncDisposable
             : null);
     }
 
+    /// <summary>MF_E_HW_MFT_FAILED_START_STREAMING, and MF_E_VIDEO_RECORDING_DEVICE_PREEMPTED (another app took the camera).</summary>
+    private static readonly uint[] BusyCodes = [0xC00D3704, 0xC00DABE1];
+
+    private void OnCaptureFailed(MediaCaptureFailedEventArgs e)
+    {
+        _failedBusy = BusyCodes.Contains(unchecked((uint)e.Code));
+        _failed.TrySetResult(FailureText(e));
+    }
+
+    /// <summary>Windows' own reason for a camera failure, kept for the log and diagnostics.</summary>
+    private static string FailureText(MediaCaptureFailedEventArgs e) =>
+        $"{e.Message?.Trim()} (0x{unchecked((uint)e.Code):X8})";
+
     private async Task MonitorAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested && !_restartRequested)
@@ -349,7 +365,14 @@ internal sealed partial class CameraSession : IAsyncDisposable
             var done = await Task.WhenAny(_failed.Task, wakeTask).ConfigureAwait(false);
             if (done == _failed.Task)
             {
-                throw new CameraOpenException(new StreamError(ErrorCategory.Capture, "camera.lost", $"'{Device.Name}' stopped working or was unplugged. Retrying…"), fatal: false);
+                // Phone-camera drivers such as Iriun serve one app at a time and report a busy camera as
+                // "no hardware resources" right after starting, rather than as "in use".
+                if (_failedBusy)
+                {
+                    throw InUse(null);
+                }
+
+                throw new CameraOpenException(new StreamError(ErrorCategory.Capture, "camera.lost", $"'{Device.Name}' stopped working or was unplugged. Retrying…", _failed.Task.Result), fatal: false);
             }
 
             ct.ThrowIfCancellationRequested();

@@ -263,11 +263,17 @@ public sealed partial class CameraLayerViewModel : ObservableObject, IAsyncDispo
 
         try
         {
-            var folder = System.IO.Path.Combine(App.DataDirectory, "backgrounds");
+            // A private copy, so moving or editing the original never breaks the background. The folder is
+            // named by content, the file keeps its own name, which is what the panel shows.
+            string hash;
+            using (var stream = System.IO.File.OpenRead(dialog.FileName))
+            {
+                hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream))[..16];
+            }
+
+            var folder = System.IO.Path.Combine(App.DataDirectory, "backgrounds", hash);
             System.IO.Directory.CreateDirectory(folder);
-            using var stream = System.IO.File.OpenRead(dialog.FileName);
-            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream))[..16];
-            var target = System.IO.Path.Combine(folder, hash + System.IO.Path.GetExtension(dialog.FileName).ToLowerInvariant());
+            var target = System.IO.Path.Combine(folder, System.IO.Path.GetFileName(dialog.FileName));
             if (!System.IO.File.Exists(target))
             {
                 System.IO.File.Copy(dialog.FileName, target);
