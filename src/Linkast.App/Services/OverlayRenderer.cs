@@ -13,7 +13,7 @@ namespace Linkast.App.Services;
 /// </summary>
 public static class OverlayRenderer
 {
-    private static readonly Uri LogoUri = new("pack://application:,,,/Assets/linkast-logo.png");
+    private static readonly Uri LogoUri = new("pack://application:,,,/Assets/linkast-transparent.png");
 
     /// <summary>Loads a picture file, or null if it is missing or not a picture.</summary>
     public static BitmapSource? LoadImage(string? path)

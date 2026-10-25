@@ -15,6 +15,7 @@
     <Resource Include="Assets\linkast.ico" />
     <Resource Include="Assets\linkast-logo.png" />
     <Resource Include="Assets\linkast-256.png" />
+    <Resource Include="Assets\linkast-transparent.png" />
   </ItemGroup>
   <!-- Linkast Camera components (tools/build-native.ps1), next to Linkast.exe in vcam\ and never inside
        the single-file bundle: the setup helper copies the DLL from disk. Absent in builds without C++. -->

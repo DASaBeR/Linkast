@@ -219,7 +219,7 @@ public sealed partial class WebcamStudioViewModel
         {
             var background = new LinearGradientBrush(Color.FromRgb(0x1D, 0x1B, 0x48), Color.FromRgb(0x09, 0x0A, 0x1C), 90);
             dc.DrawRectangle(background, null, new Rect(0, 0, w, h));
-            var logo = new BitmapImage(new Uri("pack://application:,,,/Assets/linkast-logo.png"));
+            var logo = new BitmapImage(new Uri("pack://application:,,,/Assets/linkast-transparent.png"));
             dc.DrawImage(logo, new Rect((w - 260) / 2.0, 150, 260, 260));
 
             var face = new Typeface(new FontFamily("Segoe UI Variable Display, Segoe UI"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
