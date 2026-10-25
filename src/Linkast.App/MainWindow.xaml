@@ -50,8 +50,13 @@
                     </Border>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Image Source="{StaticResource BrandAppIcon}" Width="32" Height="32" Margin="0,0,12,0"
-                           RenderOptions.BitmapScalingMode="HighQuality" AutomationProperties.Name="Linkast logo" />
+                    <!-- The app artwork, shown with rounded corners (display only; the file is used as supplied). -->
+                    <Image Source="pack://application:,,,/Assets/linkast-256.png" Width="32" Height="32" Margin="0,0,12,0"
+                           RenderOptions.BitmapScalingMode="HighQuality" AutomationProperties.Name="Linkast logo">
+                        <Image.Clip>
+                            <RectangleGeometry Rect="0,0,32,32" RadiusX="7" RadiusY="7" />
+                        </Image.Clip>
+                    </Image>
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="Linkast" FontFamily="{DynamicResource Linkast.Font.Display}" FontSize="17" FontWeight="Bold" />
                         <TextBlock Text="STREAM  ·  CONNECT  ·  CREATE" FontSize="9.5" Foreground="{DynamicResource Linkast.TextTertiary}" Margin="0,1,0,0" />

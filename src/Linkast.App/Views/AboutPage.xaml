@@ -9,7 +9,7 @@
 
             <Border Style="{StaticResource Linkast.Card}" Padding="18">
                 <StackPanel Orientation="Horizontal">
-                    <Image Source="{StaticResource BrandAppIcon}" Width="88" Height="88" Margin="0,0,18,0"
+                    <Image Source="pack://application:,,,/Assets/linkast-logo.png" Width="96" Height="96" Margin="0,0,18,0"
                            RenderOptions.BitmapScalingMode="HighQuality" AutomationProperties.Name="Linkast logo" />
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="Linkast" FontFamily="{DynamicResource Linkast.Font.Display}" FontSize="{StaticResource Linkast.FontSize.Display}" FontWeight="Bold" />
