@@ -39,7 +39,7 @@
     { "name": "libvpl", "version": "2.17", "git": "https://github.com/intel/libvpl.git", "ref": "v2.17.0" },
     { "name": "libvpx", "version": "v1.16.0-184-g0cfc6da39", "git": "https://github.com/webmproject/libvpx.git", "ref": "0cfc6da39" },
     { "name": "x264", "version": "0.165.3223", "git": "https://code.videolan.org/videolan/x264.git", "count": 3223 },
-    { "name": "x265", "version": "4.3-6-g9ddc216", "git": "https://bitbucket.org/multicoreware/x265_git.git", "ref": "9ddc216" },
+    { "name": "x265", "version": "4.3-6-g9ddc216", "gap": "Commit 9ddc216 is not in the public x265 repository (bitbucket.org/multicoreware/x265_git): checked on 2026-10-25 from GitHub Actions, where the repository cloned but the commit was absent from every branch and tag. Linkast does not use x265; it is only linked into this FFmpeg build. Resolved by building FFmpeg ourselves without it." },
     { "name": "xvidcore", "version": "1.3.7", "url": "https://downloads.xvid.com/downloads/xvidcore-1.3.7.tar.gz", "mirror": "https://deb.debian.org/debian/pool/main/x/xvidcore/xvidcore_1.3.7.orig.tar.bz2" },
     { "name": "zeromq", "version": "4.3.5", "url": "https://github.com/zeromq/libzmq/releases/download/v4.3.5/zeromq-4.3.5.tar.gz" },
     { "name": "zimg", "version": "release-3.0.6-252-gf6cc75a", "git": "https://github.com/sekrit-twc/zimg.git", "ref": "f6cc75a" }

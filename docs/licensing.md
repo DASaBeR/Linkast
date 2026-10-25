@@ -26,6 +26,7 @@ Linkast runs FFmpeg as a separate executable, communicating only through command
    It is published with each release as `ffmpeg-<version>-corresponding-source.zip`. MSYS2-provided libraries come as MSYS2 source packages, which hold the upstream source plus the patches that were built. The release workflow fails if any library can't be fetched.
 4. **Remaining gaps, stated in `SOURCES.txt`:**
    - cairo "1.18.5", libgme "0.6.6" and libva "2.25.0" are unreleased git snapshots, and the build didn't record their commits;
+   - x265 was built from commit `9ddc216`, which is not in x265's public repository (checked 2026-10-25). Linkast doesn't use x265; it is only linked into this FFmpeg build;
    - bzip2, xz and zlib come from MSYS2 packages whose versions the build doesn't record;
    - gyan.dev builds with media-autobuild_suite but doesn't publish the exact suite revision.
 
