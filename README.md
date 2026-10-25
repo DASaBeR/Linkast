@@ -8,9 +8,20 @@
 
 Linkast is a lightweight, open-source live-streaming app for Windows. It captures your screen, a window or a game plus your audio, encodes it on your own PC with FFmpeg, and streams it to any RTMP or RTMPS server: Twitch, YouTube, a restream service, or your own server.
 
-Linkast is deliberately small. It is not a production studio like OBS. There are no scenes, transitions or plugins. It focuses on starting a stream quickly, keeping it healthy, and telling you clearly what is wrong when it isn't.
+Linkast is deliberately small. It is not a production studio like OBS. There are no scenes, transitions or plugins. It has the few things almost every streamer uses, and focuses on starting a stream quickly, keeping it healthy, and telling you clearly what is wrong when it isn't.
 
 > **Status: preview.** Streaming, the Webcam Studio (background effects, auto-framing, multiple cameras, vertical layouts) and network selection work end to end. An installer is next on the [roadmap](docs/roadmap.md). Tests that need real users and hardware are listed in [docs/field-test-plan.md](docs/field-test-plan.md).
+
+## Streamer essentials
+
+- **Alerts and overlays** from Reymit, Streamlabs, StreamElements or any alert service: paste the same link you would give OBS as a Browser Source. Pictures such as your logo too. Show, hide and resize them live.
+- **Be right back** screen in one click (also works as "Starting soon").
+- **Record** to a file, alone or alongside every stream, with one encode for both. MKV is crash-safe; an MP4 copy is optional.
+- **Microphone mute and noise removal** that work live, without restarting the stream.
+- **Global hotkeys** that work in games: go live, mute, cameras, Be right back, record.
+- **Platform presets** for Twitch, YouTube, Kick and Facebook, or any RTMP/RTMPS server.
+- **Import from OBS:** server and key, quality, capture, cameras, alerts, pictures and audio, chosen item by item.
+- **Find the best settings:** tests your encoders and your upload, then suggests resolution, frame rate and bitrate.
 
 ## Webcam Studio
 
