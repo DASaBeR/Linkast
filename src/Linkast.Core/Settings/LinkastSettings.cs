@@ -24,6 +24,9 @@ public sealed record LinkastSettings
     /// <summary>Pictures, web alerts and the "Be right back" screen.</summary>
     public OverlaySettings Overlays { get; init; } = new();
 
+    /// <summary>Global hotkeys (Go live, mute, cameras, Be right back, record).</summary>
+    public HotkeySettings Hotkeys { get; init; } = new();
+
     /// <summary>User-created presets. Built-in presets are not stored; see <see cref="CameraPresets"/>.</summary>
     public IReadOnlyList<CameraPreset> CustomPresets { get; init; } = [];
 }

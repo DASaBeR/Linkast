@@ -14,7 +14,7 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <StackPanel Margin="22,18,22,22" MaxWidth="1100" HorizontalAlignment="Left">
             <TextBlock Text="Settings" Style="{StaticResource Linkast.Text.PageTitle}" />
-            <TextBlock Text="Appearance, updates and diagnostics." Style="{StaticResource Linkast.Text.Hint}" FontSize="12" Margin="0,2,0,16" />
+            <TextBlock Text="Appearance, updates, hotkeys and diagnostics." Style="{StaticResource Linkast.Text.Hint}" FontSize="12" Margin="0,2,0,16" />
 
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -103,6 +103,43 @@
                             </DockPanel>
                             <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,12,0,0"
                                        Text="Linkast checks once when it starts and when you press Check for updates. It never installs anything until you press Update now." />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Linkast.Card}" DataContext="{Binding Hotkeys}">
+                        <StackPanel>
+                            <DockPanel Margin="0,0,0,4">
+                                <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Subtle}" Content="Reset to defaults"
+                                        Command="{Binding ResetDefaultsCommand}" VerticalAlignment="Top" />
+                                <TextBlock Text="Hotkeys" Style="{StaticResource Linkast.Card.Title}" />
+                            </DockPanel>
+                            <CheckBox Content="Use hotkeys, even while a game or another app is in front" IsChecked="{Binding Enabled}" Margin="0,0,0,10" />
+                            <ItemsControl ItemsSource="{Binding Rows}" IsEnabled="{Binding Enabled}" Focusable="False">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type vm:HotkeyRowViewModel}">
+                                        <StackPanel Margin="0,0,0,8">
+                                            <DockPanel>
+                                                <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Icon}" Margin="6,0,0,0"
+                                                        Command="{Binding DataContext.ClearCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                        CommandParameter="{Binding}" ToolTip="No hotkey for this action"
+                                                        AutomationProperties.Name="{Binding Label, StringFormat='Remove the hotkey for {0}'}">
+                                                    <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE711;" FontSize="11" />
+                                                </Button>
+                                                <TextBox DockPanel.Dock="Right" Width="150" IsReadOnly="True" IsReadOnlyCaretVisible="False"
+                                                         Text="{Binding Text, Mode=OneWay}" HorizontalContentAlignment="Center"
+                                                         PreviewKeyDown="OnHotkeyKeyDown" GotKeyboardFocus="OnHotkeyBoxFocus" LostKeyboardFocus="OnHotkeyBoxFocus" Tag="{Binding}"
+                                                         ToolTip="Click here, then press the keys you want, for example Ctrl+Alt+L"
+                                                         AutomationProperties.Name="{Binding Label, StringFormat='Hotkey for {0}'}" />
+                                                <TextBlock Text="{Binding Label}" VerticalAlignment="Center" />
+                                            </DockPanel>
+                                            <TextBlock Text="{Binding Problem}" TextWrapping="Wrap" Foreground="{DynamicResource Linkast.Warning}" FontSize="12" Margin="0,4,0,0"
+                                                       Visibility="{Binding Problem, Converter={x:Static vm:Converters.NotNullToVisibility}}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,4,0,0"
+                                       Text="Click a box and press the new keys. Use Ctrl, Alt or Win with a letter, number or F key, so the hotkey never gets in the way of typing in a game." />
                         </StackPanel>
                     </Border>
                 </StackPanel>

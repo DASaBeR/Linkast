@@ -150,6 +150,7 @@ public static class SettingsSerializer
             },
             Webcam = SanitizeWebcam(webcam),
             Overlays = (s.Overlays ?? new OverlaySettings()).Sanitized(),
+            Hotkeys = (s.Hotkeys ?? new HotkeySettings()).Sanitized(),
             CustomPresets = [.. (s.CustomPresets ?? []).Where(p => p is not null && !p.IsBuiltIn).Select(p => p with
             {
                 Name = string.IsNullOrWhiteSpace(p.Name) ? "Custom" : p.Name.Trim(),

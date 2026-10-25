@@ -36,6 +36,12 @@ public partial class MainWindow : Window
         };
     }
 
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        _vm.AttachHotkeys(this);
+    }
+
     // The stream key lives in a PasswordBox and reaches the view model only as a Secret.
     private void OnStreamKeyChanged(object sender, RoutedEventArgs e)
     {

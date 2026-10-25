@@ -102,6 +102,12 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             }
         };
         Overlays.SettingsChanged += (_, _) => ScheduleSave();
+        Hotkeys.SettingsChanged += (_, _) =>
+        {
+            ApplyHotkeys();
+            ScheduleSave();
+        };
+        _hotkeys.Pressed += (_, action) => OnHotkey(action);
         Overlays.LiveChanged += (_, change) => OnOverlayLiveChanged(change);
         Overlays.PropertyChanged += (_, e) =>
         {
@@ -132,6 +138,91 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     /// <summary>Pictures on top of the stream and the "Be right back" screen.</summary>
     public OverlaysViewModel Overlays { get; }
+
+    /// <summary>Global hotkeys (Settings › Hotkeys).</summary>
+    public HotkeysViewModel Hotkeys { get; } = new();
+
+    private readonly HotkeyService _hotkeys = new();
+
+    /// <summary>Registers the global hotkeys on <paramref name="window"/> once it has a handle.</summary>
+    public void AttachHotkeys(Window window)
+    {
+        _hotkeys.Attach(window);
+        ApplyHotkeys();
+    }
+
+    private bool _hotkeysPaused;
+
+    private void ApplyHotkeys()
+    {
+        if (!_hotkeysPaused)
+        {
+            Hotkeys.ShowRegistrationResult(_hotkeys.Apply(Hotkeys.ToSettings()));
+        }
+    }
+
+    /// <summary>
+    /// Off while a hotkey box has the focus: a registered key never reaches the box, and pressing
+    /// Ctrl+Alt+L there to set it must not go live.
+    /// </summary>
+    public void PauseHotkeys(bool paused)
+    {
+        _hotkeysPaused = paused;
+        if (paused)
+        {
+            _hotkeys.Apply(new HotkeySettings { Enabled = false });
+        }
+        else
+        {
+            ApplyHotkeys();
+        }
+    }
+
+    /// <summary>A global hotkey was pressed, possibly while a game has the focus.</summary>
+    private void OnHotkey(HotkeyAction action)
+    {
+        switch (action)
+        {
+            case HotkeyAction.GoLive when IsBroadcasting:
+                _ = StopCommand.ExecuteAsync(null);
+                break;
+            case HotkeyAction.GoLive:
+                if (StartCommand.CanExecute(null))
+                {
+                    _ = StartCommand.ExecuteAsync(null);
+                }
+
+                break;
+            case HotkeyAction.MuteMicrophone when MicrophoneEnabled:
+                MicrophoneMuted = !MicrophoneMuted;
+                break;
+            case HotkeyAction.ToggleCameras:
+                var cameras = Webcam.Layers.Where(l => l.SelectedDevice is not null).ToList();
+                var turnOn = !cameras.Any(l => l.CameraOn);
+                foreach (var l in cameras)
+                {
+                    l.CameraOn = turnOn;
+                }
+
+                break;
+            case HotkeyAction.BeRightBack:
+                Overlays.IsAway = !Overlays.IsAway;
+                break;
+            case HotkeyAction.Record:
+                if (ToggleRecordingCommand.CanExecute(null))
+                {
+                    _ = ToggleRecordingCommand.ExecuteAsync(null);
+                }
+                else if (IsBroadcasting)
+                {
+                    AppendLog("Recording can't start during a stream. Turn on 'Also record when I go live' before going live.");
+                }
+
+                break;
+        }
+
+        AppendLog($"Hotkey: {Hotkeys.Rows.First(r => r.Action == action).Label}");
+    }
 
     // ---- Network for the stream ------------------------------------------------------------
 
@@ -727,6 +818,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         Webcam.Load(_loaded.Webcam, _loaded.CustomPresets);
         Overlays.SetCanvas(Webcam.CanvasWidth, Webcam.CanvasHeight);
         Overlays.Load(_loaded.Overlays);
+        Hotkeys.Load(_loaded.Hotkeys);
+        ApplyHotkeys();
         await Webcam.RefreshDevicesAsync();
         UpdateAudioLevelMonitor();
         await Webcam.InitializeVirtualCameraAsync();
@@ -809,6 +902,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             await _engine.DisposeAsync();
         }
 
+        _hotkeys.Dispose();
         _levelMonitor.Dispose();
         _systemMeter.Dispose();
         _microphoneMeter.Dispose();
@@ -966,6 +1060,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             },
             Webcam = Webcam.ToSettings(),
             Overlays = Overlays.ToSettings(),
+            Hotkeys = Hotkeys.ToSettings(),
             CustomPresets = Webcam.CustomPresets,
         });
     }
