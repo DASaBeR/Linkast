@@ -47,7 +47,7 @@ public static class FfmpegArgumentBuilder
         // Inputs 1..L: rendered camera layers (raw BGRA with alpha), timestamped by frame count.
         if (job.Layers.Count > MaxLayers)
         {
-            throw new StreamFailureException(new StreamError(ErrorCategory.Configuration, "layers.count", $"At most {MaxLayers} camera layers are supported."));
+            throw new StreamFailureException(new StreamError(ErrorCategory.Configuration, "layers.count", $"At most {MaxLayers} layers (cameras and overlays) are supported."));
         }
 
         foreach (var layer in job.Layers)
@@ -121,7 +121,7 @@ public static class FfmpegArgumentBuilder
         return args;
     }
 
-    public const int MaxLayers = 4;
+    public const int MaxLayers = 8;
 
     /// <summary>The lavfi source graph for input 0.</summary>
     public static string VideoSourceGraph(VideoSourceSpec video, int fps, int width = 1280, int height = 720)

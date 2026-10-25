@@ -30,6 +30,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private readonly ILogger<MainViewModel> _logger;
     private readonly Dispatcher _ui;
     private readonly IVideoLayerInputProvider _layerProvider;
+    private readonly IOverlayInputProvider _overlayProvider;
     private readonly JsonSettingsStore _settingsStore;
     private readonly DpapiSecretStore _secrets;
     private readonly DispatcherTimer _saveTimer;
@@ -59,6 +60,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         AudioCaptureHub audioHub,
         AudioLevelBus audioLevels,
         IVideoLayerInputProvider layerProvider,
+        IOverlayInputProvider overlayProvider,
         JsonSettingsStore settingsStore,
         DpapiSecretStore secrets,
         UpdateService updates,
@@ -68,6 +70,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _transport = transport;
         _audioProvider = audioProvider;
         _layerProvider = layerProvider;
+        _overlayProvider = overlayProvider;
         _settingsStore = settingsStore;
         _secrets = secrets;
         _loggerFactory = loggerFactory;
@@ -83,6 +86,27 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _meterTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(66), DispatcherPriority.Background, (_, _) => ReadStreamMeters(), _ui) { IsEnabled = false };
         Webcam = new WebcamStudioViewModel(cameras, _ui, segmentation, backgroundImages, framing, audioLevels);
         Webcam.SettingsChanged += (_, _) => ScheduleSave();
+        Webcam.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(WebcamStudioViewModel.CanvasWidth) or nameof(WebcamStudioViewModel.CanvasHeight))
+            {
+                Overlays.SetCanvas(Webcam.CanvasWidth, Webcam.CanvasHeight);
+            }
+        };
+        Overlays.SettingsChanged += (_, _) => ScheduleSave();
+        Overlays.LiveChanged += (_, change) => OnOverlayLiveChanged(change);
+        Overlays.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(OverlaysViewModel.IsAway) or nameof(OverlaysViewModel.AwayMuteSystemAudio))
+            {
+                ApplyLiveGain(AudioChannel.System, SystemGain);
+            }
+
+            if (e.PropertyName == nameof(OverlaysViewModel.IsAway))
+            {
+                AppendLog(Overlays.IsAway ? "Showing the Be right back screen." : "Back from the Be right back screen.");
+            }
+        };
         Webcam.LayerPlacementChanged += (_, layer) => QueueLiveMove(layer);
         Webcam.LayersChanged += (_, _) => UpdateAudioLevelMonitor();
         Webcam.LayoutSwitching = OnLayoutSwitchingAsync;
@@ -96,6 +120,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     /// <summary>Webcam Studio.</summary>
     public WebcamStudioViewModel Webcam { get; }
+
+    /// <summary>Pictures on top of the stream and the "Be right back" screen.</summary>
+    public OverlaysViewModel Overlays { get; } = new();
 
     // ---- Network for the stream ------------------------------------------------------------
 
@@ -434,7 +461,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     partial void OnMicrophoneVolumeChanged(double value) => ApplyLiveGain(AudioChannel.Microphone, MicrophoneGain);
 
-    partial void OnSystemAudioVolumeChanged(double value) => ApplyLiveGain(AudioChannel.System, value / 100.0);
+    partial void OnSystemAudioVolumeChanged(double value) => ApplyLiveGain(AudioChannel.System, SystemGain);
+
+    /// <summary>System audio volume, silenced while the Be right back screen is up (if the user chose that).</summary>
+    private double SystemGain => Overlays.IsAway && Overlays.AwayMuteSystemAudio ? 0 : SystemAudioVolume / 100.0;
 
     partial void OnMicrophoneNoiseSuppressionChanged(bool value)
     {
@@ -639,6 +669,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         ApplyStreamSettings(_loaded.Stream);
         Webcam.SetResolution(SelectedResolution.Width, SelectedResolution.Height);
         Webcam.Load(_loaded.Webcam, _loaded.CustomPresets);
+        Overlays.SetCanvas(Webcam.CanvasWidth, Webcam.CanvasHeight);
+        Overlays.Load(_loaded.Overlays);
         await Webcam.RefreshDevicesAsync();
         UpdateAudioLevelMonitor();
         await Webcam.InitializeVirtualCameraAsync();
@@ -688,7 +720,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 _ => $"{Encoders.Count(e => e.Kind == EncoderKind.Hardware)} hardware encoder(s) available.",
             };
 
-            _engine = new FfmpegStreamEngine(ffmpeg, _transport, _audioProvider, _loggerFactory.CreateLogger<FfmpegStreamEngine>(), layerProvider: _layerProvider);
+            _engine = new FfmpegStreamEngine(ffmpeg, _transport, _audioProvider, _loggerFactory.CreateLogger<FfmpegStreamEngine>(), layerProvider: _layerProvider, overlayProvider: _overlayProvider);
             _engine.StateChanged += (_, e) => _ui.InvokeAsync(() => OnStateChanged(e));
             _engine.TelemetryUpdated += (_, t) => _ui.InvokeAsync(() => OnTelemetry(t));
             _engine.DiagnosticLine += (_, line) => _ui.InvokeAsync(() => AppendLog(line));
@@ -815,6 +847,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 NetworkInterfaceName = SelectedNetwork?.IsAutomatic == false ? SelectedNetwork.Name : null,
             },
             Webcam = Webcam.ToSettings(),
+            Overlays = Overlays.ToSettings(),
             CustomPresets = Webcam.CustomPresets,
         });
     }
@@ -886,6 +919,31 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _ = SendPendingMovesAsync();
     }
 
+    /// <summary>
+    /// An overlay moved, appeared or disappeared, or the away screen was switched. While live this uses
+    /// the same instant path as camera moves; an overlay added after going live appears next time.
+    /// </summary>
+    private void OnOverlayLiveChanged(OverlayLiveChange change)
+    {
+        if (!IsActive)
+        {
+            return;
+        }
+
+        if (!_liveLayerIds.Contains(change.LayerId))
+        {
+            if (change.Placement is not null)
+            {
+                AppendLog("The new overlay will appear the next time you go live.");
+            }
+
+            return;
+        }
+
+        _pendingMoves[change.LayerId] = change.Placement;
+        _ = SendPendingMovesAsync();
+    }
+
     private async Task SendPendingMovesAsync()
     {
         if (_moveInFlight || _engine is null)
@@ -905,7 +963,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                     : await _engine.HideLayerAsync(id);
                 if (!ok)
                 {
-                    AppendLog("The camera position will apply the next time you go live.");
+                    AppendLog("The change will apply the next time you go live.");
                     _pendingMoves.Clear();
                     break;
                 }
@@ -1169,7 +1227,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         var audio = new List<AudioSourceSpec>();
         if (SystemAudioEnabled)
         {
-            audio.Add(new SystemAudioSource(SelectedOutputDevice?.Id, SelectedOutputDevice?.Name ?? "Default output") { Gain = SystemAudioVolume / 100.0 });
+            audio.Add(new SystemAudioSource(SelectedOutputDevice?.Id, SelectedOutputDevice?.Name ?? "Default output") { Gain = SystemGain });
         }
 
         if (MicrophoneEnabled)
@@ -1206,7 +1264,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             .Select(l => new CameraLayerBinding(l.Layer, layout.CameraPlacements[l.LayerId]))
             .ToList();
         _liveLayerIds.Clear();
+        var overlays = Overlays.Bindings(canvasWidth, canvasHeight);
         _liveLayerIds.UnionWith(cameras.Select(c => c.Layer.LayerId));
+        _liveLayerIds.UnionWith(overlays.Select(o => o.LayerId));
         Webcam.Notice = null;
 
         return new StreamSession(
@@ -1220,6 +1280,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             // Every camera shown in the layout is included, bottom to top. The camera on/off switch
             // only makes a layer transparent, so cameras can be toggled live without a restart.
             CameraLayers = cameras,
+            Overlays = overlays,
             BasePlacement = layout.BasePlacement,
             BaseFit = layout.BaseFit,
         };

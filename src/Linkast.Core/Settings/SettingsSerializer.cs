@@ -149,6 +149,7 @@ public static class SettingsSerializer
                 ServerUrl = stream.ServerUrl ?? string.Empty,
             },
             Webcam = SanitizeWebcam(webcam),
+            Overlays = (s.Overlays ?? new OverlaySettings()).Sanitized(),
             CustomPresets = [.. (s.CustomPresets ?? []).Where(p => p is not null && !p.IsBuiltIn).Select(p => p with
             {
                 Name = string.IsNullOrWhiteSpace(p.Name) ? "Custom" : p.Name.Trim(),

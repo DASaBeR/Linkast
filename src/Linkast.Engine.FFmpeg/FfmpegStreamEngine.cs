@@ -50,6 +50,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
     private readonly Lock _gate = new();
 
     private readonly IVideoLayerInputProvider? _layerProvider;
+    private readonly IOverlayInputProvider? _overlayProvider;
     private CancellationTokenSource? _runCts;
     private Task? _runTask;
     private ActiveComposition? _composition;
@@ -57,6 +58,9 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
     // Live audio changes (mute, volume, noise removal) for the current session, re-applied on reconnect.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<AudioChannel, double> _liveGain = new();
     private bool? _liveNoiseSuppression;
+
+    // Live moves and hides of layers for the current session (null = hidden), re-applied on reconnect.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, NormalizedRect?> _livePlacement = new(StringComparer.Ordinal);
     private int _reconnectCount;
     private long _sessionStart;
     private StreamError? _lastError;
@@ -69,9 +73,11 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
         Redactor? redactor = null,
         EngineOptions? options = null,
         TimeProvider? timeProvider = null,
-        IVideoLayerInputProvider? layerProvider = null)
+        IVideoLayerInputProvider? layerProvider = null,
+        IOverlayInputProvider? overlayProvider = null)
     {
         _layerProvider = layerProvider;
+        _overlayProvider = overlayProvider;
         _ffmpeg = ffmpeg ?? throw new ArgumentNullException(nameof(ffmpeg));
         _transport = transport ?? throw new ArgumentNullException(nameof(transport));
         _audioProvider = audioProvider;
@@ -120,6 +126,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
             _reconnectCount = 0;
             _lastError = null;
             _liveGain.Clear();
+            _livePlacement.Clear();
             _liveNoiseSuppression = null;
             _sessionStart = _time.GetTimestamp();
             _runCts?.Dispose();
@@ -258,12 +265,32 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 var layerFps = Math.Min(session.Encoder.Fps, MaxLayerFrameRate);
                 foreach (var binding in session.CameraLayers)
                 {
-                    var px = LayerGeometry.ToPixels(binding.Placement, session.Encoder.Width, session.Encoder.Height);
+                    var px = PlaceLayer(session, binding.Layer.LayerId, binding.Placement, startHidden: false);
                     var input = _layerProvider.Open(binding.Layer, px.Width, px.Height, layerFps);
                     layerInputs.Add(input);
                     await input.StartAsync(ct).ConfigureAwait(false);
                     jobLayers.Add(new VideoLayerJobInput(input.PipePath, px.Width, px.Height, layerFps, px));
                     layerIds.Add(binding.Layer.LayerId);
+                }
+            }
+
+            // Overlays above the cameras: pictures, web alerts and the away screen (last, so on top).
+            if (session.Overlays.Count > 0)
+            {
+                if (_overlayProvider is null)
+                {
+                    return new StreamError(ErrorCategory.Configuration, "overlays.unsupported", "Overlays are not available in this configuration.");
+                }
+
+                var maxFps = Math.Min(session.Encoder.Fps, MaxLayerFrameRate);
+                foreach (var overlay in session.Overlays)
+                {
+                    var px = PlaceLayer(session, overlay.LayerId, overlay.Placement, overlay.StartHidden);
+                    var input = _overlayProvider.Open(overlay, px.Width, px.Height, maxFps);
+                    layerInputs.Add(input);
+                    await input.StartAsync(ct).ConfigureAwait(false);
+                    jobLayers.Add(new VideoLayerJobInput(input.PipePath, px.Width, px.Height, input.FrameRate, px));
+                    layerIds.Add(overlay.LayerId);
                 }
             }
 
@@ -461,13 +488,15 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
     public async Task<bool> MoveLayerAsync(string layerId, NormalizedRect placement, CancellationToken cancellationToken = default)
     {
         var composition = Volatile.Read(ref _composition);
-        if (composition is null || _state.Current != StreamState.Live)
+        var index = composition is null ? -1 : composition.LayerIds.IndexOf(layerId);
+        if (composition is null || index < 0)
         {
             return false;
         }
 
-        var index = composition.LayerIds.IndexOf(layerId);
-        if (index < 0)
+        // Remembered even while reconnecting, so the next attempt starts where the viewer last saw it.
+        _livePlacement[layerId] = placement;
+        if (_state.Current != StreamState.Live)
         {
             return false;
         }
@@ -488,13 +517,14 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
     public async Task<bool> HideLayerAsync(string layerId, CancellationToken cancellationToken = default)
     {
         var composition = Volatile.Read(ref _composition);
-        if (composition is null || _state.Current != StreamState.Live)
+        var index = composition is null ? -1 : composition.LayerIds.IndexOf(layerId);
+        if (composition is null || index < 0)
         {
             return false;
         }
 
-        var index = composition.LayerIds.IndexOf(layerId);
-        if (index < 0)
+        _livePlacement[layerId] = null;
+        if (_state.Current != StreamState.Live)
         {
             return false;
         }
@@ -508,6 +538,25 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// Pixel rectangle for a layer in this attempt: where it was last moved or hidden while live (so a
+    /// reconnect keeps what the viewer saw), otherwise its starting placement. Hidden layers keep their
+    /// size and sit just off the right edge of the canvas, ready to be moved back in.
+    /// </summary>
+    private PixelRect PlaceLayer(StreamSession session, string layerId, NormalizedRect placement, bool startHidden)
+    {
+        var (w, h) = (session.Encoder.Width, session.Encoder.Height);
+        if (_livePlacement.TryGetValue(layerId, out var live))
+        {
+            return live is { } moved
+                ? LayerGeometry.ToPixels(moved, w, h)
+                : LayerGeometry.ToPixels(placement, w, h) with { X = w + 16 };
+        }
+
+        var px = LayerGeometry.ToPixels(placement, w, h);
+        return startHidden ? px with { X = w + 16 } : px;
     }
 
     public Task<bool> SetGainAsync(AudioChannel channel, double gain, CancellationToken cancellationToken = default)

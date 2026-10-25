@@ -34,6 +34,13 @@
                 BorderThickness="0,0,0,1" Padding="20,0">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Style="{StaticResource Linkast.StatusPill.Warning}" Margin="0,0,10,0" ToolTip="Viewers see the Be right back screen"
+                            Visibility="{Binding Overlays.IsAway, Converter={StaticResource BoolToVis}}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE769;" FontSize="11" Margin="0,0,6,0" />
+                            <TextBlock Text="BE RIGHT BACK" />
+                        </StackPanel>
+                    </Border>
                     <Border Style="{StaticResource Linkast.StatusPill.Error}" Margin="0,0,10,0" ToolTip="Your microphone is muted in the stream"
                             Visibility="{Binding ShowMicrophoneMuted, Converter={StaticResource BoolToVis}}">
                         <StackPanel Orientation="Horizontal">
@@ -126,6 +133,7 @@
                                         <views:SceneEditor Layers="{Binding Layers}" CanvasWidth="{Binding CanvasWidth}" CanvasHeight="{Binding CanvasHeight}"
                                                            BasePlacement="{Binding BasePlacement}" BaseFit="{Binding BaseFit}"
                                                            BackgroundSource="{Binding EditorBackground}" MaxHeight="340" IsPreviewOnly="True"
+                                                           OverlayItems="{Binding DataContext.Overlays.PreviewItems, RelativeSource={RelativeSource AncestorType=Window}}"
                                                            IsHitTestVisible="False" Focusable="False" AutomationProperties.Name="Output preview" />
                                     </Grid>
                                 </Border>
@@ -141,6 +149,7 @@
                             <ListBoxItem x:Name="TabDestination" Padding="14,6" Content="Destination" />
                             <ListBoxItem x:Name="TabNetwork" Padding="14,6" Content="Network" />
                             <ListBoxItem x:Name="TabQuality" Padding="14,6" Content="Quality" />
+                            <ListBoxItem x:Name="TabOverlays" Padding="14,6" Content="Overlays" />
                         </ListBox>
 
                         <!-- ===== Source & audio ===== -->
@@ -428,6 +437,134 @@
                                 </Expander>
                             </StackPanel>
                         </Border>
+
+                        <!-- ===== Overlays: pictures on top of the stream, and the Be right back screen ===== -->
+                        <StackPanel DataContext="{Binding Overlays}">
+                            <StackPanel Visibility="{Binding IsSelected, ElementName=TabOverlays, Converter={StaticResource BoolToVis}}">
+                                <Border Style="{StaticResource Linkast.Card}">
+                                    <StackPanel>
+                                        <DockPanel Margin="0,0,0,6">
+                                            <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Primary}" Command="{Binding AddImageCommand}"
+                                                    ToolTip="Add a logo or another picture on top of your stream (up to 3 overlays)">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE710;" FontSize="12" Margin="0,0,8,0" />
+                                                    <AccessText Text="Add _picture" />
+                                                </StackPanel>
+                                            </Button>
+                                            <TextBlock Text="Overlays" Style="{StaticResource Linkast.Card.Title}" Margin="0" />
+                                        </DockPanel>
+                                        <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,0,0,12"
+                                                   Text="Pictures on top of your stream, such as a logo. Showing, hiding, moving and resizing work while live." />
+
+                                        <Border Background="{DynamicResource Linkast.Surface2}" CornerRadius="{StaticResource Linkast.Radius.Action}" Padding="16,14"
+                                                Visibility="{Binding HasItems, Converter={x:Static vm:Converters.InverseBoolToVisibility}}">
+                                            <TextBlock Style="{StaticResource Linkast.Text.Body}" TextAlignment="Center"
+                                                       Text="No overlays yet. Add a picture, for example your logo, and choose where it sits." />
+                                        </Border>
+
+                                        <ItemsControl ItemsSource="{Binding Items}" Focusable="False">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate DataType="{x:Type vm:OverlayItemViewModel}">
+                                                    <Border Background="{DynamicResource Linkast.Surface2}" BorderBrush="{DynamicResource Linkast.BorderSubtle}" BorderThickness="1"
+                                                            CornerRadius="{StaticResource Linkast.Radius.Action}" Padding="12" Margin="0,0,0,8">
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="96" />
+                                                                <ColumnDefinition Width="14" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <Border Width="96" Height="54" CornerRadius="6" VerticalAlignment="Top" ClipToBounds="True"
+                                                                    Background="{DynamicResource Linkast.Surface3}">
+                                                                <Grid>
+                                                                    <Image Source="{Binding Bitmap}" Stretch="Uniform" Margin="4" />
+                                                                    <TextBlock Text="Missing file" FontSize="10" Foreground="{DynamicResource Linkast.Warning}" HorizontalAlignment="Center"
+                                                                               VerticalAlignment="Center" Visibility="{Binding IsMissing, Converter={StaticResource BoolToVis}}" />
+                                                                </Grid>
+                                                            </Border>
+                                                            <StackPanel Grid.Column="2">
+                                                                <DockPanel>
+                                                                    <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Icon}" Content="&#xE74D;" Foreground="{DynamicResource Linkast.Live}"
+                                                                            Command="{Binding DataContext.RemoveCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}"
+                                                                            ToolTip="Remove this overlay" AutomationProperties.Name="Remove overlay" />
+                                                                    <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Subtle}" Content="Change picture" MinHeight="30" Padding="10,4"
+                                                                            Command="{Binding DataContext.ChangeImageCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}" />
+                                                                    <CheckBox DockPanel.Dock="Right" Content="Show" IsChecked="{Binding Visible}" Margin="0,0,10,0" MinWidth="0" VerticalAlignment="Center" />
+                                                                    <TextBox Text="{Binding Name, UpdateSourceTrigger=LostFocus}" MaxLength="40" Margin="0,0,10,0" AutomationProperties.Name="Overlay name" />
+                                                                </DockPanel>
+                                                                <Grid Margin="0,8,0,0">
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="*" />
+                                                                        <ColumnDefinition Width="14" />
+                                                                        <ColumnDefinition Width="*" />
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <StackPanel>
+                                                                        <TextBlock Text="Position" Style="{StaticResource Linkast.Text.FieldLabel}" />
+                                                                        <ComboBox ItemsSource="{Binding DataContext.Positions, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                                                  SelectedItem="{Binding Position}" AutomationProperties.Name="Overlay position">
+                                                                            <ComboBox.ItemTemplate>
+                                                                                <DataTemplate>
+                                                                                    <TextBlock Text="{Binding Converter={x:Static vm:Converters.EnumLabel}}" />
+                                                                                </DataTemplate>
+                                                                            </ComboBox.ItemTemplate>
+                                                                        </ComboBox>
+                                                                    </StackPanel>
+                                                                    <views:ValueSlider Grid.Column="2" Label="Size" Value="{Binding Size}" Minimum="0.05" Maximum="1" Format="{}{0:0%}"
+                                                                                       IsEnabled="{Binding IsSizeAdjustable}" Margin="0,-6,0,0" ToolTip="Width compared with the stream" />
+                                                                </Grid>
+                                                            </StackPanel>
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Style="{StaticResource Linkast.Card}">
+                                    <StackPanel>
+                                        <DockPanel Margin="0,0,0,6">
+                                            <ToggleButton DockPanel.Dock="Right" Style="{StaticResource Linkast.ToggleButton.Secondary}" IsChecked="{Binding IsAway}"
+                                                          ToolTip="Cover the stream now (works while live)" AutomationProperties.Name="Show Be right back screen">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE769;" FontSize="12" Margin="0,0,8,0" />
+                                                    <TextBlock Text="{Binding IsAway, Converter={x:Static vm:Converters.AwayLabel}}" />
+                                                </StackPanel>
+                                            </ToggleButton>
+                                            <TextBlock Text="Be right back screen" Style="{StaticResource Linkast.Card.Title}" Margin="0" />
+                                        </DockPanel>
+                                        <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,0,0,12"
+                                                   Text="Covers the game, cameras and overlays without stopping the stream. Use it for breaks, or before you start as a Starting soon screen." />
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="200" />
+                                                <ColumnDefinition Width="16" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Border CornerRadius="8" ClipToBounds="True" VerticalAlignment="Top" BorderBrush="{DynamicResource Linkast.BorderStrong}" BorderThickness="1">
+                                                <Image Source="{Binding AwayThumbnail}" Stretch="Uniform" AutomationProperties.Name="Be right back screen preview" />
+                                            </Border>
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock Text="Title" Style="{StaticResource Linkast.Text.FieldLabel}" />
+                                                <TextBox Text="{Binding AwayTitle, UpdateSourceTrigger=PropertyChanged, Delay=300}" MaxLength="60" AutomationProperties.Name="Be right back title" />
+                                                <TextBlock Text="Message" Style="{StaticResource Linkast.Text.FieldLabel}" Margin="0,10,0,5" />
+                                                <TextBox Text="{Binding AwaySubtitle, UpdateSourceTrigger=PropertyChanged, Delay=300}" MaxLength="100" AutomationProperties.Name="Be right back message" />
+                                                <WrapPanel Margin="0,10,0,0">
+                                                    <Button Style="{StaticResource Linkast.Button.Secondary}" Command="{Binding ChooseAwayImageCommand}" Margin="0,0,8,6">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xEB9F;" FontSize="13" Margin="0,0,8,0" />
+                                                            <TextBlock Text="Use my own picture…" />
+                                                        </StackPanel>
+                                                    </Button>
+                                                    <Button Style="{StaticResource Linkast.Button.Subtle}" Content="Use the Linkast card" Command="{Binding UseAwayCardCommand}" Margin="0,0,8,6"
+                                                            Visibility="{Binding HasAwayImage, Converter={StaticResource BoolToVis}}" />
+                                                </WrapPanel>
+                                                <CheckBox Content="Also mute game and PC sound while away (your microphone stays on)" IsChecked="{Binding AwayMuteSystemAudio}" Margin="0,4,0,0" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </StackPanel>
                     </StackPanel>
                 </ScrollViewer>
 
@@ -471,6 +608,23 @@
                                     </StackPanel>
                                 </Button>
                                 <TextBlock Style="{StaticResource Linkast.Text.Hint}" Text="{Binding ReadinessText}" Margin="0,8,0,0" />
+                                <!-- Quick actions: both work instantly while live and before going live. -->
+                                <UniformGrid Columns="2" Margin="0,12,-8,0">
+                                    <ToggleButton Style="{StaticResource Linkast.ToggleButton.Secondary}" Margin="0,0,8,0" IsChecked="{Binding MicrophoneMuted}"
+                                                  IsEnabled="{Binding MicrophoneEnabled}" ToolTip="Mute the microphone in the stream" AutomationProperties.Name="Mute microphone">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE74F;" FontSize="12" Margin="0,0,6,0" />
+                                            <TextBlock Text="{Binding MicrophoneMuted, Converter={x:Static vm:Converters.MuteLabel}}" />
+                                        </StackPanel>
+                                    </ToggleButton>
+                                    <ToggleButton Style="{StaticResource Linkast.ToggleButton.Secondary}" Margin="0,0,8,0" IsChecked="{Binding Overlays.IsAway}"
+                                                  ToolTip="Cover the stream with the Be right back screen without stopping it" AutomationProperties.Name="Be right back">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE769;" FontSize="12" Margin="0,0,6,0" />
+                                            <TextBlock Text="Be right back" />
+                                        </StackPanel>
+                                    </ToggleButton>
+                                </UniformGrid>
                             </StackPanel>
                         </Border>
 

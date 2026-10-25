@@ -13,6 +13,9 @@ public sealed record StreamSession(
     /// <summary>Camera layers composited over <see cref="Video"/>, bottom to top.</summary>
     public IReadOnlyList<Camera.CameraLayerBinding> CameraLayers { get; init; } = [];
 
+    /// <summary>Overlays (pictures, web alerts, the away screen) drawn above the cameras, bottom to top.</summary>
+    public IReadOnlyList<Camera.OverlayLayerBinding> Overlays { get; init; } = [];
+
     /// <summary>Where the gameplay or screen capture goes on the canvas (default: all of it).</summary>
     public Camera.NormalizedRect BasePlacement { get; init; } = new(0, 0, 1, 1);
 

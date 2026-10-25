@@ -166,7 +166,8 @@
                         <views:SceneEditor Layers="{Binding Layers}" SelectedLayer="{Binding Selected, Mode=TwoWay}"
                                            CanvasWidth="{Binding CanvasWidth}" CanvasHeight="{Binding CanvasHeight}"
                                            BasePlacement="{Binding BasePlacement}" BaseFit="{Binding BaseFit}"
-                                           BackgroundSource="{Binding EditorBackground}" Snap="{Binding SnapToGrid}" />
+                                           BackgroundSource="{Binding EditorBackground}" Snap="{Binding SnapToGrid}"
+                                           OverlayItems="{Binding DataContext.Overlays.PreviewItems, RelativeSource={RelativeSource AncestorType=Window}}" />
                     </Border>
                     <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,10,0,0"
                                Text="Click a camera to select it. Drag to move, drag a corner to resize, arrow keys nudge. The background is a reference that refreshes every 2 seconds. While live, moves apply instantly without restarting the stream." />

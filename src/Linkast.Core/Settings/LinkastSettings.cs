@@ -21,6 +21,9 @@ public sealed record LinkastSettings
 
     public WebcamSettings Webcam { get; init; } = new();
 
+    /// <summary>Pictures, web alerts and the "Be right back" screen.</summary>
+    public OverlaySettings Overlays { get; init; } = new();
+
     /// <summary>User-created presets. Built-in presets are not stored; see <see cref="CameraPresets"/>.</summary>
     public IReadOnlyList<CameraPreset> CustomPresets { get; init; } = [];
 }

@@ -51,6 +51,10 @@ public sealed class SceneEditor : UserControl
     public static readonly DependencyProperty SnapProperty = DependencyProperty.Register(
         nameof(Snap), typeof(bool), typeof(SceneEditor), new PropertyMetadata(true));
 
+    /// <summary>Overlays (pictures, the away screen) drawn above the cameras, read-only.</summary>
+    public static readonly DependencyProperty OverlayItemsProperty = DependencyProperty.Register(
+        nameof(OverlayItems), typeof(IEnumerable), typeof(SceneEditor), new PropertyMetadata(null, (d, _) => ((SceneEditor)d).RefreshOverlays()));
+
     /// <summary>Draws the scene as the stream will: camera pictures only, no outlines, handles or placeholders.</summary>
     public static readonly DependencyProperty IsPreviewOnlyProperty = DependencyProperty.Register(
         nameof(IsPreviewOnly), typeof(bool), typeof(SceneEditor), new PropertyMetadata(false, (d, _) => ((SceneEditor)d).RefreshAll()));
@@ -60,6 +64,7 @@ public sealed class SceneEditor : UserControl
     private readonly Image _background = new() { Stretch = Stretch.Uniform };
     private readonly Line _vGuide = Guide();
     private readonly Line _hGuide = Guide();
+    private readonly List<Image> _overlayImages = [];
     private readonly List<LayerVisual> _visuals = [];
     private INotifyCollectionChanged? _observed;
     private readonly Viewbox _viewbox;
@@ -70,6 +75,8 @@ public sealed class SceneEditor : UserControl
         _canvas.Children.Add(_baseArea);
         _canvas.Children.Add(_vGuide);
         _canvas.Children.Add(_hGuide);
+        Panel.SetZIndex(_vGuide, 3);
+        Panel.SetZIndex(_hGuide, 3);
         _viewbox = new Viewbox { Stretch = Stretch.Uniform, Child = _canvas };
         Content = _viewbox;
         OnCanvasSize();
@@ -128,6 +135,12 @@ public sealed class SceneEditor : UserControl
     {
         get => (bool)GetValue(IsPreviewOnlyProperty);
         set => SetValue(IsPreviewOnlyProperty, value);
+    }
+
+    public IEnumerable? OverlayItems
+    {
+        get => (IEnumerable?)GetValue(OverlayItemsProperty);
+        set => SetValue(OverlayItemsProperty, value);
     }
 
     private double GridStep => Math.Max(CanvasWidth, CanvasHeight) / 48;
@@ -212,6 +225,42 @@ public sealed class SceneEditor : UserControl
         foreach (var v in _visuals)
         {
             v.Refresh();
+        }
+
+        RefreshOverlays();
+    }
+
+    /// <summary>Redraws the overlays above every camera and below the snap guides.</summary>
+    private void RefreshOverlays()
+    {
+        foreach (var image in _overlayImages)
+        {
+            _canvas.Children.Remove(image);
+        }
+
+        _overlayImages.Clear();
+        if (OverlayItems is null)
+        {
+            return;
+        }
+
+        var insertAt = _canvas.Children.IndexOf(_vGuide);
+        foreach (var item in OverlayItems.OfType<OverlayPreview>())
+        {
+            var r = item.Placement;
+            var image = new Image
+            {
+                Source = item.Image,
+                Stretch = Stretch.Uniform,
+                Width = r.Width * CanvasWidth,
+                Height = r.Height * CanvasHeight,
+                IsHitTestVisible = false,
+            };
+            Canvas.SetLeft(image, r.X * CanvasWidth);
+            Canvas.SetTop(image, r.Y * CanvasHeight);
+            Panel.SetZIndex(image, 2);
+            _overlayImages.Add(image);
+            _canvas.Children.Insert(insertAt++, image);
         }
     }
 

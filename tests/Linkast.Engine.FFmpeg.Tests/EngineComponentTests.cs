@@ -150,7 +150,7 @@ public class ArgumentBuilderTests
     public void Too_many_layers_rejected()
     {
         var l = new VideoLayerJobInput(@"\\.\pipe\linkast-cam-1", 2, 2, 30, new Linkast.Core.Camera.PixelRect(0, 0, 2, 2));
-        Assert.Throws<StreamFailureException>(() => FfmpegArgumentBuilder.Build(Job() with { Layers = [l, l, l, l, l] }));
+        Assert.Throws<StreamFailureException>(() => FfmpegArgumentBuilder.Build(Job() with { Layers = Enumerable.Repeat(l, FfmpegArgumentBuilder.MaxLayers + 1).ToList() }));
     }
 
     [Theory]

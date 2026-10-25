@@ -46,6 +46,8 @@ public static class Converters
 
     public static IValueConverter MuteLabel { get; } = new Lambda(v => v is true ? "Muted" : "Mute");
 
+    public static IValueConverter AwayLabel { get; } = new Lambda(v => v is true ? "Back to the stream" : "Show now");
+
     public static IValueConverter InverseBool { get; } = new Lambda(v => v is not true);
 
     public static IValueConverter InverseBoolToVisibility { get; } = new Lambda(v => v is true ? Visibility.Collapsed : Visibility.Visible);
@@ -83,6 +85,16 @@ public static class Converters
         Core.Camera.AudioReactiveStyle.SpeakingIndicator => "Border changes colour while you speak",
         Core.Camera.BaseFit.Fit => "Fit (whole picture, may show bars)",
         Core.Camera.BaseFit.Fill => "Fill (no bars, edges cropped)",
+        Core.Camera.OverlayPosition.FullScreen => "Full screen",
+        Core.Camera.OverlayPosition.TopLeft => "Top left",
+        Core.Camera.OverlayPosition.TopCenter => "Top center",
+        Core.Camera.OverlayPosition.TopRight => "Top right",
+        Core.Camera.OverlayPosition.MiddleLeft => "Middle left",
+        Core.Camera.OverlayPosition.Center => "Center",
+        Core.Camera.OverlayPosition.MiddleRight => "Middle right",
+        Core.Camera.OverlayPosition.BottomLeft => "Bottom left",
+        Core.Camera.OverlayPosition.BottomCenter => "Bottom center",
+        Core.Camera.OverlayPosition.BottomRight => "Bottom right",
         _ => v?.ToString(),
     });
 

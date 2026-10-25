@@ -171,7 +171,17 @@
     <Setter Property="Foreground" Value="{DynamicResource Linkast.TextSecondary}"/>
   </Style>
 
-  <Style x:Key="Linkast.ToggleButton.Secondary" TargetType="ToggleButton" BasedOn="{StaticResource Linkast.Button.Base}"/>
+  <!-- On: tinted with the accent so the state is visible at a glance (Mute, Be right back, Show log). -->
+  <Style x:Key="Linkast.ToggleButton.Secondary" TargetType="ToggleButton" BasedOn="{StaticResource Linkast.Button.Base}">
+    <Style.Triggers>
+      <Trigger Property="IsChecked" Value="True">
+        <Setter Property="Background" Value="{DynamicResource Linkast.AccentSoft}"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource Linkast.Accent}"/>
+        <Setter Property="Foreground" Value="{DynamicResource Linkast.Accent}"/>
+        <Setter Property="FontWeight" Value="{DynamicResource Linkast.FontWeight.SemiBold}"/>
+      </Trigger>
+    </Style.Triggers>
+  </Style>
 
   <!-- Icon-only: Content is a Segoe Fluent Icons glyph. Always set AutomationProperties.Name and ToolTip. -->
   <Style x:Key="Linkast.Button.Icon" TargetType="Button" BasedOn="{StaticResource Linkast.Button.Subtle}">
