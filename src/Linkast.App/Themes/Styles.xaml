@@ -1,0 +1,474 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+  <!--
+      Linkast type, spacing, radii and component styles. Theme-independent: every colour comes from
+      Tokens.Dark.xaml or Tokens.Light.xaml through DynamicResource, so this file is merged once and never swapped.
+  -->
+
+  <!-- ===== Type ===== -->
+  <FontFamily x:Key="Linkast.Font.Body">Segoe UI Variable Text, Segoe UI</FontFamily>
+  <FontFamily x:Key="Linkast.Font.Display">Segoe UI Variable Display, Segoe UI</FontFamily>
+  <FontFamily x:Key="Linkast.Font.Mono">Cascadia Mono, Consolas</FontFamily>
+  <FontFamily x:Key="Linkast.Font.Icons">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
+  <sys:Double x:Key="Linkast.FontSize.Caption">11</sys:Double>
+  <sys:Double x:Key="Linkast.FontSize.Label">12</sys:Double>
+  <sys:Double x:Key="Linkast.FontSize.Body">13</sys:Double>
+  <sys:Double x:Key="Linkast.FontSize.CardTitle">14</sys:Double>
+  <sys:Double x:Key="Linkast.FontSize.Action">19</sys:Double>
+  <sys:Double x:Key="Linkast.FontSize.Icon">16</sys:Double>
+  <sys:Double x:Key="Linkast.FontSize.Metric">18</sys:Double>
+  <sys:Double x:Key="Linkast.FontSize.StatusTitle">18</sys:Double>
+  <sys:Double x:Key="Linkast.FontSize.PageTitle">22</sys:Double>
+  <sys:Double x:Key="Linkast.FontSize.Timer">20</sys:Double>
+  <sys:Double x:Key="Linkast.FontSize.Display">26</sys:Double>
+  <FontWeight x:Key="Linkast.FontWeight.Regular">Normal</FontWeight>
+  <FontWeight x:Key="Linkast.FontWeight.SemiBold">SemiBold</FontWeight>
+  <FontWeight x:Key="Linkast.FontWeight.Bold">Bold</FontWeight>
+
+  <!-- ===== Spacing (4 px grid) ===== -->
+  <sys:Double x:Key="Linkast.Spacing.4">4</sys:Double>
+  <sys:Double x:Key="Linkast.Spacing.8">8</sys:Double>
+  <sys:Double x:Key="Linkast.Spacing.12">12</sys:Double>
+  <sys:Double x:Key="Linkast.Spacing.16">16</sys:Double>
+  <sys:Double x:Key="Linkast.Spacing.20">20</sys:Double>
+  <sys:Double x:Key="Linkast.Spacing.24">24</sys:Double>
+  <sys:Double x:Key="Linkast.Spacing.32">32</sys:Double>
+  <Thickness x:Key="Linkast.Space.XS">4</Thickness>
+  <Thickness x:Key="Linkast.Space.S">8</Thickness>
+  <Thickness x:Key="Linkast.Space.M">12</Thickness>
+  <Thickness x:Key="Linkast.Space.L">16</Thickness>
+  <Thickness x:Key="Linkast.Space.XL">24</Thickness>
+  <Thickness x:Key="Linkast.Padding.Page">22,18,22,22</Thickness>
+  <Thickness x:Key="Linkast.Padding.Card">16,14</Thickness>
+  <Thickness x:Key="Linkast.Padding.Control">12,7</Thickness>
+  <Thickness x:Key="Linkast.Padding.Tile">11,10</Thickness>
+  <Thickness x:Key="Linkast.Padding.Pill">9,3</Thickness>
+  <Thickness x:Key="Linkast.Margin.Stack">0,0,0,12</Thickness>
+  <Thickness x:Key="Linkast.Margin.FieldLabel">0,0,0,5</Thickness>
+
+  <!-- ===== Corner radii ===== -->
+  <CornerRadius x:Key="Linkast.Radius.Small">6</CornerRadius>
+  <CornerRadius x:Key="Linkast.Radius.Control">8</CornerRadius>
+  <CornerRadius x:Key="Linkast.Radius.Tile">9</CornerRadius>
+  <CornerRadius x:Key="Linkast.Radius.Action">10</CornerRadius>
+  <CornerRadius x:Key="Linkast.Radius.Card">12</CornerRadius>
+  <CornerRadius x:Key="Linkast.Radius.Preview">14</CornerRadius>
+  <CornerRadius x:Key="Linkast.Radius.Pill">999</CornerRadius>
+
+  <!-- ===== Motion ===== -->
+  <Duration x:Key="Linkast.Motion.Hover">0:0:0.1</Duration>
+  <Duration x:Key="Linkast.Motion.Press">0:0:0.08</Duration>
+  <Duration x:Key="Linkast.Motion.Panel">0:0:0.18</Duration>
+  <Duration x:Key="Linkast.Motion.State">0:0:0.22</Duration>
+
+  <!-- ===== Keyboard focus =====
+       WPF draws a FocusVisualStyle only when focus arrives from the keyboard, never after a mouse click,
+       so every Linkast control uses this one ring instead of a trigger on IsKeyboardFocused. -->
+  <Style x:Key="Linkast.FocusVisual" TargetType="Control">
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate>
+          <Border Margin="-4" BorderThickness="2" CornerRadius="{DynamicResource Linkast.Radius.Card}"
+                  BorderBrush="{DynamicResource Linkast.Focus}" SnapsToDevicePixels="True"/>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ===== Buttons =====
+       One template for every button and toggle button. Hover and press lay a translucent overlay (white in
+       dark, black in light) over the variant's background, so each variant only sets colours.
+       Keyboard focus shows Linkast.FocusVisual. -->
+  <Style x:Key="Linkast.Button.Base" TargetType="ButtonBase">
+    <Setter Property="FontFamily" Value="{DynamicResource Linkast.Font.Body}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Linkast.FontSize.Body}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextPrimary}"/>
+    <Setter Property="Background" Value="{DynamicResource Linkast.Surface2}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Linkast.BorderSubtle}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="Padding" Value="{DynamicResource Linkast.Padding.Control}"/>
+    <Setter Property="MinHeight" Value="34"/>
+    <Setter Property="HorizontalContentAlignment" Value="Center"/>
+    <Setter Property="VerticalContentAlignment" Value="Center"/>
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="SnapsToDevicePixels" Value="True"/>
+    <Setter Property="FocusVisualStyle" Value="{StaticResource Linkast.FocusVisual}"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ButtonBase">
+          <Grid>
+            <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{DynamicResource Linkast.Radius.Control}"/>
+            <Border x:Name="Overlay" Background="{DynamicResource Linkast.StateOverlay}" CornerRadius="{DynamicResource Linkast.Radius.Control}" Opacity="0"/>
+            <ContentPresenter Margin="{TemplateBinding Padding}" RecognizesAccessKey="True"
+                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Overlay" Property="Opacity" Value="0.08"/>
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+              <Setter TargetName="Overlay" Property="Opacity" Value="0.16"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.45"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="Linkast.Button.Secondary" TargetType="Button" BasedOn="{StaticResource Linkast.Button.Base}"/>
+
+  <Style x:Key="Linkast.Button.Primary" TargetType="Button" BasedOn="{StaticResource Linkast.Button.Base}">
+    <Setter Property="Background" Value="{DynamicResource Linkast.Accent}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.OnAccent}"/>
+    <Setter Property="BorderBrush" Value="Transparent"/>
+    <Setter Property="FontWeight" Value="{DynamicResource Linkast.FontWeight.SemiBold}"/>
+  </Style>
+
+  <!-- The one brand-gradient button. Shown only while the stream is not running. White text at 19 px bold
+       is WCAG large text, which keeps at least 3:1 across the whole gradient. -->
+  <Style x:Key="Linkast.Button.GoLive" TargetType="Button" BasedOn="{StaticResource Linkast.Button.Base}">
+    <Setter Property="Background" Value="{DynamicResource Linkast.GoLiveGradient}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.OnBrand}"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="MinHeight" Value="48"/>
+    <Setter Property="HorizontalAlignment" Value="Stretch"/>
+    <Setter Property="FontFamily" Value="{DynamicResource Linkast.Font.Display}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Linkast.FontSize.Action}"/>
+    <Setter Property="FontWeight" Value="{DynamicResource Linkast.FontWeight.Bold}"/>
+  </Style>
+
+  <!-- Solid red: End stream while live or reconnecting. -->
+  <Style x:Key="Linkast.Button.Destructive" TargetType="Button" BasedOn="{StaticResource Linkast.Button.Base}">
+    <Setter Property="Background" Value="{DynamicResource Linkast.Live}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.OnAccent}"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="FontWeight" Value="{DynamicResource Linkast.FontWeight.SemiBold}"/>
+  </Style>
+
+  <!-- Outlined red: Remove camera, Delete preset, Remove Linkast Camera. -->
+  <Style x:Key="Linkast.Button.DestructiveOutline" TargetType="Button" BasedOn="{StaticResource Linkast.Button.Base}">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.Live}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Linkast.Live}"/>
+  </Style>
+
+  <Style x:Key="Linkast.Button.Subtle" TargetType="Button" BasedOn="{StaticResource Linkast.Button.Base}">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderBrush" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextSecondary}"/>
+  </Style>
+
+  <Style x:Key="Linkast.ToggleButton.Subtle" TargetType="ToggleButton" BasedOn="{StaticResource Linkast.Button.Base}">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderBrush" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextSecondary}"/>
+  </Style>
+
+  <Style x:Key="Linkast.ToggleButton.Secondary" TargetType="ToggleButton" BasedOn="{StaticResource Linkast.Button.Base}"/>
+
+  <!-- Icon-only: Content is a Segoe Fluent Icons glyph. Always set AutomationProperties.Name and ToolTip. -->
+  <Style x:Key="Linkast.Button.Icon" TargetType="Button" BasedOn="{StaticResource Linkast.Button.Subtle}">
+    <Setter Property="Width" Value="32"/>
+    <Setter Property="Height" Value="32"/>
+    <Setter Property="MinHeight" Value="0"/>
+    <Setter Property="Padding" Value="0"/>
+    <Setter Property="FontFamily" Value="{DynamicResource Linkast.Font.Icons}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Linkast.FontSize.Icon}"/>
+  </Style>
+
+  <!-- ===== Card ===== -->
+  <Style x:Key="Linkast.Card" TargetType="Border">
+    <Setter Property="Background" Value="{DynamicResource Linkast.Surface1}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Linkast.BorderSubtle}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource Linkast.Radius.Card}"/>
+    <Setter Property="Padding" Value="{DynamicResource Linkast.Padding.Card}"/>
+    <Setter Property="Margin" Value="{DynamicResource Linkast.Margin.Stack}"/>
+  </Style>
+  <!-- Used once: "Network for your stream", the feature that sets Linkast apart. -->
+  <Style x:Key="Linkast.Card.Feature" TargetType="Border" BasedOn="{StaticResource Linkast.Card}">
+    <Setter Property="BorderBrush" Value="{DynamicResource Linkast.Accent}"/>
+  </Style>
+  <Style x:Key="Linkast.Card.Title" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="{DynamicResource Linkast.FontSize.CardTitle}"/>
+    <Setter Property="FontWeight" Value="{DynamicResource Linkast.FontWeight.SemiBold}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextPrimary}"/>
+    <Setter Property="VerticalAlignment" Value="Center"/>
+    <Setter Property="Margin" Value="0,0,0,12"/>
+  </Style>
+
+  <!-- Problems: a 4 px coloured edge on the left. Error = red-orange, Warning = amber. -->
+  <Style x:Key="Linkast.Issue.Error" TargetType="Border">
+    <Setter Property="Background" Value="{DynamicResource Linkast.ErrorSoft}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Linkast.Error}"/>
+    <Setter Property="BorderThickness" Value="4,1,1,1"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource Linkast.Radius.Action}"/>
+    <Setter Property="Padding" Value="14,12"/>
+    <Setter Property="Margin" Value="{DynamicResource Linkast.Margin.Stack}"/>
+  </Style>
+  <Style x:Key="Linkast.Issue.Warning" TargetType="Border" BasedOn="{StaticResource Linkast.Issue.Error}">
+    <Setter Property="Background" Value="{DynamicResource Linkast.WarningSoft}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Linkast.Warning}"/>
+  </Style>
+
+  <!-- ===== Text ===== -->
+  <Style x:Key="Linkast.Text.PageTitle" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{DynamicResource Linkast.Font.Display}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Linkast.FontSize.PageTitle}"/>
+    <Setter Property="FontWeight" Value="{DynamicResource Linkast.FontWeight.SemiBold}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextPrimary}"/>
+  </Style>
+  <Style x:Key="Linkast.Text.StatusTitle" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{DynamicResource Linkast.Font.Display}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Linkast.FontSize.StatusTitle}"/>
+    <Setter Property="FontWeight" Value="{DynamicResource Linkast.FontWeight.SemiBold}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextPrimary}"/>
+    <Setter Property="TextWrapping" Value="Wrap"/>
+  </Style>
+  <Style x:Key="Linkast.Text.FieldLabel" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="{DynamicResource Linkast.FontSize.Label}"/>
+    <Setter Property="FontWeight" Value="{DynamicResource Linkast.FontWeight.SemiBold}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextSecondary}"/>
+    <Setter Property="Margin" Value="{DynamicResource Linkast.Margin.FieldLabel}"/>
+  </Style>
+  <!-- For Label elements with an access key (Alt+letter) that focus their Target. -->
+  <Style x:Key="Linkast.Label.Field" TargetType="Label">
+    <Setter Property="Padding" Value="0"/>
+    <Setter Property="Margin" Value="0,10,0,5"/>
+    <Setter Property="FontSize" Value="{DynamicResource Linkast.FontSize.Label}"/>
+    <Setter Property="FontWeight" Value="{DynamicResource Linkast.FontWeight.SemiBold}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextSecondary}"/>
+  </Style>
+  <Style x:Key="Linkast.Text.Hint" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="{DynamicResource Linkast.FontSize.Caption}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextTertiary}"/>
+    <Setter Property="TextWrapping" Value="Wrap"/>
+    <Setter Property="Margin" Value="0,4,0,0"/>
+  </Style>
+  <Style x:Key="Linkast.Text.Body" TargetType="TextBlock">
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextSecondary}"/>
+    <Setter Property="TextWrapping" Value="Wrap"/>
+  </Style>
+  <Style x:Key="Linkast.Text.Glyph" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{DynamicResource Linkast.Font.Icons}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Linkast.FontSize.Icon}"/>
+    <Setter Property="VerticalAlignment" Value="Center"/>
+  </Style>
+  <Style x:Key="Linkast.Text.Timer" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{DynamicResource Linkast.Font.Display}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Linkast.FontSize.Timer}"/>
+    <Setter Property="FontWeight" Value="{DynamicResource Linkast.FontWeight.SemiBold}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextPrimary}"/>
+    <Setter Property="Typography.NumeralAlignment" Value="Tabular"/>
+  </Style>
+
+  <!-- ===== Status pill =====
+       A Border holding one TextBlock. The variant sets the soft background and, through the inherited
+       TextElement properties, the text colour. Pills never wrap and always carry text. -->
+  <Style x:Key="Linkast.StatusPill" TargetType="Border">
+    <Setter Property="CornerRadius" Value="{DynamicResource Linkast.Radius.Pill}"/>
+    <Setter Property="Padding" Value="{DynamicResource Linkast.Padding.Pill}"/>
+    <Setter Property="HorizontalAlignment" Value="Left"/>
+    <Setter Property="VerticalAlignment" Value="Center"/>
+    <Setter Property="Background" Value="{DynamicResource Linkast.IdleSoft}"/>
+    <Setter Property="TextElement.Foreground" Value="{DynamicResource Linkast.Idle}"/>
+    <Setter Property="TextElement.FontSize" Value="{DynamicResource Linkast.FontSize.Caption}"/>
+    <Setter Property="TextElement.FontWeight" Value="{DynamicResource Linkast.FontWeight.Bold}"/>
+  </Style>
+  <Style x:Key="Linkast.StatusPill.Live" TargetType="Border" BasedOn="{StaticResource Linkast.StatusPill}">
+    <Setter Property="Background" Value="{DynamicResource Linkast.LiveSoft}"/>
+    <Setter Property="TextElement.Foreground" Value="{DynamicResource Linkast.Live}"/>
+  </Style>
+  <Style x:Key="Linkast.StatusPill.Warning" TargetType="Border" BasedOn="{StaticResource Linkast.StatusPill}">
+    <Setter Property="Background" Value="{DynamicResource Linkast.WarningSoft}"/>
+    <Setter Property="TextElement.Foreground" Value="{DynamicResource Linkast.Warning}"/>
+  </Style>
+  <Style x:Key="Linkast.StatusPill.Error" TargetType="Border" BasedOn="{StaticResource Linkast.StatusPill}">
+    <Setter Property="Background" Value="{DynamicResource Linkast.ErrorSoft}"/>
+    <Setter Property="TextElement.Foreground" Value="{DynamicResource Linkast.Error}"/>
+  </Style>
+  <Style x:Key="Linkast.StatusPill.Success" TargetType="Border" BasedOn="{StaticResource Linkast.StatusPill}">
+    <Setter Property="Background" Value="{DynamicResource Linkast.SuccessSoft}"/>
+    <Setter Property="TextElement.Foreground" Value="{DynamicResource Linkast.Success}"/>
+  </Style>
+  <Style x:Key="Linkast.StatusPill.Brand" TargetType="Border" BasedOn="{StaticResource Linkast.StatusPill}">
+    <Setter Property="Background" Value="{DynamicResource Linkast.AccentSoft}"/>
+    <Setter Property="TextElement.Foreground" Value="{DynamicResource Linkast.Accent}"/>
+  </Style>
+
+  <!-- ===== Metric tile ===== -->
+  <Style x:Key="Linkast.MetricTile" TargetType="Border">
+    <Setter Property="Background" Value="{DynamicResource Linkast.Surface2}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Linkast.BorderSubtle}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource Linkast.Radius.Tile}"/>
+    <Setter Property="Padding" Value="{DynamicResource Linkast.Padding.Tile}"/>
+    <Setter Property="Margin" Value="0,0,8,8"/>
+  </Style>
+  <Style x:Key="Linkast.MetricTile.Label" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="{DynamicResource Linkast.FontSize.Caption}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextTertiary}"/>
+    <Setter Property="Margin" Value="0,0,0,4"/>
+  </Style>
+  <Style x:Key="Linkast.MetricTile.Value" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{DynamicResource Linkast.Font.Display}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Linkast.FontSize.Metric}"/>
+    <Setter Property="FontWeight" Value="{DynamicResource Linkast.FontWeight.SemiBold}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextPrimary}"/>
+    <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+    <Setter Property="Typography.NumeralAlignment" Value="Tabular"/>
+  </Style>
+  <Style x:Key="Linkast.MetricTile.Caption" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="{DynamicResource Linkast.FontSize.Caption}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextSecondary}"/>
+    <Setter Property="Margin" Value="0,2,0,0"/>
+  </Style>
+
+  <!-- ===== Navigation rail item =====
+       A RadioButton: Tag holds the Segoe Fluent Icons glyph, Content the label (with an access key). -->
+  <Style x:Key="Linkast.Nav.Item" TargetType="RadioButton">
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextSecondary}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Linkast.FontSize.Caption}"/>
+    <Setter Property="Height" Value="56"/>
+    <Setter Property="Margin" Value="0,0,0,6"/>
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="FocusVisualStyle" Value="{StaticResource Linkast.FocusVisual}"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="RadioButton">
+          <Grid Background="Transparent">
+            <Border x:Name="Bd" CornerRadius="{DynamicResource Linkast.Radius.Action}" Background="Transparent"/>
+            <Border x:Name="Overlay" CornerRadius="{DynamicResource Linkast.Radius.Action}" Background="{DynamicResource Linkast.StateOverlay}" Opacity="0"/>
+            <Rectangle x:Name="Marker" Width="3" RadiusX="1.5" RadiusY="1.5" Margin="-10,14,0,14" HorizontalAlignment="Left"
+                       Fill="{DynamicResource Linkast.NavMarkerGradient}" Visibility="Collapsed"/>
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+              <TextBlock Text="{TemplateBinding Tag}" Style="{StaticResource Linkast.Text.Glyph}" FontSize="20" HorizontalAlignment="Center"/>
+              <ContentPresenter RecognizesAccessKey="True" HorizontalAlignment="Center" Margin="0,4,0,0"/>
+            </StackPanel>
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Overlay" Property="Opacity" Value="0.06"/>
+            </Trigger>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Linkast.Surface3}"/>
+              <Setter TargetName="Marker" Property="Visibility" Value="Visible"/>
+              <Setter Property="Foreground" Value="{DynamicResource Linkast.TextPrimary}"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ===== Segmented control =====
+       A ListBox whose items share one row. Arrow keys move the selection, like any ListBox. -->
+  <Style x:Key="Linkast.Segmented.Item" TargetType="ListBoxItem">
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextSecondary}"/>
+    <Setter Property="FontSize" Value="12.5"/>
+    <Setter Property="Padding" Value="8,6"/>
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="FocusVisualStyle" Value="{StaticResource Linkast.FocusVisual}"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ListBoxItem">
+          <Grid>
+            <Border x:Name="Bd" CornerRadius="7" Background="Transparent" BorderThickness="1" BorderBrush="Transparent"/>
+            <Border x:Name="Overlay" CornerRadius="7" Background="{DynamicResource Linkast.StateOverlay}" Opacity="0"/>
+            <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Overlay" Property="Opacity" Value="0.06"/>
+            </Trigger>
+            <Trigger Property="IsSelected" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Linkast.Surface3}"/>
+              <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Linkast.BorderStrong}"/>
+              <Setter Property="Foreground" Value="{DynamicResource Linkast.TextPrimary}"/>
+              <Setter Property="FontWeight" Value="{DynamicResource Linkast.FontWeight.SemiBold}"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.45"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+  <Style x:Key="Linkast.Segmented" TargetType="ListBox">
+    <Setter Property="ItemContainerStyle" Value="{StaticResource Linkast.Segmented.Item}"/>
+    <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+    <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Disabled"/>
+    <Setter Property="ItemsPanel">
+      <Setter.Value>
+        <ItemsPanelTemplate>
+          <UniformGrid Rows="1"/>
+        </ItemsPanelTemplate>
+      </Setter.Value>
+    </Setter>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ListBox">
+          <Border Background="{DynamicResource Linkast.Surface2}" BorderBrush="{DynamicResource Linkast.BorderSubtle}" BorderThickness="1"
+                  CornerRadius="9" Padding="3">
+            <ItemsPresenter/>
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ===== Choice list =====
+       A ListBox of selectable cards stacked vertically (network adapters, appearance options). -->
+  <Style x:Key="Linkast.Choice.Item" TargetType="ListBoxItem">
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextPrimary}"/>
+    <Setter Property="Margin" Value="0,0,0,6"/>
+    <Setter Property="Padding" Value="12,9"/>
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="FocusVisualStyle" Value="{StaticResource Linkast.FocusVisual}"/>
+    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ListBoxItem">
+          <Grid>
+            <Border x:Name="Bd" CornerRadius="{DynamicResource Linkast.Radius.Action}" Background="{DynamicResource Linkast.Surface2}"
+                    BorderBrush="{DynamicResource Linkast.BorderSubtle}" BorderThickness="1"/>
+            <Border x:Name="Overlay" CornerRadius="{DynamicResource Linkast.Radius.Action}" Background="{DynamicResource Linkast.StateOverlay}" Opacity="0"/>
+            <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"/>
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Overlay" Property="Opacity" Value="0.05"/>
+            </Trigger>
+            <Trigger Property="IsSelected" Value="True">
+              <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Linkast.Accent}"/>
+              <Setter TargetName="Bd" Property="BorderThickness" Value="2"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.45"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+  <Style x:Key="Linkast.Choice" TargetType="ListBox">
+    <Setter Property="ItemContainerStyle" Value="{StaticResource Linkast.Choice.Item}"/>
+    <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+    <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Disabled"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ListBox">
+          <ItemsPresenter/>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+</ResourceDictionary>

@@ -1,0 +1,147 @@
+<UserControl x:Class="Linkast.App.Views.SettingsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:Linkast.App.ViewModels"
+             xmlns:settings="clr-namespace:Linkast.Core.Settings;assembly=Linkast.Core"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance Type=vm:MainViewModel}">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="22,18,22,22" MaxWidth="1100" HorizontalAlignment="Left">
+            <TextBlock Text="Settings" Style="{StaticResource Linkast.Text.PageTitle}" />
+            <TextBlock Text="Appearance, updates and diagnostics." Style="{StaticResource Linkast.Text.Hint}" FontSize="12" Margin="0,2,0,16" />
+
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="14" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel>
+                    <Border Style="{StaticResource Linkast.Card}">
+                        <StackPanel>
+                            <TextBlock Text="Appearance" Style="{StaticResource Linkast.Card.Title}" />
+                            <ListBox Style="{StaticResource Linkast.Choice}" ItemsSource="{Binding Themes}" SelectedItem="{Binding SelectedTheme}"
+                                     AutomationProperties.Name="Appearance">
+                                <ListBox.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <UniformGrid Rows="1" />
+                                    </ItemsPanelTemplate>
+                                </ListBox.ItemsPanel>
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem" BasedOn="{StaticResource Linkast.Choice.Item}">
+                                        <Setter Property="Margin" Value="0,0,8,0" />
+                                        <Setter Property="Padding" Value="8" />
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type vm:ThemeOption}">
+                                        <StackPanel AutomationProperties.Name="{Binding Label}">
+                                            <!-- A miniature window: rail on the left, page on the right. -->
+                                            <Border x:Name="Swatch" Height="54" CornerRadius="6" BorderThickness="1" BorderBrush="{DynamicResource Linkast.BorderSubtle}"
+                                                    ClipToBounds="True">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="1*" />
+                                                        <ColumnDefinition Width="3*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border x:Name="Rail" Background="#FF11142A" CornerRadius="5,0,0,5" />
+                                                    <Border x:Name="Page" Grid.Column="1" Background="#FF0B0D1B" CornerRadius="0,5,5,0" />
+                                                </Grid>
+                                            </Border>
+                                            <TextBlock Text="{Binding Label}" HorizontalAlignment="Center" Margin="0,8,0,2" />
+                                        </StackPanel>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding Theme}" Value="{x:Static settings:AppTheme.Light}">
+                                                <Setter TargetName="Rail" Property="Background" Value="#FFFFFFFF" />
+                                                <Setter TargetName="Page" Property="Background" Value="#FFF4F6FC" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding Theme}" Value="{x:Static settings:AppTheme.System}">
+                                                <Setter TargetName="Page" Property="Background" Value="#FFF4F6FC" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Linkast.Card}">
+                        <StackPanel>
+                            <TextBlock Text="Updates" Style="{StaticResource Linkast.Card.Title}" />
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button Style="{StaticResource Linkast.Button.Primary}" Command="{Binding InstallUpdateCommand}" Margin="8,0,0,0"
+                                            Visibility="{Binding UpdateAvailable, Converter={StaticResource BoolToVis}}"
+                                            ToolTip="Downloads the new version and restarts Linkast. Not available while you are live.">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE896;" FontSize="13" Margin="0,0,8,0" />
+                                            <AccessText Text="_Update now" />
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Style="{StaticResource Linkast.Button.Secondary}" Command="{Binding CheckForUpdatesCommand}" Margin="8,0,0,0"
+                                            ToolTip="Looks for a newer Linkast release on GitHub">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE72C;" FontSize="13" Margin="0,0,8,0" />
+                                            <AccessText Text="_Check for updates" />
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding VersionText}" FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding UpdateText}" TextWrapping="Wrap" Margin="0,2,0,0"
+                                               Foreground="{Binding UpdateAvailable, Converter={x:Static vm:Converters.UpdateBrush}}"
+                                               FontWeight="{Binding UpdateAvailable, Converter={x:Static vm:Converters.BoldWhenTrue}}"
+                                               AutomationProperties.Name="Update status" AutomationProperties.LiveSetting="Polite" />
+                                </StackPanel>
+                            </DockPanel>
+                            <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,12,0,0"
+                                       Text="Linkast checks once when it starts and when you press Check for updates. It never installs anything until you press Update now." />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <StackPanel Grid.Column="2">
+                    <Border Style="{StaticResource Linkast.Card}">
+                        <StackPanel>
+                            <TextBlock Text="Diagnostics" Style="{StaticResource Linkast.Card.Title}" />
+                            <TextBlock Text="FFmpeg in use" Style="{StaticResource Linkast.Text.FieldLabel}" />
+                            <TextBlock Text="{Binding FfmpegDescription}" TextWrapping="Wrap" FontFamily="{DynamicResource Linkast.Font.Mono}" FontSize="11"
+                                       Foreground="{DynamicResource Linkast.TextSecondary}" />
+                            <WrapPanel Margin="0,12,0,0">
+                                <Button Style="{StaticResource Linkast.Button.Secondary}" Command="{Binding CopyDiagnosticsCommand}" Margin="0,0,8,0">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE8C8;" FontSize="13" Margin="0,0,8,0" />
+                                        <TextBlock Text="Copy diagnostics" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Style="{StaticResource Linkast.Button.Secondary}" Command="{Binding OpenLogFolderCommand}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE8B7;" FontSize="13" Margin="0,0,8,0" />
+                                        <TextBlock Text="Open logs" />
+                                    </StackPanel>
+                                </Button>
+                            </WrapPanel>
+                            <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,10,0,0"
+                                       Text="Diagnostics leave out your stream key and are only copied to your clipboard." />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Linkast.Card}">
+                        <StackPanel>
+                            <TextBlock Text="Privacy" Style="{StaticResource Linkast.Card.Title}" />
+                            <TextBlock Style="{StaticResource Linkast.Text.Body}"
+                                       Text="No account, no cloud, no telemetry. Your stream goes straight from this PC to the server you choose. The only other connection Linkast makes on its own is the update check on GitHub." />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Grid>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

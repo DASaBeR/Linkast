@@ -2,17 +2,18 @@
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 using Linkast.App.Services;
 
 namespace Linkast.App.Views;
 
-/// <summary>The GPL's "appropriate legal notices": copyright, no warranty, license and source.</summary>
-public partial class AboutWindow : Window
+/// <summary>The GPL's "appropriate legal notices": copyright, no warranty, licence and source.</summary>
+public partial class AboutPage : UserControl
 {
-    public AboutWindow()
+    public AboutPage()
     {
         InitializeComponent();
-        ProductText.Text = "Linkast " + UpdateService.CurrentVersion;
+        VersionText.Text = "Version " + UpdateService.CurrentVersion;
         SourceButton.IsEnabled = UpdateService.RepositoryUrl is not null;
     }
 

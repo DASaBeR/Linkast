@@ -42,6 +42,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private bool _moveInFlight;
     private readonly HashSet<string> _liveLayerIds = [];
     private readonly AudioLevelMonitor _levelMonitor;
+    private readonly AudioLevelBus _systemLevels = new();
+    private readonly AudioLevelBus _microphoneLevels = new();
+    private readonly AudioLevelMonitor _systemMeter;
+    private readonly AudioLevelMonitor _microphoneMeter;
+    private readonly DispatcherTimer _meterTimer;
     private readonly UpdateService _updates;
 
     public MainViewModel(
@@ -73,6 +78,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         SelectedDestinationKind = DestinationKinds[0];
 
         _levelMonitor = new AudioLevelMonitor(audioHub, audioLevels);
+        _systemMeter = new AudioLevelMonitor(audioHub, _systemLevels, loopback: true);
+        _microphoneMeter = new AudioLevelMonitor(audioHub, _microphoneLevels);
+        _meterTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(66), DispatcherPriority.Background, (_, _) => ReadStreamMeters(), _ui) { IsEnabled = false };
         Webcam = new WebcamStudioViewModel(cameras, _ui, segmentation, backgroundImages, framing, audioLevels);
         Webcam.SettingsChanged += (_, _) => ScheduleSave();
         Webcam.LayerPlacementChanged += (_, layer) => QueueLiveMove(layer);
@@ -203,11 +211,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Raised once after start-up with the saved stream key, so the view can fill its PasswordBox.</summary>
     public event EventHandler<Secret>? StreamKeyLoaded;
 
-    /// <summary>Set by the view when the Webcam tab is visible; drives the layout preview snapshots.</summary>
+    /// <summary>Set by the view while the output preview or the layout editor is on screen; drives the 2-second capture snapshots.</summary>
     [ObservableProperty]
-    public partial bool IsWebcamTabVisible { get; set; }
+    public partial bool IsPreviewVisible { get; set; }
 
-    partial void OnIsWebcamTabVisibleChanged(bool value)
+    partial void OnIsPreviewVisibleChanged(bool value)
     {
         _snapshotTimer.IsEnabled = value;
         if (value)
@@ -228,7 +236,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     {
         if (value is not null)
         {
-            Application.Current.ThemeMode = value.Mode;
+            ThemeService.Apply(value.Theme);
         }
     }
 
@@ -378,6 +386,57 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     [ObservableProperty]
     public partial double MicrophoneVolume { get; set; } = 100;
+
+    /// <summary>Set by the view while the Stream page is on screen; the level meters only run then.</summary>
+    [ObservableProperty]
+    public partial bool IsStreamPageVisible { get; set; }
+
+    /// <summary>System audio level, 0 to 100, for the meter on the Stream page.</summary>
+    [ObservableProperty]
+    public partial double SystemAudioLevel { get; set; }
+
+    /// <summary>Microphone level, 0 to 100. The microphone is only metered while it is switched on.</summary>
+    [ObservableProperty]
+    public partial double MicrophoneLevel { get; set; }
+
+    partial void OnIsStreamPageVisibleChanged(bool value) => UpdateStreamMeters();
+
+    partial void OnSystemAudioEnabledChanged(bool value) => UpdateStreamMeters();
+
+    partial void OnMicrophoneEnabledChanged(bool value) => UpdateStreamMeters();
+
+    private void UpdateStreamMeters()
+    {
+        var system = IsStreamPageVisible && SystemAudioEnabled;
+        var microphone = IsStreamPageVisible && MicrophoneEnabled;
+        if (system)
+        {
+            _systemMeter.Start(SelectedOutputDevice?.Id);
+        }
+        else
+        {
+            _systemMeter.Stop();
+            SystemAudioLevel = 0;
+        }
+
+        if (microphone)
+        {
+            _microphoneMeter.Start(SelectedInputDevice?.Id);
+        }
+        else
+        {
+            _microphoneMeter.Stop();
+            MicrophoneLevel = 0;
+        }
+
+        _meterTimer.IsEnabled = system || microphone;
+    }
+
+    private void ReadStreamMeters()
+    {
+        SystemAudioLevel = _systemLevels.Active ? _systemLevels.Meter.Level * 100 : 0;
+        MicrophoneLevel = _microphoneLevels.Active ? _microphoneLevels.Meter.Level * 100 : 0;
+    }
 
     // ---- Encoding --------------------------------------------------------------------------
 
@@ -584,6 +643,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         _levelMonitor.Dispose();
+        _systemMeter.Dispose();
+        _microphoneMeter.Dispose();
         await Webcam.DisposeAsync();
     }
 
@@ -607,7 +668,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             ScheduleSave();
         }
 
-        if (e.PropertyName is nameof(SelectedSourceKind) or nameof(SelectedMonitor) or nameof(SelectedWindow) && IsWebcamTabVisible)
+        if (e.PropertyName is nameof(SelectedSourceKind) or nameof(SelectedMonitor) or nameof(SelectedWindow) && IsPreviewVisible)
         {
             _ = RefreshEditorBackgroundAsync();
         }
@@ -895,9 +956,17 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     partial void OnSelectedWindowChanged(WindowInfo? value) => _selectedWindowKey = value?.Handle.ToString(CultureInfo.InvariantCulture);
 
-    partial void OnSelectedOutputDeviceChanged(AudioDevice? value) => _selectedOutputKey = value?.Id;
+    partial void OnSelectedOutputDeviceChanged(AudioDevice? value)
+    {
+        _selectedOutputKey = value?.Id;
+        UpdateStreamMeters();
+    }
 
-    partial void OnSelectedInputDeviceChanged(AudioDevice? value) => _selectedInputKey = value?.Id;
+    partial void OnSelectedInputDeviceChanged(AudioDevice? value)
+    {
+        _selectedInputKey = value?.Id;
+        UpdateStreamMeters();
+    }
 
     private bool CanStart() => IsReady && !IsActive;
 

@@ -51,6 +51,10 @@ public sealed class SceneEditor : UserControl
     public static readonly DependencyProperty SnapProperty = DependencyProperty.Register(
         nameof(Snap), typeof(bool), typeof(SceneEditor), new PropertyMetadata(true));
 
+    /// <summary>Draws the scene as the stream will: camera pictures only, no outlines, handles or placeholders.</summary>
+    public static readonly DependencyProperty IsPreviewOnlyProperty = DependencyProperty.Register(
+        nameof(IsPreviewOnly), typeof(bool), typeof(SceneEditor), new PropertyMetadata(false, (d, _) => ((SceneEditor)d).RefreshAll()));
+
     private readonly Canvas _canvas = new() { ClipToBounds = true, Background = new SolidColorBrush(Color.FromRgb(24, 24, 28)) };
     private readonly Border _baseArea = new() { ClipToBounds = true, Background = new SolidColorBrush(Color.FromRgb(36, 36, 42)) };
     private readonly Image _background = new() { Stretch = Stretch.Uniform };
@@ -118,6 +122,12 @@ public sealed class SceneEditor : UserControl
     {
         get => (bool)GetValue(SnapProperty);
         set => SetValue(SnapProperty, value);
+    }
+
+    public bool IsPreviewOnly
+    {
+        get => (bool)GetValue(IsPreviewOnlyProperty);
+        set => SetValue(IsPreviewOnlyProperty, value);
     }
 
     private double GridStep => Math.Max(CanvasWidth, CanvasHeight) / 48;
@@ -325,13 +335,15 @@ public sealed class SceneEditor : UserControl
 
         public void Refresh()
         {
-            var selected = _vm.IsSelected;
-            Root.Visibility = _vm.IsShown ? Visibility.Visible : Visibility.Collapsed;
+            var previewOnly = _owner.IsPreviewOnly;
+            var selected = _vm.IsSelected && !previewOnly;
+            Root.Visibility = _vm.IsShown && (!previewOnly || _vm.Preview is not null) ? Visibility.Visible : Visibility.Collapsed;
             _image.Source = _vm.Preview;
             _placeholder.Visibility = _vm.Preview is null ? Visibility.Visible : Visibility.Collapsed;
             _placeholderText.Text = _vm.Name;
             _labelText.Text = _vm.Name;
-            _label.Visibility = _vm.Preview is null ? Visibility.Collapsed : Visibility.Visible;
+            _label.Visibility = _vm.Preview is null || previewOnly ? Visibility.Collapsed : Visibility.Visible;
+            _outline.Visibility = previewOnly ? Visibility.Collapsed : Visibility.Visible;
             _outline.Stroke = selected ? Accent : Faint;
             _outline.StrokeThickness = selected ? 6 : 3;
             foreach (var c in _corners)

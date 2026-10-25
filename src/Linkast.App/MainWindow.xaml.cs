@@ -19,6 +19,8 @@ public partial class MainWindow : Window
         InitializeComponent();
         _vm = viewModel;
         DataContext = viewModel;
+        viewModel.IsPreviewVisible = true;
+        viewModel.IsStreamPageVisible = true;
         viewModel.StreamKeyLoaded += (_, key) =>
         {
             _syncingKey = true;
@@ -78,15 +80,29 @@ public partial class MainWindow : Window
         (show ? (Control)StreamKeyPlain : StreamKeyBox).Focus();
     }
 
-    private void OnAbout(object sender, RoutedEventArgs e) => new Views.AboutWindow { Owner = this }.ShowDialog();
-
-    private void OnSettingsTabChanged(object sender, SelectionChangedEventArgs e)
+    // The capture snapshots behind the output preview and the layout editor only run while one of them is on screen.
+    private void OnPageChanged(object sender, RoutedEventArgs e)
     {
-        if (ReferenceEquals(e.OriginalSource, SettingsTabs))
+        if (DataContext is MainViewModel vm)
         {
-            _vm.IsWebcamTabVisible = SettingsTabs.SelectedItem == WebcamTab;
+            vm.IsPreviewVisible = NavStream.IsChecked == true || NavWebcam.IsChecked == true;
+            vm.IsStreamPageVisible = NavStream.IsChecked == true;
         }
     }
+
+    private void OnEditLayout(object sender, RoutedEventArgs e)
+    {
+        NavWebcam.IsChecked = true;
+        Studio.ShowLayout();
+    }
+
+    private void OnOpenSettings(object sender, RoutedEventArgs e) => NavSettings.IsChecked = true;
+
+    private void OnResetSystemVolume(object sender, RoutedEventArgs e) => _vm.SystemAudioVolume = 100;
+
+    private void OnResetMicrophoneVolume(object sender, RoutedEventArgs e) => _vm.MicrophoneVolume = 100;
+
+    private void OnLogToggled(object sender, RoutedEventArgs e) => LogToggle.Content = LogToggle.IsChecked == true ? "Hide log" : "Show log";
 
     protected override async void OnClosing(CancelEventArgs e)
     {

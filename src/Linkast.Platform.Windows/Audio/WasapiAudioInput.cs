@@ -242,17 +242,18 @@ public sealed class WasapiAudioInputProvider(AudioCaptureHub hub) : IAudioInputP
 }
 
 /// <summary>
-/// Feeds the app's <see cref="AudioLevelBus"/> from a microphone through the shared hub. If the stream
-/// is already capturing that microphone, no second capture session is opened.
+/// Feeds an <see cref="AudioLevelBus"/> from a microphone, or from an output device's loopback when
+/// <paramref name="loopback"/> is true, through the shared hub. If the stream is already capturing that
+/// device, no second capture session is opened.
 /// </summary>
-public sealed class AudioLevelMonitor(AudioCaptureHub hub, AudioLevelBus bus) : IDisposable
+public sealed class AudioLevelMonitor(AudioCaptureHub hub, AudioLevelBus bus, bool loopback = false) : IDisposable
 {
     private AudioTap? _tap;
     private string? _deviceId;
 
     public string? Problem { get; private set; }
 
-    /// <summary>Starts (or switches) metering of <paramref name="deviceId"/> (null = default microphone).</summary>
+    /// <summary>Starts (or switches) metering of <paramref name="deviceId"/> (null = the default device).</summary>
     public void Start(string? deviceId)
     {
         if (_tap is not null && _deviceId == deviceId)
@@ -263,7 +264,7 @@ public sealed class AudioLevelMonitor(AudioCaptureHub hub, AudioLevelBus bus) : 
         Stop();
         try
         {
-            _tap = hub.Subscribe(deviceId, loopback: false, (data, silent) =>
+            _tap = hub.Subscribe(deviceId, loopback, (data, silent) =>
             {
                 if (silent)
                 {
@@ -280,7 +281,7 @@ public sealed class AudioLevelMonitor(AudioCaptureHub hub, AudioLevelBus bus) : 
         }
         catch (StreamFailureException ex)
         {
-            Problem = "Audio-reactive effects need a microphone: " + ex.Error.UserMessage;
+            Problem = (loopback ? "System audio can't be metered: " : "Audio-reactive effects need a microphone: ") + ex.Error.UserMessage;
             bus.Active = false;
         }
     }

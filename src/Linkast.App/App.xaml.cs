@@ -87,7 +87,7 @@ public partial class App : Application
         await _host.StartAsync();
 
         // Apply the saved appearance before the first window exists, so it never flashes light.
-        ThemeMode = ThemeOption.For(_host.Services.GetRequiredService<JsonSettingsStore>().Load().Theme).Mode;
+        ThemeService.Apply(_host.Services.GetRequiredService<JsonSettingsStore>().Load().Theme);
 
         var window = _host.Services.GetRequiredService<MainWindow>();
         MainWindow = window;

@@ -1,0 +1,73 @@
+<UserControl x:Class="Linkast.App.Views.AboutPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- The GPL's "appropriate legal notices": copyright, no warranty, licence and source. -->
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="22,18,22,22" MaxWidth="860" HorizontalAlignment="Left">
+            <TextBlock Text="About" Style="{StaticResource Linkast.Text.PageTitle}" />
+            <TextBlock Text="Version, licence and open-source notices." Style="{StaticResource Linkast.Text.Hint}" FontSize="12" Margin="0,2,0,16" />
+
+            <Border Style="{StaticResource Linkast.Card}" Padding="18">
+                <StackPanel Orientation="Horizontal">
+                    <Image Source="{StaticResource BrandAppIcon}" Width="88" Height="88" Margin="0,0,18,0"
+                           RenderOptions.BitmapScalingMode="HighQuality" AutomationProperties.Name="Linkast logo" />
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Linkast" FontFamily="{DynamicResource Linkast.Font.Display}" FontSize="{StaticResource Linkast.FontSize.Display}" FontWeight="Bold" />
+                        <TextBlock x:Name="VersionText" Foreground="{DynamicResource Linkast.TextSecondary}" Margin="0,2,0,0" />
+                        <TextBlock Text="Lightweight, local-only live streaming for Windows." Foreground="{DynamicResource Linkast.TextSecondary}" Margin="0,6,0,0" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource Linkast.Card}">
+                <StackPanel>
+                    <DockPanel>
+                        <Border DockPanel.Dock="Right" Style="{StaticResource Linkast.StatusPill.Brand}">
+                            <TextBlock Text="GPL-3.0-or-later" />
+                        </Border>
+                        <TextBlock Text="Licence" Style="{StaticResource Linkast.Card.Title}" />
+                    </DockPanel>
+                    <TextBlock Style="{StaticResource Linkast.Text.Body}" Text="Copyright (C) Linkast contributors." />
+                    <TextBlock Style="{StaticResource Linkast.Text.Body}" Margin="0,10,0,0"
+                               Text="Linkast is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version." />
+                    <TextBlock Style="{StaticResource Linkast.Text.Body}" Margin="0,10,0,0"
+                               Text="Linkast is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details." />
+                    <Button Style="{StaticResource Linkast.Button.Secondary}" Click="OnLicense" HorizontalAlignment="Left" Margin="0,14,0,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE8A7;" FontSize="13" Margin="0,0,8,0" />
+                            <AccessText Text="_Licence (GPL)" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource Linkast.Card}">
+                <StackPanel>
+                    <TextBlock Text="Open-source components" Style="{StaticResource Linkast.Card.Title}" />
+                    <TextBlock Style="{StaticResource Linkast.Text.Body}"
+                               Text="Linkast includes FFmpeg (GPL), the RobustVideoMatting model (GPL) and other open-source components. Their licences and the complete source of the bundled FFmpeg are listed in the third-party notices." />
+                    <WrapPanel Margin="0,14,0,0">
+                        <Button Style="{StaticResource Linkast.Button.Secondary}" Click="OnNotices" Margin="0,0,8,8">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE8A7;" FontSize="13" Margin="0,0,8,0" />
+                                <AccessText Text="Third-party _notices" />
+                            </StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource Linkast.Button.Secondary}" Click="OnFfmpeg" Margin="0,0,8,8">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE8A7;" FontSize="13" Margin="0,0,8,0" />
+                                <AccessText Text="_FFmpeg build and source" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="SourceButton" Style="{StaticResource Linkast.Button.Secondary}" Click="OnSource" Margin="0,0,8,8">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE8A7;" FontSize="13" Margin="0,0,8,0" />
+                                <AccessText Text="Source _code" />
+                            </StackPanel>
+                        </Button>
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

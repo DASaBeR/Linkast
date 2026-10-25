@@ -25,6 +25,9 @@ public partial class WebcamPanel : UserControl
         };
     }
 
+    /// <summary>Opens the Layout section (used by "Edit layout" on the Stream page).</summary>
+    public void ShowLayout() => TabLayout.IsSelected = true;
+
     private void OnStudioChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(WebcamStudioViewModel.Selected))

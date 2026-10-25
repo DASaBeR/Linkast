@@ -431,6 +431,7 @@ public sealed partial class CameraLayerViewModel : ObservableObject, IAsyncDispo
     // ---- Placement (in the active layout) -----------------------------------------------------
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PlacementSummary))]
     public partial NormalizedRect Placement { get; set; } = SceneLayout.DefaultLandscape("x").CameraPlacements["x"];
 
     /// <summary>True when the active layout shows this camera.</summary>
@@ -455,6 +456,10 @@ public sealed partial class CameraLayerViewModel : ObservableObject, IAsyncDispo
     public int CanvasHeight { get; private set; } = 1080;
 
     public bool IsLandscapeCanvas => CanvasWidth >= CanvasHeight;
+
+    /// <summary>Position and size in output pixels, for the layout editor.</summary>
+    public string PlacementSummary => string.Create(CultureInfo.InvariantCulture,
+        $"X {Placement.X * CanvasWidth:0}  ·  Y {Placement.Y * CanvasHeight:0}  ·  {Placement.Width * CanvasWidth:0} × {Placement.Height * CanvasHeight:0}");
 
     /// <summary>Layer aspect ratio for the editor (circle = 1).</summary>
     public double LayerAspectRatio => Layer.Settings.AspectRatio;

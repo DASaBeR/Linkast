@@ -43,7 +43,7 @@ public sealed record DestinationKindOption(DestinationKind Kind, string Label, s
     public override string ToString() => Label;
 }
 
-/// <summary>An appearance choice and how WPF's Fluent theme expresses it.</summary>
+/// <summary>An appearance choice. <see cref="Services.ThemeService"/> applies it.</summary>
 public sealed record ThemeOption(Linkast.Core.Settings.AppTheme Theme, string Label)
 {
     public static IReadOnlyList<ThemeOption> All { get; } =
@@ -54,15 +54,6 @@ public sealed record ThemeOption(Linkast.Core.Settings.AppTheme Theme, string La
     ];
 
     public static ThemeOption For(Linkast.Core.Settings.AppTheme theme) => All.FirstOrDefault(o => o.Theme == theme) ?? All[0];
-
-#pragma warning disable WPF0001 // Fluent ThemeMode is marked experimental.
-    public System.Windows.ThemeMode Mode => Theme switch
-    {
-        Linkast.Core.Settings.AppTheme.Light => System.Windows.ThemeMode.Light,
-        Linkast.Core.Settings.AppTheme.System => System.Windows.ThemeMode.System,
-        _ => System.Windows.ThemeMode.Dark,
-    };
-#pragma warning restore WPF0001
 
     public override string ToString() => Label;
 }

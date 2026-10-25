@@ -12,435 +12,324 @@
         <DataTemplate x:Key="EnumTemplate">
             <TextBlock Text="{Binding Converter={x:Static vm:Converters.EnumLabel}}" />
         </DataTemplate>
-        <DataTemplate x:Key="SwatchTemplate" DataType="{x:Type vm:SwatchOption}">
-            <StackPanel Orientation="Horizontal">
-                <Border Width="14" Height="14" CornerRadius="3" Background="{Binding Brush}" BorderBrush="Gray" BorderThickness="1" Margin="0,0,6,0" />
-                <TextBlock Text="{Binding Name}" />
-            </StackPanel>
+        <DataTemplate x:Key="ShapeTemplate">
+            <TextBlock Text="{Binding Converter={x:Static vm:Converters.ShapeShort}}" ToolTip="{Binding Converter={x:Static vm:Converters.EnumLabel}}" />
         </DataTemplate>
-        <Style x:Key="SliderRow" TargetType="Grid">
-            <Setter Property="Margin" Value="0,6,0,0" />
+        <Style x:Key="Section" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{DynamicResource Linkast.TextTertiary}" />
+            <Setter Property="Margin" Value="0,18,0,2" />
+        </Style>
+        <!-- Colour swatches: a row of round chips, the selected one ringed in the focus colour. -->
+        <Style x:Key="Swatches" TargetType="ListBox">
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+            <Setter Property="ItemsPanel">
+                <Setter.Value>
+                    <ItemsPanelTemplate>
+                        <WrapPanel />
+                    </ItemsPanelTemplate>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBox">
+                        <ItemsPresenter />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="ItemContainerStyle">
+                <Setter.Value>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Margin" Value="0,0,8,6" />
+                        <Setter Property="Cursor" Value="Hand" />
+                        <Setter Property="FocusVisualStyle" Value="{StaticResource Linkast.FocusVisual}" />
+                        <Setter Property="AutomationProperties.Name" Value="{Binding Name}" />
+                        <Setter Property="ToolTip" Value="{Binding Name}" />
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <Grid Width="26" Height="26">
+                                        <Ellipse x:Name="Ring" Stroke="Transparent" StrokeThickness="2" />
+                                        <Ellipse Margin="4" Fill="{Binding Brush}" Stroke="{DynamicResource Linkast.BorderStrong}" StrokeThickness="1" />
+                                    </Grid>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="Ring" Property="Stroke" Value="{DynamicResource Linkast.Focus}" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </Setter.Value>
+            </Setter>
         </Style>
     </UserControl.Resources>
 
-    <!-- One camera layer's settings. The studio shows only the selected layer's panel. -->
-    <StackPanel>
+    <!-- One camera layer: the camera and its preview on the left, its look and effects on the right. -->
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" MinWidth="300" />
+            <ColumnDefinition Width="14" />
+            <ColumnDefinition Width="360" />
+        </Grid.ColumnDefinitions>
 
-        <!-- Camera -->
-        <Border Style="{StaticResource Card}">
+        <!-- ===== Camera ===== -->
+        <Border Style="{StaticResource Linkast.Card}" VerticalAlignment="Top">
             <StackPanel>
-                <DockPanel>
-                    <Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding DataContext.RefreshDevicesCommand, RelativeSource={RelativeSource AncestorType=views:WebcamPanel}}"
-                            ToolTip="Look for cameras again" />
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="{Binding Name}" Style="{StaticResource CardTitle}" />
-                        <Border Margin="12,0,0,10" CornerRadius="10" Padding="8,2" VerticalAlignment="Center"
-                                Background="{StaticResource LiveBrush}"
-                                Visibility="{Binding State, Converter={x:Static vm:Converters.RunningToVisibility}}"
-                                AutomationProperties.Name="Camera is active">
-                            <TextBlock Text="● Camera active" Foreground="White" FontSize="11" FontWeight="SemiBold" />
-                        </Border>
-                    </StackPanel>
+                <DockPanel Margin="0,0,0,12">
+                    <CheckBox DockPanel.Dock="Right" Content="_Camera on" IsChecked="{Binding CameraOn}" IsEnabled="{Binding HasCamera}" FontWeight="SemiBold"
+                              VerticalAlignment="Center" ToolTip="Turning the camera off releases it immediately and hides it from your stream." />
+                    <Border DockPanel.Dock="Right" Style="{StaticResource Linkast.StatusPill.Success}" Margin="0,0,14,0"
+                            Visibility="{Binding State, Converter={x:Static vm:Converters.RunningToVisibility}}" AutomationProperties.Name="Camera is active">
+                        <TextBlock Text="● CAMERA ACTIVE" />
+                    </Border>
+                    <TextBlock Text="{Binding Name}" Style="{StaticResource Linkast.Card.Title}" Margin="0" TextTrimming="CharacterEllipsis" />
                 </DockPanel>
 
-                <Label Content="_Name" Target="{Binding ElementName=NameBox}" Style="{StaticResource FieldLabel}" Margin="0,0,0,4" />
-                <TextBox x:Name="NameBox" Text="{Binding Name, UpdateSourceTrigger=LostFocus}" MaxLength="40" Margin="0,0,0,10"
-                         ToolTip="For example Face cam or Desk cam" />
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="2*" />
+                        <ColumnDefinition Width="10" />
                         <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="10" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <CheckBox Content="_Camera on" IsChecked="{Binding CameraOn}" VerticalAlignment="Center" Margin="0,0,16,0"
-                              IsEnabled="{Binding HasCamera}"
-                              ToolTip="Turning the camera off releases it immediately and hides it from your stream." />
-                    <ComboBox Grid.Column="1" ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice}"
-                              AutomationProperties.Name="Camera" />
+                    <StackPanel>
+                        <TextBlock Text="Device" Style="{StaticResource Linkast.Text.FieldLabel}" />
+                        <ComboBox ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice}" AutomationProperties.Name="Camera" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <Label Content="_Resolution" Target="{Binding ElementName=FormatBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
+                        <ComboBox x:Name="FormatBox" ItemsSource="{Binding Formats}" SelectedItem="{Binding SelectedFormat}" />
+                    </StackPanel>
+                    <Button Grid.Column="4" Style="{StaticResource Linkast.Button.Icon}" Content="&#xE72C;" VerticalAlignment="Bottom" Width="34" Height="34"
+                            Command="{Binding DataContext.RefreshDevicesCommand, RelativeSource={RelativeSource AncestorType=views:WebcamPanel}}"
+                            ToolTip="Look for cameras again" AutomationProperties.Name="Look for cameras again" />
                 </Grid>
-                <TextBlock Style="{StaticResource Hint}" Text="No camera found. Connect one, or use a phone app such as Iriun or DroidCam, then press Refresh."
-                           Visibility="{Binding HasCamera, Converter={x:Static vm:Converters.InverseBoolToVisibility}}" />
 
-                <Border Margin="0,12,0,0" CornerRadius="8" Background="#FF1E1E22" Height="270" ClipToBounds="True">
+                <Border Margin="0,12,0,0" CornerRadius="{StaticResource Linkast.Radius.Preview}" Background="#FF07080F" MinHeight="220"
+                        BorderBrush="{DynamicResource Linkast.BorderStrong}" BorderThickness="1" ClipToBounds="True">
                     <Grid>
-                        <TextBlock Text="{Binding StatusText}" Foreground="#FFB0B0B8" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        <Image Source="{Binding Preview}" Stretch="Uniform" Margin="8"
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24">
+                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE960;" FontSize="30" HorizontalAlignment="Center" Foreground="#FF8993B8" />
+                            <TextBlock Text="{Binding StatusText}" Foreground="#FFB5BCD9" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,0" />
+                            <TextBlock Foreground="#FF8993B8" FontSize="11" TextAlignment="Center" TextWrapping="Wrap" Margin="0,4,0,0" MaxWidth="320"
+                                       Visibility="{Binding HasCamera, Converter={x:Static vm:Converters.InverseBoolToVisibility}}"
+                                       Text="No camera found. Connect one, or use a phone app such as Iriun or DroidCam, then look for cameras again." />
+                        </StackPanel>
+                        <Image Source="{Binding Preview}" Stretch="Uniform"
                                Visibility="{Binding State, Converter={x:Static vm:Converters.RunningToVisibility}}"
                                AutomationProperties.Name="Camera preview" />
                     </Grid>
                 </Border>
-                <TextBlock Style="{StaticResource Hint}" Text="{Binding DiagnosticsText}" />
-                <Border Margin="0,8,0,0" Padding="10,6" CornerRadius="6" BorderThickness="1" BorderBrush="{StaticResource ConnectingBrush}"
+                <TextBlock Style="{StaticResource Linkast.Text.Hint}" Text="{Binding DiagnosticsText}" Margin="0,8,0,0" />
+                <Border Style="{StaticResource Linkast.Issue.Warning}" Margin="0,10,0,0"
                         Visibility="{Binding CameraError, Converter={x:Static vm:Converters.NotNullToVisibility}}"
                         AutomationProperties.LiveSetting="Assertive">
                     <TextBlock Text="{Binding CameraError}" TextWrapping="Wrap" />
                 </Border>
-
-                <Label Content="_Resolution" Target="{Binding ElementName=FormatBox}" Style="{StaticResource FieldLabel}" />
-                <ComboBox x:Name="FormatBox" ItemsSource="{Binding Formats}" SelectedItem="{Binding SelectedFormat}" />
+                <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,10,0,0"
+                           Text="Camera problems never stop your stream. The picture is processed on this PC and never uploaded." />
             </StackPanel>
         </Border>
 
-        <!-- Look -->
-        <Border Style="{StaticResource Card}">
+        <!-- ===== Inspector ===== -->
+        <Border Grid.Column="2" Style="{StaticResource Linkast.Card}" VerticalAlignment="Top">
             <StackPanel>
-                <TextBlock Text="Look" Style="{StaticResource CardTitle}" />
-
-                <Label Content="_Preset" Target="{Binding ElementName=PresetBox}" Style="{StaticResource FieldLabel}" Margin="0,0,0,4" />
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <ComboBox x:Name="PresetBox" ItemsSource="{Binding Presets}" SelectedItem="{Binding SelectedPreset}" />
-                    <Button Grid.Column="1" Content="Reset" Margin="8,0,0,0" Command="{Binding ResetToPresetCommand}"
-                            ToolTip="Undo your changes and go back to this preset" />
-                </Grid>
-                <Expander Header="Manage presets" Margin="0,8,0,0">
-                    <StackPanel Margin="0,6,0,0">
-                        <TextBox Text="{Binding NewPresetName, UpdateSourceTrigger=PropertyChanged}"
-                                 AutomationProperties.Name="Preset name" ToolTip="Name for a new or renamed preset" />
-                        <WrapPanel Margin="0,8,0,0">
-                            <Button Content="Save as new" Command="{Binding SaveAsPresetCommand}" Margin="0,0,8,8" />
-                            <Button Content="Update preset" Command="{Binding UpdatePresetCommand}" IsEnabled="{Binding CanEditPreset}" Margin="0,0,8,8" />
-                            <Button Content="Duplicate" Command="{Binding DuplicatePresetCommand}" Margin="0,0,8,8" />
-                            <Button Content="Rename" Command="{Binding RenamePresetCommand}" IsEnabled="{Binding CanEditPreset}" Margin="0,0,8,8" />
-                            <Button Content="Delete" Command="{Binding DeletePresetCommand}" IsEnabled="{Binding CanEditPreset}" Margin="0,0,8,8" />
-                        </WrapPanel>
-                        <TextBlock Style="{StaticResource Hint}" Text="Built-in presets can't be changed; duplicate one to make your own. Presets store the look and position, never the camera itself." />
-                    </StackPanel>
-                </Expander>
-
-                <Grid Margin="0,4,0,0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="12" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel>
-                        <Label Content="_Shape" Target="{Binding ElementName=ShapeBox}" Style="{StaticResource FieldLabel}" />
-                        <ComboBox x:Name="ShapeBox" ItemsSource="{Binding Shapes}" SelectedItem="{Binding Shape}" ItemTemplate="{StaticResource EnumTemplate}" />
-                    </StackPanel>
-                    <StackPanel Grid.Column="2">
-                        <Label Content="_Aspect ratio" Target="{Binding ElementName=AspectBox}" Style="{StaticResource FieldLabel}" />
-                        <ComboBox x:Name="AspectBox" ItemsSource="{Binding Aspects}" SelectedItem="{Binding Aspect}" ItemTemplate="{StaticResource EnumTemplate}"
-                                  IsEnabled="{Binding Shape, Converter={x:Static vm:Converters.NotCircle}}" />
-                    </StackPanel>
-                </Grid>
-
-                <Grid Style="{StaticResource SliderRow}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="110" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Text="Zoom" VerticalAlignment="Center" />
-                    <Slider Grid.Column="1" Minimum="1" Maximum="4" Value="{Binding Zoom}" AutomationProperties.Name="Zoom" />
-                </Grid>
-                <Grid Style="{StaticResource SliderRow}" Visibility="{Binding Shape, Converter={x:Static vm:Converters.RoundedToVisibility}}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="110" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Text="Corner radius" VerticalAlignment="Center" />
-                    <Slider Grid.Column="1" Minimum="0" Maximum="50" Value="{Binding CornerRadius}" AutomationProperties.Name="Corner radius" />
-                </Grid>
-                <Grid Style="{StaticResource SliderRow}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="110" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Text="Border" VerticalAlignment="Center" />
-                    <Slider Grid.Column="1" Minimum="0" Maximum="10" Value="{Binding BorderWidth}" AutomationProperties.Name="Border width" />
-                    <ComboBox Grid.Column="2" Width="120" Margin="8,0,0,0" ItemsSource="{Binding BorderColors}" SelectedItem="{Binding SelectedBorderColor}"
-                              AutomationProperties.Name="Border colour" ItemTemplate="{StaticResource SwatchTemplate}" />
-                </Grid>
-                <CheckBox Content="_Mirror (like looking in a mirror)" IsChecked="{Binding Mirror}" Margin="0,10,0,0" />
-
-                <DockPanel Margin="0,16,0,0">
-                    <Button DockPanel.Dock="Right" Content="Reset image" Command="{Binding ResetImageCommand}" />
-                    <TextBlock Text="Image" FontWeight="SemiBold" VerticalAlignment="Center" />
-                </DockPanel>
-                <Grid Style="{StaticResource SliderRow}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="110" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Text="Brightness" VerticalAlignment="Center" />
-                    <Slider Grid.Column="1" Minimum="-50" Maximum="50" Value="{Binding Brightness}" AutomationProperties.Name="Brightness" />
-                </Grid>
-                <Grid Style="{StaticResource SliderRow}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="110" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Text="Contrast" VerticalAlignment="Center" />
-                    <Slider Grid.Column="1" Minimum="50" Maximum="150" Value="{Binding Contrast}" AutomationProperties.Name="Contrast" />
-                </Grid>
-                <Grid Style="{StaticResource SliderRow}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="110" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Text="Saturation" VerticalAlignment="Center" />
-                    <Slider Grid.Column="1" Minimum="0" Maximum="200" Value="{Binding Saturation}" AutomationProperties.Name="Saturation" />
-                </Grid>
-
-                <Expander Header="Advanced image and camera settings" Margin="0,12,0,0">
-                    <StackPanel Margin="0,4,0,0">
-                        <Grid Style="{StaticResource SliderRow}">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="110" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="Sharpen" VerticalAlignment="Center" />
-                            <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding Sharpen}" AutomationProperties.Name="Sharpen" />
-                        </Grid>
-                        <Grid Style="{StaticResource SliderRow}">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="110" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="Noise reduction" VerticalAlignment="Center" />
-                            <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding Denoise}" AutomationProperties.Name="Noise reduction" />
-                        </Grid>
-                        <Grid Style="{StaticResource SliderRow}">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="110" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="Low-light boost" VerticalAlignment="Center" />
-                            <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding LowLightBoost}" AutomationProperties.Name="Low-light boost"
-                                    ToolTip="Brightens dark rooms automatically. Works best together with some noise reduction." />
-                        </Grid>
-                        <Grid Style="{StaticResource SliderRow}">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="110" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="Crop left/right" VerticalAlignment="Center" />
-                            <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding CenterX}" AutomationProperties.Name="Crop horizontal position"
-                                    ToolTip="Moves the crop when zoomed in" />
-                        </Grid>
-                        <Grid Style="{StaticResource SliderRow}">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="110" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="Crop up/down" VerticalAlignment="Center" />
-                            <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding CenterY}" AutomationProperties.Name="Crop vertical position"
-                                    ToolTip="Moves the crop when zoomed in" />
-                        </Grid>
-
-                        <TextBlock Text="Camera hardware" FontWeight="SemiBold" Margin="0,14,0,0" />
-                        <TextBlock Style="{StaticResource Hint}" Text="{Binding HardwareNote}" />
-                        <ItemsControl ItemsSource="{Binding HardwareControls}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate DataType="{x:Type vm:HardwareControlViewModel}">
-                                    <Grid Margin="0,6,0,0" IsEnabled="{Binding Supported}" ToolTip="{Binding UnsupportedReason}">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="110" />
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="{Binding Label}" VerticalAlignment="Center" />
-                                        <CheckBox Grid.Column="1" Content="Auto" IsChecked="{Binding Auto}" Margin="0,0,8,0"
-                                                  IsEnabled="{Binding Info.SupportsAuto}" />
-                                        <Slider Grid.Column="2" Minimum="{Binding Info.Min}" Maximum="{Binding Info.Max}" Value="{Binding Value}"
-                                                IsEnabled="{Binding Auto, Converter={x:Static vm:Converters.InverseBool}}"
-                                                AutomationProperties.Name="{Binding Label}" />
-                                    </Grid>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
-                </Expander>
-            </StackPanel>
-        </Border>
-
-        <!-- Background -->
-        <Border Style="{StaticResource Card}">
-            <StackPanel>
-                <TextBlock Text="Background" Style="{StaticResource CardTitle}" />
-                <ListBox ItemsSource="{Binding BackgroundModes}" SelectedItem="{Binding BackgroundMode}"
-                         AutomationProperties.Name="Background mode" BorderThickness="0" Background="Transparent">
-                    <ListBox.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <UniformGrid Rows="1" />
-                        </ItemsPanelTemplate>
-                    </ListBox.ItemsPanel>
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <TextBlock Text="{Binding Converter={x:Static vm:Converters.EnumLabel}}" HorizontalAlignment="Center" Margin="4,2" />
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
+                <ListBox Style="{StaticResource Linkast.Segmented}" AutomationProperties.Name="Camera settings" SelectedIndex="0">
                     <ListBox.ItemContainerStyle>
-                        <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
-                            <Setter Property="HorizontalContentAlignment" Value="Center" />
-                            <Setter Property="AutomationProperties.Name" Value="{Binding Converter={x:Static vm:Converters.EnumLabel}}" />
+                        <Style TargetType="ListBoxItem" BasedOn="{StaticResource Linkast.Segmented.Item}">
+                            <Setter Property="Padding" Value="2,6" />
+                            <Setter Property="FontSize" Value="12" />
                         </Style>
                     </ListBox.ItemContainerStyle>
+                    <ListBoxItem x:Name="TabLook" Content="Look" />
+                    <ListBoxItem x:Name="TabBackground" Content="Background" />
+                    <ListBoxItem x:Name="TabFraming" Content="Framing" />
+                    <ListBoxItem x:Name="TabEffects" Content="Effects" />
                 </ListBox>
-                <TextBlock Style="{StaticResource Hint}" Text="Runs on this PC only. Your camera picture is never uploaded for this." />
 
-                <Grid Style="{StaticResource SliderRow}" Visibility="{Binding IsBlurMode, Converter={StaticResource BoolToVis}}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="110" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Text="Blur strength" VerticalAlignment="Center" />
-                    <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding BlurStrength}" AutomationProperties.Name="Blur strength" />
-                </Grid>
-
-                <DockPanel Margin="0,8,0,0" Visibility="{Binding IsImageMode, Converter={StaticResource BoolToVis}}">
-                    <Button DockPanel.Dock="Left" Content="Choose image…" Command="{Binding ChooseBackgroundImageCommand}" />
-                    <TextBlock Text="{Binding BackgroundImageName}" VerticalAlignment="Center" Margin="10,0,0,0" TextTrimming="CharacterEllipsis" />
-                </DockPanel>
-
-                <StackPanel Visibility="{Binding HasBackgroundEffect, Converter={StaticResource BoolToVis}}">
-                    <Grid Style="{StaticResource SliderRow}">
+                <!-- Look -->
+                <StackPanel Visibility="{Binding IsSelected, ElementName=TabLook, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="PRESET" Style="{StaticResource Section}" Margin="0,16,0,6" />
+                    <Grid>
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="110" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="Edge softness" VerticalAlignment="Center" />
-                        <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding EdgeSoftness}" AutomationProperties.Name="Edge softness" />
-                    </Grid>
-                    <Expander Header="Performance" Margin="0,8,0,0">
-                        <StackPanel Margin="0,6,0,0">
-                            <Label Content="_Quality" Target="{Binding ElementName=QualityBox}" Style="{StaticResource FieldLabel}" Margin="0,0,0,4" />
-                            <ComboBox x:Name="QualityBox" ItemsSource="{Binding Qualities}" SelectedItem="{Binding SegmentationQuality}" />
-                            <CheckBox Content="Use the graphics card (recommended)" IsChecked="{Binding PreferGpu}" Margin="0,10,0,0"
-                                      ToolTip="Uses Windows' DirectML on your GPU. If it isn't available, the CPU is used automatically." />
-                        </StackPanel>
-                    </Expander>
-                    <TextBlock Text="{Binding BackgroundStatus}" TextWrapping="Wrap" Margin="0,10,0,0"
-                               Foreground="{Binding BackgroundProblem, Converter={x:Static vm:Converters.ProblemBrush}}"
-                               AutomationProperties.Name="Background effect status" AutomationProperties.LiveSetting="Polite" />
-                </StackPanel>
-            </StackPanel>
-        </Border>
-
-        <!-- Auto-framing -->
-        <Border Style="{StaticResource Card}">
-            <StackPanel>
-                <TextBlock Text="Auto-framing" Style="{StaticResource CardTitle}" />
-                <CheckBox Content="_Keep my face in frame" IsChecked="{Binding FramingEnabled}"
-                          ToolTip="Follows your face smoothly. Manual zoom and crop are paused while this is on." />
-                <TextBlock Style="{StaticResource Hint}" Text="Uses Windows' built-in face detection on this PC. Nothing is uploaded. Small movements are ignored so the picture stays calm." />
-                <StackPanel Visibility="{Binding FramingEnabled, Converter={StaticResource BoolToVis}}">
-                    <Grid Style="{StaticResource SliderRow}">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="110" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="Face size" VerticalAlignment="Center" />
-                        <Slider Grid.Column="1" Minimum="15" Maximum="45" Value="{Binding FaceSize}" AutomationProperties.Name="Face size" ToolTip="Small = wide shot, large = close-up" />
-                    </Grid>
-                    <Grid Style="{StaticResource SliderRow}">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="110" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="Headroom" VerticalAlignment="Center" />
-                        <Slider Grid.Column="1" Minimum="0" Maximum="30" Value="{Binding Headroom}" AutomationProperties.Name="Headroom" ToolTip="Space above your head" />
-                    </Grid>
-                    <Grid Style="{StaticResource SliderRow}">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="110" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="Maximum zoom" VerticalAlignment="Center" />
-                        <Slider Grid.Column="1" Minimum="1" Maximum="4" Value="{Binding MaxZoom}" AutomationProperties.Name="Maximum zoom" ToolTip="Limits how far in the camera may zoom" />
-                    </Grid>
-                    <Grid Style="{StaticResource SliderRow}">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="110" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="Speed" VerticalAlignment="Center" />
-                        <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding FramingSpeed}" AutomationProperties.Name="Framing speed" ToolTip="Slow and calm, or fast and responsive" />
-                    </Grid>
-                    <TextBlock Text="{Binding FramingStatus}" TextWrapping="Wrap" Margin="0,10,0,0"
-                               Foreground="{Binding FramingProblem, Converter={x:Static vm:Converters.ProblemBrush}}"
-                               AutomationProperties.Name="Auto-framing status" AutomationProperties.LiveSetting="Polite" />
-                </StackPanel>
-            </StackPanel>
-        </Border>
-
-        <!-- Effects -->
-        <Border Style="{StaticResource Card}">
-            <StackPanel>
-                <TextBlock Text="Border effects" Style="{StaticResource CardTitle}" />
-                <Label Content="_Animation" Target="{Binding ElementName=AnimationBox}" Style="{StaticResource FieldLabel}" Margin="0,0,0,4" />
-                <ComboBox x:Name="AnimationBox" ItemsSource="{Binding Animations}" SelectedItem="{Binding BorderAnimation}" ItemTemplate="{StaticResource EnumTemplate}" />
-                <StackPanel Visibility="{Binding HasAnimation, Converter={StaticResource BoolToVis}}">
-                    <Grid Style="{StaticResource SliderRow}">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="110" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="Speed" VerticalAlignment="Center" />
-                        <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding AnimationSpeed}" AutomationProperties.Name="Animation speed" />
-                    </Grid>
-                </StackPanel>
-                <Grid Style="{StaticResource SliderRow}">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="110" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Text="Glow" VerticalAlignment="Center" />
-                    <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding Glow}" AutomationProperties.Name="Glow" ToolTip="A soft glow around the camera in the border colour" />
-                </Grid>
-                <TextBlock Style="{StaticResource Hint}" Text="Animations change the border, so give the camera a border above. They run on a clock, so they look the same at any frame rate." />
-
-                <CheckBox Content="_React to my voice" IsChecked="{Binding AudioReactive}" Margin="0,16,0,0"
-                          ToolTip="The border or glow responds while you speak" />
-                <StackPanel Visibility="{Binding AudioReactive, Converter={StaticResource BoolToVis}}">
-                    <Label Content="St_yle" Target="{Binding ElementName=AudioStyleBox}" Style="{StaticResource FieldLabel}" Margin="0,8,0,4" />
-                    <ComboBox x:Name="AudioStyleBox" ItemsSource="{Binding AudioStyles}" SelectedItem="{Binding AudioStyle}" ItemTemplate="{StaticResource EnumTemplate}" />
-                    <Grid Style="{StaticResource SliderRow}">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="110" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="Threshold (dB)" VerticalAlignment="Center" />
-                        <Slider Grid.Column="1" Minimum="-60" Maximum="-10" Value="{Binding ThresholdDb}" AutomationProperties.Name="Speaking threshold" ToolTip="How loud you need to be to count as speaking. Lower is more sensitive." />
-                    </Grid>
-                    <Grid Style="{StaticResource SliderRow}">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="110" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="Intensity" VerticalAlignment="Center" />
-                        <Slider Grid.Column="1" Minimum="0" Maximum="100" Value="{Binding AudioIntensity}" AutomationProperties.Name="Effect intensity" />
-                    </Grid>
-                    <Grid Style="{StaticResource SliderRow}" Visibility="{Binding UsesIndicatorColor, Converter={StaticResource BoolToVis}}">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="110" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="Speaking colour" VerticalAlignment="Center" />
-                        <ComboBox Grid.Column="1" ItemsSource="{Binding IndicatorColors}" SelectedItem="{Binding SelectedIndicatorColor}"
-                                  AutomationProperties.Name="Speaking colour" ItemTemplate="{StaticResource SwatchTemplate}" />
-                    </Grid>
-                    <Grid Style="{StaticResource SliderRow}">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="110" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="Voice level" VerticalAlignment="Center" />
-                        <ProgressBar Grid.Column="1" Height="8" Minimum="0" Maximum="100" VerticalAlignment="Center"
-                                     Value="{Binding DataContext.AudioLevel, RelativeSource={RelativeSource AncestorType=views:WebcamPanel}, Mode=OneWay}"
-                                     AutomationProperties.Name="Voice level" />
-                        <TextBlock Grid.Column="2" Margin="8,0,0,0" MinWidth="70" Text="Speaking" FontWeight="SemiBold" Foreground="{StaticResource OkBrush}"
-                                   Visibility="{Binding DataContext.Speaking, RelativeSource={RelativeSource AncestorType=views:WebcamPanel}, Converter={StaticResource BoolToVis}}" />
+                        <ComboBox x:Name="PresetBox" ItemsSource="{Binding Presets}" SelectedItem="{Binding SelectedPreset}" AutomationProperties.Name="Preset" />
+                        <!-- No preset selected means the look was set by hand. -->
+                        <TextBlock Text="Custom look" Margin="12,0,36,0" VerticalAlignment="Center" IsHitTestVisible="False"
+                                   Foreground="{DynamicResource Linkast.TextTertiary}"
+                                   Visibility="{Binding SelectedPreset, Converter={x:Static vm:Converters.NullToVisibility}}" />
+                        <Button Grid.Column="1" Style="{StaticResource Linkast.Button.Secondary}" Content="Reset" Margin="8,0,0,0" Command="{Binding ResetToPresetCommand}"
+                                ToolTip="Undo your changes and go back to this preset" />
                     </Grid>
-                    <TextBlock Style="{StaticResource Hint}" Text="Uses the microphone chosen on the Stream tab. If the stream already records it, no second recording is opened." />
-                    <TextBlock Text="{Binding DataContext.AudioProblem, RelativeSource={RelativeSource AncestorType=views:WebcamPanel}}" TextWrapping="Wrap" Foreground="{StaticResource ConnectingBrush}"
-                               Visibility="{Binding DataContext.AudioProblem, RelativeSource={RelativeSource AncestorType=views:WebcamPanel}, Converter={x:Static vm:Converters.NotNullToVisibility}}" />
+                    <Expander Header="Manage presets" Margin="0,8,0,0">
+                        <StackPanel Margin="0,8,0,0">
+                            <TextBlock Text="Preset name" Style="{StaticResource Linkast.Text.FieldLabel}" />
+                            <TextBox Text="{Binding NewPresetName, UpdateSourceTrigger=PropertyChanged}"
+                                     AutomationProperties.Name="Preset name" ToolTip="Name for a new or renamed preset" />
+                            <UniformGrid Columns="2" Margin="0,8,-6,0">
+                                <Button Style="{StaticResource Linkast.Button.Secondary}" Content="Save as new" Command="{Binding SaveAsPresetCommand}" Margin="0,0,6,6" />
+                                <Button Style="{StaticResource Linkast.Button.Secondary}" Content="Update preset" Command="{Binding UpdatePresetCommand}" IsEnabled="{Binding CanEditPreset}" Margin="0,0,6,6" />
+                                <Button Style="{StaticResource Linkast.Button.Secondary}" Content="Duplicate" Command="{Binding DuplicatePresetCommand}" Margin="0,0,6,6" />
+                                <Button Style="{StaticResource Linkast.Button.Secondary}" Content="Rename" Command="{Binding RenamePresetCommand}" IsEnabled="{Binding CanEditPreset}" Margin="0,0,6,6" />
+                            </UniformGrid>
+                            <Button Style="{StaticResource Linkast.Button.DestructiveOutline}" Content="Delete preset" Command="{Binding DeletePresetCommand}"
+                                    IsEnabled="{Binding CanEditPreset}" HorizontalAlignment="Stretch" />
+                            <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,8,0,0"
+                                       Text="Built-in presets are locked; duplicate one to change it. Presets store the look and position, never the camera." />
+                        </StackPanel>
+                    </Expander>
+
+                    <TextBlock Text="SHAPE AND BORDER" Style="{StaticResource Section}" Margin="0,18,0,6" />
+                    <ListBox Style="{StaticResource Linkast.Segmented}" ItemsSource="{Binding Shapes}" SelectedItem="{Binding Shape}"
+                             ItemTemplate="{StaticResource ShapeTemplate}" AutomationProperties.Name="Shape" />
+                    <Label Content="_Aspect ratio" Target="{Binding ElementName=AspectBox}" Style="{StaticResource Linkast.Label.Field}" />
+                    <ComboBox x:Name="AspectBox" ItemsSource="{Binding Aspects}" SelectedItem="{Binding Aspect}" ItemTemplate="{StaticResource EnumTemplate}"
+                              IsEnabled="{Binding Shape, Converter={x:Static vm:Converters.NotCircle}}" />
+                    <views:ValueSlider Label="Zoom" Value="{Binding Zoom}" Minimum="1" Maximum="4" Format="{}{0:0.00}×" DefaultValue="1" />
+                    <views:ValueSlider Label="Corner radius" Value="{Binding CornerRadius}" Minimum="0" Maximum="50" Format="{}{0:0}%"
+                                       Visibility="{Binding Shape, Converter={x:Static vm:Converters.RoundedToVisibility}}" />
+                    <views:ValueSlider Label="Border" Value="{Binding BorderWidth}" Minimum="0" Maximum="10" Format="{}{0:0.#}%" DefaultValue="0" />
+                    <TextBlock Text="Border colour" Style="{StaticResource Linkast.Text.FieldLabel}" Margin="0,10,0,6" />
+                    <ListBox Style="{StaticResource Swatches}" ItemsSource="{Binding BorderColors}" SelectedItem="{Binding SelectedBorderColor}"
+                             AutomationProperties.Name="Border colour" />
+                    <CheckBox Content="_Mirror (like looking in a mirror)" IsChecked="{Binding Mirror}" Margin="0,8,0,0" />
+
+                    <DockPanel Margin="0,18,0,0">
+                        <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Subtle}" Content="Reset image" Command="{Binding ResetImageCommand}" MinHeight="0" Padding="8,3" />
+                        <TextBlock Text="IMAGE" Style="{StaticResource Section}" Margin="0" VerticalAlignment="Center" />
+                    </DockPanel>
+                    <views:ValueSlider Label="Brightness" Value="{Binding Brightness}" Minimum="-50" Maximum="50" Format="{}{0:+0;−0;0}" DefaultValue="0" />
+                    <views:ValueSlider Label="Contrast" Value="{Binding Contrast}" Minimum="50" Maximum="150" Format="{}{0:0}%" DefaultValue="100" />
+                    <views:ValueSlider Label="Saturation" Value="{Binding Saturation}" Minimum="0" Maximum="200" Format="{}{0:0}%" DefaultValue="100" />
+
+                    <Expander Header="Advanced image and camera settings" Margin="0,14,0,0">
+                        <StackPanel Margin="0,2,0,0">
+                            <views:ValueSlider Label="Sharpen" Value="{Binding Sharpen}" Minimum="0" Maximum="100" Format="{}{0:0}%" DefaultValue="0" />
+                            <views:ValueSlider Label="Noise reduction" Value="{Binding Denoise}" Minimum="0" Maximum="100" Format="{}{0:0}%" DefaultValue="0" />
+                            <views:ValueSlider Label="Low-light boost" Value="{Binding LowLightBoost}" Minimum="0" Maximum="100" Format="{}{0:0}%" DefaultValue="0"
+                                               ToolTip="Brightens dark rooms automatically. Works best together with some noise reduction." />
+                            <views:ValueSlider Label="Crop left/right" Value="{Binding CenterX}" Minimum="0" Maximum="100" Format="{}{0:0}%" DefaultValue="50"
+                                               ToolTip="Moves the crop when zoomed in" />
+                            <views:ValueSlider Label="Crop up/down" Value="{Binding CenterY}" Minimum="0" Maximum="100" Format="{}{0:0}%" DefaultValue="50"
+                                               ToolTip="Moves the crop when zoomed in" />
+
+                            <TextBlock Text="CAMERA HARDWARE" Style="{StaticResource Section}" />
+                            <TextBlock Style="{StaticResource Linkast.Text.Hint}" Text="{Binding HardwareNote}" />
+                            <ItemsControl ItemsSource="{Binding HardwareControls}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type vm:HardwareControlViewModel}">
+                                        <DockPanel IsEnabled="{Binding Supported}" ToolTip="{Binding UnsupportedReason}">
+                                            <CheckBox DockPanel.Dock="Right" Content="Auto" IsChecked="{Binding Auto}" IsEnabled="{Binding Info.SupportsAuto}"
+                                                      VerticalAlignment="Bottom" Margin="10,0,0,0" MinWidth="0" />
+                                            <views:ValueSlider Label="{Binding Label}" Value="{Binding Value}" Minimum="{Binding Info.Min}" Maximum="{Binding Info.Max}"
+                                                               IsEnabled="{Binding Auto, Converter={x:Static vm:Converters.InverseBool}}" />
+                                        </DockPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Expander>
+                </StackPanel>
+
+                <!-- Background -->
+                <StackPanel Visibility="{Binding IsSelected, ElementName=TabBackground, Converter={StaticResource BoolToVis}}" Margin="0,16,0,0">
+                    <ListBox Style="{StaticResource Linkast.Segmented}" ItemsSource="{Binding BackgroundModes}" SelectedItem="{Binding BackgroundMode}"
+                             ItemTemplate="{StaticResource EnumTemplate}" AutomationProperties.Name="Background mode" />
+                    <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,8,0,0" Text="Runs on this PC only. Your camera picture is never uploaded for this." />
+
+                    <views:ValueSlider Label="Blur strength" Value="{Binding BlurStrength}" Minimum="0" Maximum="100" Format="{}{0:0}%"
+                                       Visibility="{Binding IsBlurMode, Converter={StaticResource BoolToVis}}" />
+
+                    <StackPanel Margin="0,12,0,0" Visibility="{Binding IsImageMode, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Text="Background image" Style="{StaticResource Linkast.Text.FieldLabel}" />
+                        <TextBlock Text="{Binding BackgroundImageName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                        <Button Style="{StaticResource Linkast.Button.Secondary}" Command="{Binding ChooseBackgroundImageCommand}" HorizontalAlignment="Stretch" Margin="0,8,0,0">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xEB9F;" FontSize="14" Margin="0,0,8,0" />
+                                <TextBlock Text="Choose image…" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+
+                    <StackPanel Visibility="{Binding HasBackgroundEffect, Converter={StaticResource BoolToVis}}">
+                        <views:ValueSlider Label="Edge softness" Value="{Binding EdgeSoftness}" Minimum="0" Maximum="100" Format="{}{0:0}%" />
+                        <TextBlock Text="PERFORMANCE" Style="{StaticResource Section}" />
+                        <Label Content="_Quality" Target="{Binding ElementName=QualityBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,4,0,5" />
+                        <ComboBox x:Name="QualityBox" ItemsSource="{Binding Qualities}" SelectedItem="{Binding SegmentationQuality}" ItemTemplate="{StaticResource EnumTemplate}" />
+                        <CheckBox Content="Use the graphics card (recommended)" IsChecked="{Binding PreferGpu}" Margin="0,10,0,0"
+                                  ToolTip="Uses Windows' DirectML on your GPU. If it isn't available, the CPU is used automatically." />
+                        <TextBlock Text="{Binding BackgroundStatus}" TextWrapping="Wrap" Margin="0,10,0,0"
+                                   Foreground="{Binding BackgroundProblem, Converter={x:Static vm:Converters.ProblemBrush}}"
+                                   AutomationProperties.Name="Background effect status" AutomationProperties.LiveSetting="Polite" />
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- Framing -->
+                <StackPanel Visibility="{Binding IsSelected, ElementName=TabFraming, Converter={StaticResource BoolToVis}}" Margin="0,16,0,0">
+                    <CheckBox Content="_Keep my face in frame" IsChecked="{Binding FramingEnabled}" FontWeight="SemiBold"
+                              ToolTip="Follows your face smoothly. Manual zoom and crop are paused while this is on." />
+                    <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,6,0,0"
+                               Text="Uses Windows' face detection on this PC. Small movements are ignored so the picture stays calm." />
+                    <StackPanel Visibility="{Binding FramingEnabled, Converter={StaticResource BoolToVis}}">
+                        <views:ValueSlider Label="Face size" Value="{Binding FaceSize}" Minimum="15" Maximum="45" Format="{}{0:0}%" ToolTip="Small = wide shot, large = close-up" />
+                        <views:ValueSlider Label="Headroom" Value="{Binding Headroom}" Minimum="0" Maximum="30" Format="{}{0:0}%" ToolTip="Space above your head" />
+                        <views:ValueSlider Label="Maximum zoom" Value="{Binding MaxZoom}" Minimum="1" Maximum="4" Format="{}{0:0.0}×" ToolTip="Limits how far in the camera may zoom" />
+                        <views:ValueSlider Label="Speed" Value="{Binding FramingSpeed}" Minimum="0" Maximum="100" Format="{}{0:0}%" ToolTip="Slow and calm, or fast and responsive" />
+                        <TextBlock Text="{Binding FramingStatus}" TextWrapping="Wrap" Margin="0,12,0,0"
+                                   Foreground="{Binding FramingProblem, Converter={x:Static vm:Converters.ProblemBrush}}"
+                                   AutomationProperties.Name="Auto-framing status" AutomationProperties.LiveSetting="Polite" />
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- Effects -->
+                <StackPanel Visibility="{Binding IsSelected, ElementName=TabEffects, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="BORDER ANIMATION" Style="{StaticResource Section}" Margin="0,16,0,6" />
+                    <ComboBox x:Name="AnimationBox" ItemsSource="{Binding Animations}" SelectedItem="{Binding BorderAnimation}" ItemTemplate="{StaticResource EnumTemplate}"
+                              AutomationProperties.Name="Border animation" />
+                    <views:ValueSlider Label="Speed" Value="{Binding AnimationSpeed}" Minimum="0" Maximum="100" Format="{}{0:0}%"
+                                       Visibility="{Binding HasAnimation, Converter={StaticResource BoolToVis}}" />
+                    <views:ValueSlider Label="Glow" Value="{Binding Glow}" Minimum="0" Maximum="100" Format="{}{0:0}%" DefaultValue="0"
+                                       ToolTip="A soft glow around the camera in the border colour" />
+                    <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,6,0,0"
+                               Text="Animations change the border, so give the camera a border in Look." />
+
+                    <Border Height="1" Background="{DynamicResource Linkast.BorderSubtle}" Margin="0,16" />
+                    <CheckBox Content="_React to my voice" IsChecked="{Binding AudioReactive}" FontWeight="SemiBold" ToolTip="The border or glow responds while you speak" />
+                    <StackPanel Visibility="{Binding AudioReactive, Converter={StaticResource BoolToVis}}">
+                        <Label Content="St_yle" Target="{Binding ElementName=AudioStyleBox}" Style="{StaticResource Linkast.Label.Field}" />
+                        <ComboBox x:Name="AudioStyleBox" ItemsSource="{Binding AudioStyles}" SelectedItem="{Binding AudioStyle}" ItemTemplate="{StaticResource EnumTemplate}" />
+                        <views:ValueSlider Label="Threshold" Value="{Binding ThresholdDb}" Minimum="-60" Maximum="-10" Format="{}{0:0} dB"
+                                           ToolTip="How loud you need to be to count as speaking. Lower is more sensitive." />
+                        <views:ValueSlider Label="Intensity" Value="{Binding AudioIntensity}" Minimum="0" Maximum="100" Format="{}{0:0}%" />
+                        <StackPanel Visibility="{Binding UsesIndicatorColor, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="Speaking colour" Style="{StaticResource Linkast.Text.FieldLabel}" Margin="0,10,0,6" />
+                            <ListBox Style="{StaticResource Swatches}" ItemsSource="{Binding IndicatorColors}" SelectedItem="{Binding SelectedIndicatorColor}"
+                                     AutomationProperties.Name="Speaking colour" />
+                        </StackPanel>
+                        <TextBlock Text="Voice level" Style="{StaticResource Linkast.Text.FieldLabel}" Margin="0,10,0,6" />
+                        <DockPanel>
+                            <Border DockPanel.Dock="Right" Style="{StaticResource Linkast.StatusPill.Success}" Margin="10,0,0,0"
+                                    Visibility="{Binding DataContext.Speaking, RelativeSource={RelativeSource AncestorType=views:WebcamPanel}, Converter={StaticResource BoolToVis}}">
+                                <TextBlock Text="SPEAKING" />
+                            </Border>
+                            <ProgressBar Height="8" Minimum="0" Maximum="100" VerticalAlignment="Center"
+                                         Value="{Binding DataContext.AudioLevel, RelativeSource={RelativeSource AncestorType=views:WebcamPanel}, Mode=OneWay}"
+                                         AutomationProperties.Name="Voice level" />
+                        </DockPanel>
+                        <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,8,0,0"
+                                   Text="Uses the microphone chosen on the Stream page. If the stream already records it, no second recording is opened." />
+                        <TextBlock Text="{Binding DataContext.AudioProblem, RelativeSource={RelativeSource AncestorType=views:WebcamPanel}}" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource Linkast.Warning}" Margin="0,6,0,0"
+                                   Visibility="{Binding DataContext.AudioProblem, RelativeSource={RelativeSource AncestorType=views:WebcamPanel}, Converter={x:Static vm:Converters.NotNullToVisibility}}" />
+                    </StackPanel>
                 </StackPanel>
             </StackPanel>
         </Border>
-    </StackPanel>
+    </Grid>
 </UserControl>

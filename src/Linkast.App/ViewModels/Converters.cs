@@ -12,6 +12,8 @@ public static class Converters
     public static IValueConverter NotNullToVisibility { get; } = new Lambda(v =>
         v is null || (v is string s && s.Length == 0) ? Visibility.Collapsed : Visibility.Visible);
 
+    public static IValueConverter NullToVisibility { get; } = new Lambda(v => v is null ? Visibility.Visible : Visibility.Collapsed);
+
     /// <summary>PRD 4.1: capture, encoding and network errors must be clearly distinguished.</summary>
     public static IValueConverter ErrorCategoryLabel { get; } = new Lambda(v => v switch
     {
@@ -26,19 +28,19 @@ public static class Converters
 
     public static IValueConverter TestResultBrush { get; } = new Lambda(v => v switch
     {
-        true => Brush("OkBrush"),
-        false => Brush("FailedBrush"),
-        _ => Application.Current.TryFindResource("TextFillColorSecondaryBrush") ?? Brushes.Gray,
+        true => Brush("Linkast.Success"),
+        false => Brush("Linkast.Error"),
+        _ => Brush("Linkast.TextSecondary"),
     });
 
     public static IValueConverter ProblemBrush { get; } = new Lambda(v => v is true
-        ? Brush("ConnectingBrush")
-        : Application.Current.TryFindResource("TextFillColorSecondaryBrush") ?? Brushes.Gray);
+        ? Brush("Linkast.Warning")
+        : Brush("Linkast.TextSecondary"));
 
     /// <summary>Accent colour for "a new version is ready", secondary text otherwise.</summary>
     public static IValueConverter UpdateBrush { get; } = new Lambda(v => v is true
-        ? Application.Current.TryFindResource("AccentTextFillColorPrimaryBrush") ?? Brush("OkBrush")
-        : Application.Current.TryFindResource("TextFillColorSecondaryBrush") ?? Brushes.Gray);
+        ? Brush("Linkast.Accent")
+        : Brush("Linkast.TextSecondary"));
 
     public static IValueConverter BoldWhenTrue { get; } = new Lambda(v => v is true ? FontWeights.SemiBold : FontWeights.Normal);
 
@@ -84,13 +86,90 @@ public static class Converters
 
     public static IValueConverter StateToBrush { get; } = new Lambda(v => v switch
     {
-        StreamState.Live => Brush("LiveBrush"),
-        StreamState.Connecting or StreamState.Reconnecting or StreamState.Preparing or StreamState.Stopping => Brush("ConnectingBrush"),
-        StreamState.Failed => Brush("FailedBrush"),
-        _ => Brush("IdleBrush"),
+        StreamState.Live => Brush("Linkast.Live"),
+        StreamState.Connecting or StreamState.Reconnecting or StreamState.Preparing or StreamState.Stopping => Brush("Linkast.Warning"),
+        StreamState.Failed => Brush("Linkast.Error"),
+        _ => Brush("Linkast.Idle"),
     });
 
+    /// <summary>The status pill's style: red when live, amber while changing state, red-orange after an error.</summary>
+    public static IValueConverter StateToPillStyle { get; } = new Lambda(v => Application.Current.TryFindResource(v switch
+    {
+        StreamState.Live => "Linkast.StatusPill.Live",
+        StreamState.Connecting or StreamState.Reconnecting or StreamState.Preparing or StreamState.Stopping => "Linkast.StatusPill.Warning",
+        StreamState.Failed => "Linkast.StatusPill.Error",
+        _ => "Linkast.StatusPill",
+    }));
+
+    /// <summary>Short, upper-case pill text. The full state is spelled out in the status title next to it.</summary>
+    public static IValueConverter StateToPillText { get; } = new Lambda(v => v switch
+    {
+        StreamState.Live => "● LIVE",
+        StreamState.Preparing => "PREPARING",
+        StreamState.Connecting => "CONNECTING",
+        StreamState.Reconnecting => "RECONNECTING",
+        StreamState.Stopping => "STOPPING",
+        StreamState.Failed => "ERROR",
+        _ => "OFFLINE",
+    });
+
+    /// <summary>Status title from (State, IsReady).</summary>
+    public static IMultiValueConverter StatusTitle { get; } = new MultiLambda(v => (v[0], v[1]) switch
+    {
+        (StreamState.Live, _) => "Streaming normally",
+        (StreamState.Preparing, _) => "Getting ready…",
+        (StreamState.Connecting, _) => "Connecting…",
+        (StreamState.Reconnecting, _) => "Reconnecting…",
+        (StreamState.Stopping, _) => "Ending stream…",
+        (StreamState.Failed, _) => "Stopped with an error",
+        (_, true) => "Ready to stream",
+        _ => "Not ready yet",
+    });
+
+    /// <summary>Short shape names for segmented controls.</summary>
+    public static IValueConverter ShapeShort { get; } = new Lambda(v => v switch
+    {
+        Core.Camera.LayerShape.RoundedRectangle => "Rounded",
+        Core.Camera.LayerShape.Circle => "Circle",
+        _ => "Rectangle",
+    });
+
+    /// <summary>One-word gameplay fit for segmented controls; the full explanation goes in the tooltip.</summary>
+    public static IValueConverter BaseFitShort { get; } = new Lambda(v => v switch
+    {
+        Core.Camera.BaseFit.Fill => "Fill",
+        _ => "Fit",
+    });
+
+    /// <summary>"Vertical (9:16): game on top, camera below" → "Vertical (9:16)" for segmented controls.</summary>
+    public static IValueConverter LayoutShort { get; } = new Lambda(v => v?.ToString() is { } name && name.IndexOf("):", StringComparison.Ordinal) is var i and > 0
+        ? name[..(i + 1)]
+        : v?.ToString());
+
+    public static IValueConverter NetworkErrorToVisibility { get; } = new Lambda(v =>
+        v is ErrorCategory.Network ? Visibility.Visible : Visibility.Collapsed);
+
+    /// <summary>Segoe Fluent Icons glyph for a network choice.</summary>
+    public static IValueConverter NetworkGlyph { get; } = new Lambda(v => v is NetworkOption { Adapter: { } adapter }
+        ? adapter.Kind switch
+        {
+            Networking.NetworkAdapterKind.WiFi => "\uE701",
+            Networking.NetworkAdapterKind.MobileBroadband => "\uEC05",
+            Networking.NetworkAdapterKind.UsbTethering => "\uE8EA",
+            Networking.NetworkAdapterKind.Vpn => "\uE705",
+            _ => "\uE839",
+        }
+        : "\uE774");
+
     private static object Brush(string key) => Application.Current.TryFindResource(key) ?? Brushes.Gray;
+
+    private sealed class MultiLambda(Func<object?[], object?> convert) : IMultiValueConverter
+    {
+        public object? Convert(object?[] values, Type targetType, object? parameter, CultureInfo culture) => convert(values);
+
+        public object?[] ConvertBack(object? value, Type[] targetTypes, object? parameter, CultureInfo culture) =>
+            throw new NotSupportedException();
+    }
 
     private sealed class Lambda(Func<object?, object?> convert) : IValueConverter
     {
