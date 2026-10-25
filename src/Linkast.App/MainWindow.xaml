@@ -34,6 +34,13 @@
                 BorderThickness="0,0,0,1" Padding="20,0">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Style="{StaticResource Linkast.StatusPill.Error}" Margin="0,0,10,0" ToolTip="Your microphone is muted in the stream"
+                            Visibility="{Binding ShowMicrophoneMuted, Converter={StaticResource BoolToVis}}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE74F;" FontSize="11" Margin="0,0,6,0" />
+                            <TextBlock Text="MIC MUTED" />
+                        </StackPanel>
+                    </Border>
                     <!-- While streaming, the state and timer stay visible on every page. -->
                     <StackPanel Orientation="Horizontal" Margin="0,0,14,0" Visibility="{Binding IsActive, Converter={StaticResource BoolToVis}}">
                         <Border Style="{Binding State, Converter={x:Static vm:Converters.StateToPillStyle}}">
@@ -118,18 +125,27 @@
                                     <Grid DataContext="{Binding Webcam}">
                                         <views:SceneEditor Layers="{Binding Layers}" CanvasWidth="{Binding CanvasWidth}" CanvasHeight="{Binding CanvasHeight}"
                                                            BasePlacement="{Binding BasePlacement}" BaseFit="{Binding BaseFit}"
-                                                           BackgroundSource="{Binding EditorBackground}" MaxHeight="430" IsPreviewOnly="True"
+                                                           BackgroundSource="{Binding EditorBackground}" MaxHeight="340" IsPreviewOnly="True"
                                                            IsHitTestVisible="False" Focusable="False" AutomationProperties.Name="Output preview" />
                                     </Grid>
                                 </Border>
                                 <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,8,0,0"
-                                           Text="What viewers see, with your cameras on top. The screen picture here refreshes every 2 seconds; the stream itself runs at full frame rate." />
+                                           Text="What viewers see. The screen picture here refreshes every 2 seconds; the stream itself runs at full frame rate." />
                             </StackPanel>
                         </Border>
 
-                        <StackPanel IsEnabled="{Binding CanEditSettings}">
-                            <!-- Capture -->
-                            <Border Style="{StaticResource Linkast.Card}">
+                        <!-- Settings, one short tab each instead of one long page. -->
+                        <ListBox x:Name="StreamTabs" Style="{StaticResource Linkast.Segmented}" HorizontalAlignment="Left" Margin="0,2,0,12"
+                                 SelectedIndex="0" AutomationProperties.Name="Stream settings">
+                            <ListBoxItem x:Name="TabSource" Padding="14,6" Content="Source &amp; audio" />
+                            <ListBoxItem x:Name="TabDestination" Padding="14,6" Content="Destination" />
+                            <ListBoxItem x:Name="TabNetwork" Padding="14,6" Content="Network" />
+                            <ListBoxItem x:Name="TabQuality" Padding="14,6" Content="Quality" />
+                        </ListBox>
+
+                        <!-- ===== Source & audio ===== -->
+                        <StackPanel Visibility="{Binding IsSelected, ElementName=TabSource, Converter={StaticResource BoolToVis}}">
+                            <Border Style="{StaticResource Linkast.Card}" IsEnabled="{Binding CanEditSettings}">
                                 <StackPanel>
                                     <DockPanel Margin="0,0,0,10">
                                         <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Subtle}" Command="{Binding RefreshSourcesCommand}"
@@ -174,12 +190,12 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- Audio -->
+                            <!-- Audio: devices are fixed while live; volume, mute and noise removal change the stream instantly. -->
                             <Border Style="{StaticResource Linkast.Card}">
                                 <StackPanel>
                                     <DockPanel Margin="0,0,0,10">
                                         <TextBlock DockPanel.Dock="Right" Style="{StaticResource Linkast.Text.Hint}" Margin="0" VerticalAlignment="Center"
-                                                   Text="The microphone also drives voice-reactive camera effects" />
+                                                   Text="Volume, mute and noise removal work while live" />
                                         <TextBlock Text="Audio" Style="{StaticResource Linkast.Card.Title}" Margin="0" />
                                     </DockPanel>
                                     <Grid>
@@ -189,10 +205,11 @@
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <StackPanel>
-                                            <CheckBox Content="System au_dio (what you hear)" IsChecked="{Binding SystemAudioEnabled}" FontWeight="SemiBold" />
+                                            <CheckBox Content="System au_dio (what you hear)" IsChecked="{Binding SystemAudioEnabled}" FontWeight="SemiBold"
+                                                      IsEnabled="{Binding CanEditSettings}" />
                                             <StackPanel IsEnabled="{Binding SystemAudioEnabled}" Margin="0,8,0,0">
                                                 <ComboBox ItemsSource="{Binding OutputDevices}" SelectedItem="{Binding SelectedOutputDevice}"
-                                                          AutomationProperties.Name="System audio device" />
+                                                          IsEnabled="{Binding CanEditSettings}" AutomationProperties.Name="System audio device" />
                                                 <ProgressBar Height="6" Margin="0,8,0,0" Minimum="0" Maximum="100" Value="{Binding SystemAudioLevel, Mode=OneWay}"
                                                              Foreground="{DynamicResource Linkast.Success}" AutomationProperties.Name="System audio level" />
                                                 <DockPanel Margin="0,10,0,0">
@@ -206,10 +223,20 @@
                                             </StackPanel>
                                         </StackPanel>
                                         <StackPanel Grid.Column="2">
-                                            <CheckBox Content="_Microphone" IsChecked="{Binding MicrophoneEnabled}" FontWeight="SemiBold" />
+                                            <DockPanel>
+                                                <ToggleButton DockPanel.Dock="Right" Style="{StaticResource Linkast.ToggleButton.Secondary}" MinHeight="28" Padding="10,3"
+                                                              IsChecked="{Binding MicrophoneMuted}" IsEnabled="{Binding MicrophoneEnabled}"
+                                                              ToolTip="Mute the microphone in the stream (works while live)" AutomationProperties.Name="Mute microphone">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE74F;" FontSize="12" Margin="0,0,6,0" />
+                                                        <TextBlock Text="{Binding MicrophoneMuted, Converter={x:Static vm:Converters.MuteLabel}}" />
+                                                    </StackPanel>
+                                                </ToggleButton>
+                                                <CheckBox Content="_Microphone" IsChecked="{Binding MicrophoneEnabled}" FontWeight="SemiBold" IsEnabled="{Binding CanEditSettings}" />
+                                            </DockPanel>
                                             <StackPanel IsEnabled="{Binding MicrophoneEnabled}" Margin="0,8,0,0">
                                                 <ComboBox ItemsSource="{Binding InputDevices}" SelectedItem="{Binding SelectedInputDevice}"
-                                                          AutomationProperties.Name="Microphone device" />
+                                                          IsEnabled="{Binding CanEditSettings}" AutomationProperties.Name="Microphone device" />
                                                 <ProgressBar Height="6" Margin="0,8,0,0" Minimum="0" Maximum="100" Value="{Binding MicrophoneLevel, Mode=OneWay}"
                                                              Foreground="{DynamicResource Linkast.Success}" AutomationProperties.Name="Microphone level" />
                                                 <DockPanel Margin="0,10,0,0">
@@ -220,159 +247,187 @@
                                                     <Slider Minimum="0" Maximum="200" Value="{Binding MicrophoneVolume}" VerticalAlignment="Center"
                                                             AutomationProperties.Name="Microphone volume" ToolTip="Volume (100% = unchanged)" />
                                                 </DockPanel>
+                                                <CheckBox Content="Remove background _noise (fans, hum)" IsChecked="{Binding MicrophoneNoiseSuppression}" Margin="0,8,0,0"
+                                                          ToolTip="Filters steady noise out of your microphone on this PC. Can be switched while live." />
                                             </StackPanel>
                                         </StackPanel>
                                     </Grid>
+                                    <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,10,0,0"
+                                               Text="The microphone also drives voice-reactive camera effects. It is only measured while it is switched on." />
                                 </StackPanel>
                             </Border>
+                        </StackPanel>
 
-                            <!-- Destination -->
-                            <Border Style="{StaticResource Linkast.Card}">
-                                <StackPanel>
-                                    <DockPanel Margin="0,0,0,10">
-                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE72E;" FontSize="11" Margin="0,0,6,0"
-                                                       Foreground="{DynamicResource Linkast.TextTertiary}" />
-                                            <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0" Text="Key is masked and never logged" />
-                                        </StackPanel>
-                                        <TextBlock Text="Destination" Style="{StaticResource Linkast.Card.Title}" Margin="0" />
+                        <!-- ===== Destination ===== -->
+                        <Border Style="{StaticResource Linkast.Card}" IsEnabled="{Binding CanEditSettings}"
+                                Visibility="{Binding IsSelected, ElementName=TabDestination, Converter={StaticResource BoolToVis}}">
+                            <StackPanel>
+                                <DockPanel Margin="0,0,0,10">
+                                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE72E;" FontSize="11" Margin="0,0,6,0"
+                                                   Foreground="{DynamicResource Linkast.TextTertiary}" />
+                                        <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0" Text="Key is masked and never logged" />
+                                    </StackPanel>
+                                    <TextBlock Text="Where to stream" Style="{StaticResource Linkast.Card.Title}" Margin="0" />
+                                </DockPanel>
+                                <ListBox Style="{StaticResource Linkast.Segmented}" ItemsSource="{Binding Platforms}" SelectedItem="{Binding SelectedPlatform}"
+                                         DisplayMemberPath="Name" AutomationProperties.Name="Platform" />
+
+                                <!-- A preset: the server is filled in, the user only needs the key. -->
+                                <StackPanel Visibility="{Binding IsCustomPlatform, Converter={x:Static vm:Converters.InverseBoolToVisibility}}" Margin="0,10,0,0">
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Subtle}" Command="{Binding OpenStreamKeyPageCommand}"
+                                                ToolTip="Opens your platform's stream settings in your browser">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE8A7;" FontSize="13" Margin="0,0,8,0" />
+                                                <TextBlock Text="Where do I find my key?" />
+                                            </StackPanel>
+                                        </Button>
+                                        <TextBlock Style="{StaticResource Linkast.Text.Hint}" VerticalAlignment="Center" Margin="0" TextTrimming="CharacterEllipsis">
+                                            <Run Text="Server:" /> <Run Text="{Binding ServerUrl, Mode=OneWay}" FontFamily="{DynamicResource Linkast.Font.Mono}" />
+                                        </TextBlock>
                                     </DockPanel>
+                                </StackPanel>
+
+                                <!-- Custom: any RTMP or RTMPS server, direct or through a restream service. -->
+                                <StackPanel Visibility="{Binding IsCustomPlatform, Converter={StaticResource BoolToVis}}" Margin="0,12,0,0">
                                     <ListBox Style="{StaticResource Linkast.Segmented}" ItemsSource="{Binding DestinationKinds}"
                                              SelectedItem="{Binding SelectedDestinationKind}" AutomationProperties.Name="Delivery type" />
                                     <TextBlock Style="{StaticResource Linkast.Text.Hint}" Text="{Binding SelectedDestinationKind.Explanation}" Margin="0,6,0,0" />
-
                                     <Label Content="Server _URL" Target="{Binding ElementName=ServerUrlBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,12,0,5" />
                                     <TextBox x:Name="ServerUrlBox" Text="{Binding ServerUrl, UpdateSourceTrigger=PropertyChanged}"
                                              AutomationProperties.HelpText="For example rtmp://live.twitch.tv/app or rtmps://a.rtmps.youtube.com/live2" />
                                     <TextBlock Style="{StaticResource Linkast.Text.Hint}" Text="For example rtmp://live.twitch.tv/app or rtmps://a.rtmps.youtube.com/live2" />
+                                </StackPanel>
 
-                                    <Label Content="Stream _key" Target="{Binding ElementName=StreamKeyBox}" Style="{StaticResource Linkast.Label.Field}" />
-                                    <Grid>
+                                <Label Content="Stream _key" Target="{Binding ElementName=StreamKeyBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,14,0,5" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <PasswordBox x:Name="StreamKeyBox" PasswordChanged="OnStreamKeyChanged" AutomationProperties.Name="Stream key" />
+                                    <TextBox x:Name="StreamKeyPlain" Visibility="Collapsed" TextChanged="OnStreamKeyPlainChanged"
+                                             AutomationProperties.Name="Stream key (visible)" />
+                                    <ToggleButton x:Name="ShowKeyToggle" Grid.Column="1" Style="{StaticResource Linkast.ToggleButton.Secondary}" Content="Show"
+                                                  Margin="8,0,0,0" MinWidth="64" Checked="OnShowKeyChanged" Unchecked="OnShowKeyChanged"
+                                                  AutomationProperties.Name="Show stream key" />
+                                </Grid>
+                                <TextBlock Style="{StaticResource Linkast.Text.Hint}"
+                                           Text="Saved encrypted for your Windows account only. Clear the field to forget it." />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ===== Network: the feature that sets Linkast apart, so it gets the accent card. ===== -->
+                        <Border Style="{StaticResource Linkast.Card.Feature}" IsEnabled="{Binding CanEditSettings}"
+                                Visibility="{Binding IsSelected, ElementName=TabNetwork, Converter={StaticResource BoolToVis}}">
+                            <StackPanel>
+                                <DockPanel Margin="0,0,0,4">
+                                    <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Subtle}" Command="{Binding RefreshNetworksCommand}"
+                                            ToolTip="Look for network connections again">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE72C;" FontSize="14" Margin="0,0,8,0" />
+                                            <TextBlock Text="Refresh" />
+                                        </StackPanel>
+                                    </Button>
+                                    <TextBlock Text="Network for your stream" Style="{StaticResource Linkast.Card.Title}" Margin="0" />
+                                </DockPanel>
+                                <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,0,0,12"
+                                           Text="Only Linkast's stream uses the network you pick. Your game and other apps keep Windows' normal connection. Linkast never switches networks on its own and never changes Windows settings." />
+                                <ListBox x:Name="NetworkBox" Style="{StaticResource Linkast.Choice}" ItemsSource="{Binding NetworkOptions}"
+                                         SelectedItem="{Binding SelectedNetwork}" AutomationProperties.Name="Network for your stream">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:NetworkOption}">
+                                            <Grid AutomationProperties.Name="{Binding Label}">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="34" Height="34" CornerRadius="8" Background="{DynamicResource Linkast.Surface3}" Margin="0,0,12,0" VerticalAlignment="Top">
+                                                    <TextBlock Style="{StaticResource Linkast.Text.Glyph}" HorizontalAlignment="Center" Foreground="{DynamicResource Linkast.Accent}"
+                                                               Text="{Binding Converter={x:Static vm:Converters.NetworkGlyph}}" />
+                                                </Border>
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Label}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding Details}" Style="{StaticResource Linkast.Text.Hint}" Margin="0,2,0,0" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <DockPanel Margin="0,6,0,0">
+                                    <Button DockPanel.Dock="Left" Style="{StaticResource Linkast.Button.Primary}" Command="{Binding TestConnectionCommand}" VerticalAlignment="Top"
+                                            ToolTip="Connects to your server through this network and shows which network was really used. Sends no video.">
+                                        <AccessText Text="Test _connection" />
+                                    </Button>
+                                    <TextBlock Text="{Binding NetworkTestText}" TextWrapping="Wrap" Margin="12,0,0,0" VerticalAlignment="Center"
+                                               Foreground="{Binding NetworkTestOk, Converter={x:Static vm:Converters.TestResultBrush}}"
+                                               AutomationProperties.LiveSetting="Polite" AutomationProperties.Name="Connection test result" />
+                                </DockPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ===== Quality ===== -->
+                        <Border Style="{StaticResource Linkast.Card}" IsEnabled="{Binding CanEditSettings}"
+                                Visibility="{Binding IsSelected, ElementName=TabQuality, Converter={StaticResource BoolToVis}}">
+                            <StackPanel>
+                                <TextBlock Text="Quality" Style="{StaticResource Linkast.Card.Title}" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="2*" />
+                                        <ColumnDefinition Width="12" />
+                                        <ColumnDefinition Width="2*" />
+                                        <ColumnDefinition Width="12" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="12" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <Label Content="_Encoder" Target="{Binding ElementName=EncoderBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
+                                        <ComboBox x:Name="EncoderBox" ItemsSource="{Binding Encoders}" SelectedItem="{Binding SelectedEncoder}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <Label Content="Re_solution" Target="{Binding ElementName=ResolutionBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
+                                        <ComboBox x:Name="ResolutionBox" ItemsSource="{Binding Resolutions}" SelectedItem="{Binding SelectedResolution}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="4">
+                                        <Label Content="_Frame rate" Target="{Binding ElementName=FpsBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
+                                        <ComboBox x:Name="FpsBox" ItemsSource="{Binding FrameRates}" SelectedItem="{Binding SelectedFrameRate}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="6">
+                                        <Label Content="_Bitrate (kbps)" Target="{Binding ElementName=BitrateBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
+                                        <TextBox x:Name="BitrateBox" Text="{Binding VideoBitrateKbps, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </Grid>
+                                <TextBlock Style="{StaticResource Linkast.Text.Hint}" Text="{Binding EncoderNote}" />
+                                <TextBlock Style="{StaticResource Linkast.Text.Hint}"
+                                           Text="Twitch recommends up to 6000 kbps. Your upload speed should be at least 1.5 times the bitrate." />
+                                <Expander Header="Advanced encoding" Margin="0,12,0,0">
+                                    <Grid Margin="0,4,0,0">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <PasswordBox x:Name="StreamKeyBox" PasswordChanged="OnStreamKeyChanged" AutomationProperties.Name="Stream key" />
-                                        <TextBox x:Name="StreamKeyPlain" Visibility="Collapsed" TextChanged="OnStreamKeyPlainChanged"
-                                                 AutomationProperties.Name="Stream key (visible)" />
-                                        <ToggleButton x:Name="ShowKeyToggle" Grid.Column="1" Style="{StaticResource Linkast.ToggleButton.Secondary}" Content="Show"
-                                                      Margin="8,0,0,0" MinWidth="64" Checked="OnShowKeyChanged" Unchecked="OnShowKeyChanged"
-                                                      AutomationProperties.Name="Show stream key" />
-                                    </Grid>
-                                    <TextBlock Style="{StaticResource Linkast.Text.Hint}"
-                                               Text="Saved encrypted for your Windows account only. Clear the field to forget it." />
-                                </StackPanel>
-                            </Border>
-
-                            <!-- Network: the feature that sets Linkast apart, so it gets the accent card. -->
-                            <Border Style="{StaticResource Linkast.Card.Feature}">
-                                <StackPanel>
-                                    <DockPanel Margin="0,0,0,4">
-                                        <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Subtle}" Command="{Binding RefreshNetworksCommand}"
-                                                ToolTip="Look for network connections again">
-                                            <StackPanel Orientation="Horizontal">
-                                                <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE72C;" FontSize="14" Margin="0,0,8,0" />
-                                                <TextBlock Text="Refresh" />
-                                            </StackPanel>
-                                        </Button>
-                                        <TextBlock Text="Network for your stream" Style="{StaticResource Linkast.Card.Title}" Margin="0" />
-                                    </DockPanel>
-                                    <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,0,0,12"
-                                               Text="Only Linkast's stream uses the network you pick. Your game and other apps keep Windows' normal connection. Linkast never switches networks on its own and never changes Windows settings." />
-                                    <ListBox x:Name="NetworkBox" Style="{StaticResource Linkast.Choice}" ItemsSource="{Binding NetworkOptions}"
-                                             SelectedItem="{Binding SelectedNetwork}" AutomationProperties.Name="Network for your stream">
-                                        <ListBox.ItemTemplate>
-                                            <DataTemplate DataType="{x:Type vm:NetworkOption}">
-                                                <Grid AutomationProperties.Name="{Binding Label}">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="Auto" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <Border Width="34" Height="34" CornerRadius="8" Background="{DynamicResource Linkast.Surface3}" Margin="0,0,12,0" VerticalAlignment="Top">
-                                                        <TextBlock Style="{StaticResource Linkast.Text.Glyph}" HorizontalAlignment="Center" Foreground="{DynamicResource Linkast.Accent}"
-                                                                   Text="{Binding Converter={x:Static vm:Converters.NetworkGlyph}}" />
-                                                    </Border>
-                                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                                        <TextBlock Text="{Binding Label}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                                        <TextBlock Text="{Binding Details}" Style="{StaticResource Linkast.Text.Hint}" Margin="0,2,0,0" />
-                                                    </StackPanel>
-                                                </Grid>
-                                            </DataTemplate>
-                                        </ListBox.ItemTemplate>
-                                    </ListBox>
-                                    <DockPanel Margin="0,6,0,0">
-                                        <Button DockPanel.Dock="Left" Style="{StaticResource Linkast.Button.Primary}" Command="{Binding TestConnectionCommand}" VerticalAlignment="Top"
-                                                ToolTip="Connects to your server through this network and shows which network was really used. Sends no video.">
-                                            <AccessText Text="Test _connection" />
-                                        </Button>
-                                        <TextBlock Text="{Binding NetworkTestText}" TextWrapping="Wrap" Margin="12,0,0,0" VerticalAlignment="Center"
-                                                   Foreground="{Binding NetworkTestOk, Converter={x:Static vm:Converters.TestResultBrush}}"
-                                                   AutomationProperties.LiveSetting="Polite" AutomationProperties.Name="Connection test result" />
-                                    </DockPanel>
-                                </StackPanel>
-                            </Border>
-
-                            <!-- Quality -->
-                            <Border Style="{StaticResource Linkast.Card}">
-                                <StackPanel>
-                                    <TextBlock Text="Quality" Style="{StaticResource Linkast.Card.Title}" />
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="2*" />
-                                            <ColumnDefinition Width="12" />
-                                            <ColumnDefinition Width="2*" />
                                             <ColumnDefinition Width="12" />
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="12" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <StackPanel>
-                                            <Label Content="_Encoder" Target="{Binding ElementName=EncoderBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
-                                            <ComboBox x:Name="EncoderBox" ItemsSource="{Binding Encoders}" SelectedItem="{Binding SelectedEncoder}" />
+                                            <Label Content="Keyframe interval (s)" Target="{Binding ElementName=KeyframeBox}" Style="{StaticResource Linkast.Label.Field}" />
+                                            <TextBox x:Name="KeyframeBox" Text="{Binding KeyframeIntervalSeconds, UpdateSourceTrigger=PropertyChanged}" />
                                         </StackPanel>
                                         <StackPanel Grid.Column="2">
-                                            <Label Content="Re_solution" Target="{Binding ElementName=ResolutionBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
-                                            <ComboBox x:Name="ResolutionBox" ItemsSource="{Binding Resolutions}" SelectedItem="{Binding SelectedResolution}" />
+                                            <Label Content="Audio bitrate (kbps)" Target="{Binding ElementName=AudioBitrateBox}" Style="{StaticResource Linkast.Label.Field}" />
+                                            <TextBox x:Name="AudioBitrateBox" Text="{Binding AudioBitrateKbps, UpdateSourceTrigger=PropertyChanged}" />
                                         </StackPanel>
                                         <StackPanel Grid.Column="4">
-                                            <Label Content="_Frame rate" Target="{Binding ElementName=FpsBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
-                                            <ComboBox x:Name="FpsBox" ItemsSource="{Binding FrameRates}" SelectedItem="{Binding SelectedFrameRate}" />
-                                        </StackPanel>
-                                        <StackPanel Grid.Column="6">
-                                            <Label Content="_Bitrate (kbps)" Target="{Binding ElementName=BitrateBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
-                                            <TextBox x:Name="BitrateBox" Text="{Binding VideoBitrateKbps, UpdateSourceTrigger=PropertyChanged}" />
+                                            <Label Content="Encoder preset" Target="{Binding ElementName=PresetBox}" Style="{StaticResource Linkast.Label.Field}" />
+                                            <TextBox x:Name="PresetBox" Text="{Binding EncoderPreset, UpdateSourceTrigger=PropertyChanged}"
+                                                     ToolTip="Leave empty for the default (p5 for NVENC, veryfast for x264)." />
                                         </StackPanel>
                                     </Grid>
-                                    <TextBlock Style="{StaticResource Linkast.Text.Hint}" Text="{Binding EncoderNote}" />
-                                    <TextBlock Style="{StaticResource Linkast.Text.Hint}"
-                                               Text="Twitch recommends up to 6000 kbps. Your upload speed should be at least 1.5 times the bitrate." />
-                                    <Expander Header="Advanced encoding" Margin="0,12,0,0">
-                                        <Grid Margin="0,4,0,0">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="12" />
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="12" />
-                                                <ColumnDefinition Width="*" />
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel>
-                                                <Label Content="Keyframe interval (s)" Target="{Binding ElementName=KeyframeBox}" Style="{StaticResource Linkast.Label.Field}" />
-                                                <TextBox x:Name="KeyframeBox" Text="{Binding KeyframeIntervalSeconds, UpdateSourceTrigger=PropertyChanged}" />
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="2">
-                                                <Label Content="Audio bitrate (kbps)" Target="{Binding ElementName=AudioBitrateBox}" Style="{StaticResource Linkast.Label.Field}" />
-                                                <TextBox x:Name="AudioBitrateBox" Text="{Binding AudioBitrateKbps, UpdateSourceTrigger=PropertyChanged}" />
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="4">
-                                                <Label Content="Encoder preset" Target="{Binding ElementName=PresetBox}" Style="{StaticResource Linkast.Label.Field}" />
-                                                <TextBox x:Name="PresetBox" Text="{Binding EncoderPreset, UpdateSourceTrigger=PropertyChanged}"
-                                                         ToolTip="Leave empty for the default (p5 for NVENC, veryfast for x264)." />
-                                            </StackPanel>
-                                        </Grid>
-                                    </Expander>
-                                </StackPanel>
-                            </Border>
-                        </StackPanel>
+                                </Expander>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
 

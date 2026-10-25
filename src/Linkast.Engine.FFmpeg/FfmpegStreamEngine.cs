@@ -32,7 +32,7 @@ public sealed record EngineOptions
 /// <see cref="IStreamEngine"/> backed by a supervised ffmpeg.exe. Owns the session state machine,
 /// health evaluation ("process running" is never treated as "stream healthy"), and bounded reconnect.
 /// </summary>
-public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneControl
+public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneControl, ILiveAudioControl
 {
     private const int RecentLineCapacity = 60;
 
@@ -53,6 +53,10 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
     private CancellationTokenSource? _runCts;
     private Task? _runTask;
     private ActiveComposition? _composition;
+
+    // Live audio changes (mute, volume, noise removal) for the current session, re-applied on reconnect.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<AudioChannel, double> _liveGain = new();
+    private bool? _liveNoiseSuppression;
     private int _reconnectCount;
     private long _sessionStart;
     private StreamError? _lastError;
@@ -115,6 +119,8 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
 
             _reconnectCount = 0;
             _lastError = null;
+            _liveGain.Clear();
+            _liveNoiseSuppression = null;
             _sessionStart = _time.GetTimestamp();
             _runCts?.Dispose();
             _runCts = new CancellationTokenSource();
@@ -234,13 +240,12 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 var input = _audioProvider.Open(spec);
                 audioInputs.Add(input);
                 await input.StartAsync(ct).ConfigureAwait(false);
-                jobAudio.Add(new PipeAudioJobInput(input.PipePath, input.Format, spec.Gain));
+                jobAudio.Add(LiveAudioInput(spec, input));
             }
 
             // Camera layers: rendered by Linkast, overlaid by FFmpeg, movable live through zmq.
             var jobLayers = new List<VideoLayerJobInput>();
             var layerIds = new List<string>();
-            int? commandPort = null;
             if (session.CameraLayers.Count > 0)
             {
                 if (_layerProvider is null)
@@ -260,9 +265,10 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                     jobLayers.Add(new VideoLayerJobInput(input.PipePath, px.Width, px.Height, layerFps, px));
                     layerIds.Add(binding.Layer.LayerId);
                 }
-
-                commandPort = FfmpegCommandChannel.FindFreePort();
             }
+
+            // Always open the command channel: layers move through it, and audio is muted and adjusted live.
+            int? commandPort = FfmpegCommandChannel.FindFreePort();
 
             var args = FfmpegArgumentBuilder.Build(new FfmpegJob(session.Video, jobAudio, session.Encoder, lease.PublishUrl, lease.TcUrl)
             {
@@ -502,6 +508,53 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
         {
             return false;
         }
+    }
+
+    public Task<bool> SetGainAsync(AudioChannel channel, double gain, CancellationToken cancellationToken = default)
+    {
+        gain = Math.Clamp(gain, 0, 4);
+        _liveGain[channel] = gain;
+        var target = channel == AudioChannel.Microphone ? "volume@mic" : "volume@sys";
+        return SendLiveAsync(target, "volume", gain.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
+    }
+
+    public Task<bool> SetNoiseSuppressionAsync(bool enabled, CancellationToken cancellationToken = default)
+    {
+        _liveNoiseSuppression = enabled;
+        return SendLiveAsync("afftdn@mic", "nr", FfmpegArgumentBuilder.NoiseReduction(enabled), cancellationToken);
+    }
+
+    private async Task<bool> SendLiveAsync(string target, string command, string argument, CancellationToken cancellationToken)
+    {
+        var composition = Volatile.Read(ref _composition);
+        if (composition is null || _state.Current != StreamState.Live)
+        {
+            return false;
+        }
+
+        try
+        {
+            return await composition.Commands.SendAsync(target, command, argument, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The FFmpeg view of one audio source: named so it can be changed live, with this session's live
+    /// changes (mute, volume, noise removal) applied so they survive a reconnect.
+    /// </summary>
+    private PipeAudioJobInput LiveAudioInput(AudioSourceSpec spec, IAudioInput input)
+    {
+        var channel = spec is MicrophoneSource ? AudioChannel.Microphone : AudioChannel.System;
+        var gain = _liveGain.TryGetValue(channel, out var live) ? live : spec.Gain;
+        return new PipeAudioJobInput(input.PipePath, input.Format, gain)
+        {
+            Name = channel == AudioChannel.Microphone ? "mic" : "sys",
+            NoiseSuppression = channel == AudioChannel.Microphone ? _liveNoiseSuppression ?? spec.NoiseSuppression : null,
+        };
     }
 
     private sealed record ActiveComposition(FfmpegCommandChannel Commands, List<string> LayerIds, int Width, int Height);

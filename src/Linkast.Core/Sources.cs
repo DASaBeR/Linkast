@@ -38,6 +38,9 @@ public abstract record AudioSourceSpec
 {
     /// <summary>Linear gain. 1.0 = unchanged.</summary>
     public double Gain { get; init; } = 1.0;
+
+    /// <summary>Remove steady background noise (fans, hum) with FFmpeg's afftdn. Used for the microphone.</summary>
+    public bool NoiseSuppression { get; init; }
 }
 
 /// <param name="DeviceId">WASAPI endpoint ID, or null for the default communications/console microphone.</param>

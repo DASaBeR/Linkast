@@ -403,7 +403,85 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     partial void OnSystemAudioEnabledChanged(bool value) => UpdateStreamMeters();
 
-    partial void OnMicrophoneEnabledChanged(bool value) => UpdateStreamMeters();
+    partial void OnMicrophoneEnabledChanged(bool value)
+    {
+        UpdateStreamMeters();
+        OnPropertyChanged(nameof(ShowMicrophoneMuted));
+    }
+
+    /// <summary>Shown in the header on every page, so a muted microphone is never forgotten.</summary>
+    public bool ShowMicrophoneMuted => MicrophoneMuted && MicrophoneEnabled;
+
+    /// <summary>Mutes the microphone in the stream instantly, without stopping it. Not saved: every start is unmuted.</summary>
+    [ObservableProperty]
+    public partial bool MicrophoneMuted { get; set; }
+
+    /// <summary>Remove steady background noise (fans, hum) from the microphone. Can be switched while live.</summary>
+    [ObservableProperty]
+    public partial bool MicrophoneNoiseSuppression { get; set; }
+
+    private double MicrophoneGain => MicrophoneMuted ? 0 : MicrophoneVolume / 100.0;
+
+    [RelayCommand]
+    private void ToggleMicrophoneMute() => MicrophoneMuted = !MicrophoneMuted;
+
+    partial void OnMicrophoneMutedChanged(bool value)
+    {
+        AppendLog(value ? "Microphone muted." : "Microphone unmuted.");
+        OnPropertyChanged(nameof(ShowMicrophoneMuted));
+        ApplyLiveGain(AudioChannel.Microphone, MicrophoneGain);
+    }
+
+    partial void OnMicrophoneVolumeChanged(double value) => ApplyLiveGain(AudioChannel.Microphone, MicrophoneGain);
+
+    partial void OnSystemAudioVolumeChanged(double value) => ApplyLiveGain(AudioChannel.System, value / 100.0);
+
+    partial void OnMicrophoneNoiseSuppressionChanged(bool value)
+    {
+        if (_engine is { } engine && IsActive)
+        {
+            _ = engine.SetNoiseSuppressionAsync(value);
+        }
+    }
+
+    /// <summary>Volume and mute apply to a running stream at once, and to its reconnects.</summary>
+    private void ApplyLiveGain(AudioChannel channel, double gain)
+    {
+        if (_engine is { } engine && IsActive)
+        {
+            _ = engine.SetGainAsync(channel, gain);
+        }
+    }
+
+    // ---- Platform ----------------------------------------------------------------------------
+
+    public IReadOnlyList<StreamPlatformInfo> Platforms => StreamPlatforms.All;
+
+    /// <summary>A preset fills in the server; Custom lets the user type it.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsCustomPlatform))]
+    public partial StreamPlatformInfo SelectedPlatform { get; set; } = StreamPlatforms.Get(StreamPlatform.Custom);
+
+    public bool IsCustomPlatform => SelectedPlatform.Platform == StreamPlatform.Custom;
+
+    partial void OnSelectedPlatformChanged(StreamPlatformInfo value)
+    {
+        if (!_loading && value.Server is { } server)
+        {
+            ServerUrl = server;
+            SelectedDestinationKind = DestinationKinds.First(d => d.Kind == DestinationKind.Direct);
+        }
+    }
+
+    /// <summary>Opens the platform's page that shows the stream key, in the default browser.</summary>
+    [RelayCommand]
+    private void OpenStreamKeyPage()
+    {
+        if (SelectedPlatform.KeyPage is { } page)
+        {
+            Process.Start(new ProcessStartInfo(page) { UseShellExecute = true });
+        }
+    }
 
     private void UpdateStreamMeters()
     {
@@ -654,10 +732,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     [
         nameof(SelectedSourceKind), nameof(SelectedMonitor), nameof(SelectedWindow), nameof(UseDesktopDuplication), nameof(CaptureCursor),
         nameof(SystemAudioEnabled), nameof(SelectedOutputDevice), nameof(SystemAudioVolume),
-        nameof(MicrophoneEnabled), nameof(SelectedInputDevice), nameof(MicrophoneVolume),
+        nameof(MicrophoneEnabled), nameof(SelectedInputDevice), nameof(MicrophoneVolume), nameof(MicrophoneNoiseSuppression),
         nameof(SelectedEncoder), nameof(SelectedResolution), nameof(SelectedFrameRate), nameof(VideoBitrateKbps),
         nameof(KeyframeIntervalSeconds), nameof(AudioBitrateKbps), nameof(EncoderPreset),
-        nameof(SelectedDestinationKind), nameof(ServerUrl), nameof(SelectedNetwork), nameof(SelectedTheme),
+        nameof(SelectedDestinationKind), nameof(SelectedPlatform), nameof(ServerUrl), nameof(SelectedNetwork), nameof(SelectedTheme),
     ];
 
     protected override void OnPropertyChanged(System.ComponentModel.PropertyChangedEventArgs e)
@@ -721,6 +799,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 MicrophoneEnabled = MicrophoneEnabled,
                 MicrophoneDeviceId = SelectedInputDevice?.Id,
                 MicrophoneVolume = MicrophoneVolume,
+                MicrophoneNoiseSuppression = MicrophoneNoiseSuppression,
                 EncoderId = SelectedEncoder?.Id ?? _loaded.Stream.EncoderId,
                 Width = SelectedResolution.Width,
                 Height = SelectedResolution.Height,
@@ -730,6 +809,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 AudioBitrateKbps = AudioBitrateKbps,
                 EncoderPreset = EncoderPreset,
                 DestinationKind = SelectedDestinationKind.Kind,
+                Platform = SelectedPlatform.Platform,
                 ServerUrl = ServerUrl,
                 NetworkInterfaceId = SelectedNetwork?.Id,
                 NetworkInterfaceName = SelectedNetwork?.IsAutomatic == false ? SelectedNetwork.Name : null,
@@ -758,6 +838,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         MicrophoneEnabled = s.MicrophoneEnabled;
         SelectedInputDevice = InputDevices.FirstOrDefault(d => d.Id == s.MicrophoneDeviceId) ?? SelectedInputDevice;
         MicrophoneVolume = s.MicrophoneVolume;
+        MicrophoneNoiseSuppression = s.MicrophoneNoiseSuppression;
         SelectedResolution = Resolutions.FirstOrDefault(r => r.Width == s.Width && r.Height == s.Height) ?? Resolutions[0];
         SelectedFrameRate = FrameRates.Contains(s.FrameRate) ? s.FrameRate : 60;
         VideoBitrateKbps = s.VideoBitrateKbps;
@@ -766,6 +847,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         EncoderPreset = s.EncoderPreset;
         SelectedDestinationKind = DestinationKinds.FirstOrDefault(d => d.Kind == s.DestinationKind) ?? DestinationKinds[0];
         ServerUrl = s.ServerUrl;
+        SelectedPlatform = StreamPlatforms.Get(s.Platform != StreamPlatform.Custom ? s.Platform : StreamPlatforms.Detect(s.ServerUrl));
         _savedNetworkId = s.NetworkInterfaceId;
         _savedNetworkName = s.NetworkInterfaceName;
         SelectedNetwork = NetworkOption.Automatic;
@@ -1092,7 +1174,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         if (MicrophoneEnabled)
         {
-            audio.Add(new MicrophoneSource(SelectedInputDevice?.Id, SelectedInputDevice?.Name ?? "Default microphone") { Gain = MicrophoneVolume / 100.0 });
+            audio.Add(new MicrophoneSource(SelectedInputDevice?.Id, SelectedInputDevice?.Name ?? "Default microphone")
+            {
+                Gain = MicrophoneGain,
+                NoiseSuppression = MicrophoneNoiseSuppression,
+            });
         }
 
         if (!Uri.TryCreate(ServerUrl.Trim(), UriKind.Absolute, out var server))

@@ -230,8 +230,16 @@ public static class FfmpegArgumentBuilder
         var firstAudio = 1 + layers.Count;
         for (var i = 0; i < audio.Count; i++)
         {
-            var gain = Math.Clamp(audio[i].Gain, 0, 4).ToString("0.###", Inv);
-            sb.Append(Inv, $";[{firstAudio + i}:a]aresample={sr}:async=1000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume={gain}[a{i}]");
+            var a = audio[i];
+            var gain = Math.Clamp(a.Gain, 0, 4).ToString("0.###", Inv);
+            var at = a.Name is { } name ? "@" + name : string.Empty;
+            sb.Append(Inv, $";[{firstAudio + i}:a]aresample={sr}:async=1000,aformat=sample_fmts=fltp:channel_layouts=stereo,");
+            if (a.NoiseSuppression is { } denoise)
+            {
+                sb.Append(Inv, $"afftdn{at}=nr={NoiseReduction(denoise)}:nf=-40,");
+            }
+
+            sb.Append(Inv, $"volume{at}={gain}[a{i}]");
         }
 
         if (audio.Count == 1)
@@ -251,6 +259,12 @@ public static class FfmpegArgumentBuilder
 
         return sb.ToString();
     }
+
+    /// <summary>
+    /// afftdn noise reduction in dB: 12 when on (clearly removes fan and hum without making speech
+    /// sound underwater); 0.01, the filter's minimum, when off so it can be switched on live.
+    /// </summary>
+    public static string NoiseReduction(bool enabled) => enabled ? "12" : "0.01";
 
     public static IReadOnlyList<string> VideoEncoderArgs(EncoderSettings e)
     {

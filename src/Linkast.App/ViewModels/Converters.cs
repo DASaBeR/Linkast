@@ -44,6 +44,8 @@ public static class Converters
 
     public static IValueConverter BoldWhenTrue { get; } = new Lambda(v => v is true ? FontWeights.SemiBold : FontWeights.Normal);
 
+    public static IValueConverter MuteLabel { get; } = new Lambda(v => v is true ? "Muted" : "Mute");
+
     public static IValueConverter InverseBool { get; } = new Lambda(v => v is not true);
 
     public static IValueConverter InverseBoolToVisibility { get; } = new Lambda(v => v is true ? Visibility.Collapsed : Visibility.Visible);

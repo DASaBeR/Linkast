@@ -64,6 +64,9 @@ public sealed record StreamSettings
 
     public double MicrophoneVolume { get; init; } = 100;
 
+    /// <summary>Remove steady background noise from the microphone.</summary>
+    public bool MicrophoneNoiseSuppression { get; init; }
+
     public string? EncoderId { get; init; }
 
     public int Width { get; init; } = 1920;
@@ -79,6 +82,9 @@ public sealed record StreamSettings
     public int AudioBitrateKbps { get; init; } = 160;
 
     public string? EncoderPreset { get; init; }
+
+    /// <summary>Preset that fills <see cref="ServerUrl"/>. Custom means the user typed the server.</summary>
+    public StreamPlatform Platform { get; init; } = StreamPlatform.Custom;
 
     public DestinationKind DestinationKind { get; init; } = DestinationKind.Direct;
 

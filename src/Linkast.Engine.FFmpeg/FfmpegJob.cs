@@ -5,7 +5,20 @@ using Linkast.Core.Audio;
 namespace Linkast.Engine.FFmpeg;
 
 /// <summary>An audio input as FFmpeg will see it.</summary>
-public abstract record AudioJobInput(double Gain);
+public abstract record AudioJobInput(double Gain)
+{
+    /// <summary>
+    /// Filter name suffix, for example "mic" gives <c>volume@mic</c>. Named inputs can be changed live
+    /// through the command channel; unnamed inputs get plain filters.
+    /// </summary>
+    public string? Name { get; init; }
+
+    /// <summary>
+    /// Null: no noise filter. True or false: an <c>afftdn@{Name}</c> filter is included, switched on or
+    /// (nearly) off, so it can be toggled live without restarting.
+    /// </summary>
+    public bool? NoiseSuppression { get; init; }
+}
 
 /// <summary>Raw PCM delivered by Linkast over a named pipe.</summary>
 public sealed record PipeAudioJobInput(string PipePath, PcmFormat Format, double Gain) : AudioJobInput(Gain);
