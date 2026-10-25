@@ -66,8 +66,11 @@ jobs:
               (Get-Content Directory.Build.props -Raw) -replace "<Version>[^<]+</Version>", "<Version>$version</Version>" | Set-Content Directory.Build.props -Encoding utf8
             }
 
-            gh release view "v$version" --repo ${{ github.repository }} *> $null
-            if ($LASTEXITCODE -eq 0) { throw "Release v$version already exists. Choose a new version." }
+            # Includes drafts. Uses the REST API rather than `gh release view`, whose "not found" exit code
+            # would otherwise become this step's exit code (GitHub ends pwsh steps with exit $LASTEXITCODE).
+            $existing = Invoke-RestMethod "https://api.github.com/repos/${{ github.repository }}/releases?per_page=100" `
+              -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json" }
+            if ($existing | Where-Object { $_.tag_name -eq "v$version" }) { throw "Release v$version already exists (published or draft). Choose a new version." }
           }
 
           $notes = "docs/release-notes/$version.md"
@@ -81,6 +84,7 @@ jobs:
           "PRERELEASE=$(if ($version -match '-') { '--pre' } else { '' })" >> $env:GITHUB_ENV
           "PUBLISH=$(if ($publish) { '--publish' } else { '' })" >> $env:GITHUB_ENV
           "Releasing $version (publish: $publish)"
+          exit 0
 
       - name: Fetch models (hash-verified)
         run: powershell -ExecutionPolicy Bypass -File tools/fetch-models.ps1
