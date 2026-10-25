@@ -50,6 +50,30 @@ public enum OverlayPosition
 
 public static class OverlayGeometry
 {
+    /// <summary>
+    /// The position and size that come closest to <paramref name="rect"/> (for example an overlay
+    /// imported from OBS): nearly the whole canvas is full screen, otherwise the nearest of the nine spots.
+    /// </summary>
+    public static (OverlayPosition Position, double Size) Nearest(NormalizedRect rect)
+    {
+        if (rect.Width >= 0.9 && rect.Height >= 0.9)
+        {
+            return (OverlayPosition.FullScreen, 1);
+        }
+
+        var cx = rect.X + (rect.Width / 2);
+        var cy = rect.Y + (rect.Height / 2);
+        var col = cx < 1 / 3.0 ? 0 : cx > 2 / 3.0 ? 2 : 1;
+        var row = cy < 1 / 3.0 ? 0 : cy > 2 / 3.0 ? 2 : 1;
+        OverlayPosition[] spots =
+        [
+            OverlayPosition.TopLeft, OverlayPosition.TopCenter, OverlayPosition.TopRight,
+            OverlayPosition.MiddleLeft, OverlayPosition.Center, OverlayPosition.MiddleRight,
+            OverlayPosition.BottomLeft, OverlayPosition.BottomCenter, OverlayPosition.BottomRight,
+        ];
+        return (spots[(row * 3) + col], Math.Round(Math.Clamp(rect.Width, 0.05, 1), 2));
+    }
+
     /// <summary>Gap from the canvas edge, as a fraction of the longer side (the same margin cameras snap to).</summary>
     public const double Margin = 0.025;
 

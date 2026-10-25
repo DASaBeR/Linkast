@@ -52,6 +52,8 @@ public static class Converters
 
     public static IValueConverter InverseBoolToVisibility { get; } = new Lambda(v => v is true ? Visibility.Collapsed : Visibility.Visible);
 
+    public static IValueConverter NonZeroToVisibility { get; } = new Lambda(v => v is int n && n != 0 ? Visibility.Visible : Visibility.Collapsed);
+
     public static IValueConverter RunningToVisibility { get; } = new Lambda(v =>
         v is Core.Camera.CameraState.Running ? Visibility.Visible : Visibility.Collapsed);
 

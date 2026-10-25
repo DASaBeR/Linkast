@@ -102,6 +102,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             }
         };
         Overlays.SettingsChanged += (_, _) => ScheduleSave();
+        ObsImport.ImportRequested += (_, e) => _ = ApplyObsImportAsync(e.Import, e.Parts);
         Hotkeys.SettingsChanged += (_, _) =>
         {
             ApplyHotkeys();
@@ -138,6 +139,199 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     /// <summary>Pictures on top of the stream and the "Be right back" screen.</summary>
     public OverlaysViewModel Overlays { get; }
+
+    /// <summary>Settings › Import from OBS.</summary>
+    public ObsImportViewModel ObsImport { get; } = new();
+
+    /// <summary>
+    /// Takes over the ticked parts of an OBS setup. The new settings go through the same loading code as
+    /// a saved settings file, so everything is checked and clamped the same way.
+    /// </summary>
+    private async Task ApplyObsImportAsync(Linkast.Core.Obs.ObsImport import, IReadOnlySet<ObsImportPart> parts)
+    {
+        if (IsActive)
+        {
+            ObsImport.Message = "End the stream or recording first, then import.";
+            return;
+        }
+
+        var current = CurrentSettings();
+        var stream = current.Stream;
+        var webcam = current.Webcam;
+        var overlays = current.Overlays;
+        var notes = new List<string>();
+
+        if (parts.Contains(ObsImportPart.Stream) && import.Stream is { } target)
+        {
+            stream = stream with { ServerUrl = target.ServerUrl, Platform = StreamPlatforms.Detect(target.ServerUrl), DestinationKind = DestinationKind.Direct };
+            if (!target.Key.IsEmpty)
+            {
+                Redactor.Shared.Register(target.Key);
+                StreamKey = target.Key;
+                StreamKeyLoaded?.Invoke(this, target.Key);
+            }
+        }
+
+        if (parts.Contains(ObsImportPart.Quality) && import.Video is { } video)
+        {
+            var resolution = Resolutions.MinBy(r => Math.Abs((r.Width * r.Height) - (video.Width * video.Height)))!;
+            stream = stream with
+            {
+                Width = resolution.Width,
+                Height = resolution.Height,
+                FrameRate = video.Fps >= 45 ? 60 : 30,
+                VideoBitrateKbps = import.VideoBitrateKbps ?? stream.VideoBitrateKbps,
+                AudioBitrateKbps = import.AudioBitrateKbps ?? stream.AudioBitrateKbps,
+            };
+            if (resolution.Width != video.Width || resolution.Height != video.Height)
+            {
+                notes.Add($"OBS used {video.Width} × {video.Height}; the closest Linkast size is {resolution.Width} × {resolution.Height}.");
+            }
+        }
+
+        if (parts.Contains(ObsImportPart.Capture) && import.Capture is { } capture)
+        {
+            stream = capture.Kind == Linkast.Core.Obs.ObsCaptureKind.Display
+                ? stream with
+                {
+                    SourceKind = nameof(VideoSourceKind.Display),
+                    MonitorDeviceName = capture.MonitorIndex is { } m && m < Monitors.Count ? Monitors[m].DeviceName : stream.MonitorDeviceName,
+                    CaptureCursor = capture.CaptureCursor,
+                }
+                : stream with
+                {
+                    SourceKind = nameof(VideoSourceKind.Window),
+                    WindowTitle = capture.WindowTitle,
+                    WindowProcess = capture.WindowExe,
+                    CaptureCursor = capture.CaptureCursor,
+                };
+            if (capture.Kind == Linkast.Core.Obs.ObsCaptureKind.Window && !Windows.Any(w => string.Equals(w.ProcessName, capture.WindowExe, StringComparison.OrdinalIgnoreCase)))
+            {
+                notes.Add($"Start {capture.WindowExe ?? "the game"} and press Refresh on the Stream page to pick its window.");
+            }
+        }
+
+        if (parts.Contains(ObsImportPart.Audio))
+        {
+            stream = stream with { SystemAudioEnabled = import.DesktopAudio, MicrophoneEnabled = import.Microphone };
+        }
+
+        if (parts.Contains(ObsImportPart.Recording) && import.RecordingFolder is { } folder)
+        {
+            stream = stream with { RecordingFolder = folder };
+        }
+
+        if (parts.Contains(ObsImportPart.Cameras) && import.Cameras.Count > 0)
+        {
+            webcam = ImportCameras(webcam, import.Cameras, notes);
+        }
+
+        if (parts.Contains(ObsImportPart.Overlays) && import.Overlays.Count > 0)
+        {
+            overlays = ImportOverlays(overlays, import.Overlays, notes);
+        }
+
+        var imported = SettingsSerializer.Sanitize(current with { Stream = stream, Webcam = webcam, Overlays = overlays });
+        _loading = true;
+        try
+        {
+            ApplyStreamSettings(imported.Stream);
+            SelectedEncoder = (parts.Contains(ObsImportPart.Quality) ? Encoders.FirstOrDefault(e => e.Id == import.EncoderId) : null) ?? SelectedEncoder;
+            Webcam.Load(imported.Webcam, Webcam.CustomPresets);
+            Overlays.Load(imported.Overlays);
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+        if (parts.Contains(ObsImportPart.Quality) && import.EncoderId is { } wanted && SelectedEncoder?.Id != wanted)
+        {
+            notes.Add("The encoder OBS used doesn't work on this PC, so Linkast keeps its own choice.");
+        }
+
+        await Webcam.RefreshDevicesAsync();
+        SaveNow();
+        AppendLog($"Imported from OBS profile '{import.ProfileName}': {string.Join(", ", parts)}.");
+        ObsImport.Message = $"Imported {parts.Count} setting group(s) from OBS." + (notes.Count > 0 ? " " + string.Join(" ", notes) : string.Empty);
+    }
+
+    private WebcamSettings ImportCameras(WebcamSettings webcam, IReadOnlyList<Linkast.Core.Obs.ObsCamera> cameras, List<string> notes)
+    {
+        var layers = new List<CameraLayerConfig>();
+        var landscape = new Dictionary<string, NormalizedRect>();
+        for (var i = 0; i < cameras.Count && i < CameraLayerConfig.MaxLayers; i++)
+        {
+            var cam = cameras[i];
+            var id = $"camera-{i + 1}";
+            var device = Webcam.Devices.FirstOrDefault(d => string.Equals(d.Name, cam.DeviceName, StringComparison.OrdinalIgnoreCase));
+            if (device is null)
+            {
+                notes.Add($"The camera \"{cam.DeviceName}\" isn't connected; plug it in and pick it on the Webcam page.");
+            }
+
+            layers.Add(new CameraLayerConfig { LayerId = id, Name = cam.Name, Enabled = device is not null, DeviceId = device?.Id, DeviceName = cam.DeviceName });
+            landscape[id] = cam.Placement ?? new NormalizedRect(0.695 - (i * 0.3), 0.68, 0.28, 0.28).Clamped();
+        }
+
+        var cameraIds = webcam.Layers.Select(l => l.LayerId).Concat(layers.Select(l => l.LayerId)).ToHashSet(StringComparer.Ordinal);
+        var layouts = webcam.Layouts.Select(layout =>
+        {
+            // Keep placements that aren't cameras; cameras come from OBS (landscape) or the default below the game (vertical).
+            var map = layout.CameraPlacements.Where(kv => !cameraIds.Contains(kv.Key)).ToDictionary(kv => kv.Key, kv => kv.Value);
+            for (var i = 0; i < layers.Count; i++)
+            {
+                map[layers[i].LayerId] = layout.Orientation == OutputOrientation.Landscape
+                    ? landscape[layers[i].LayerId]
+                    : i == 0 ? new NormalizedRect(0, 0.56, 1, 0.44) : new NormalizedRect(0.04 + (i * 0.2), 0.04, 0.3, 0.17);
+            }
+
+            return layout with { CameraPlacements = map };
+        }).ToList();
+
+        return webcam with { Layers = layers, Layouts = layouts, SelectedLayerId = layers[0].LayerId };
+    }
+
+    private OverlaySettings ImportOverlays(OverlaySettings overlays, IReadOnlyList<Linkast.Core.Obs.ObsOverlay> imported, List<string> notes)
+    {
+        // The old overlays' links are removed with them.
+        foreach (var old in overlays.Items.Where(o => o.Kind == OverlayKind.Web))
+        {
+            _secrets.Set("overlay.url." + old.LayerId, null);
+        }
+
+        var items = new List<OverlayConfig>();
+        foreach (var o in imported.Take(OverlayConfig.MaxOverlays))
+        {
+            var id = $"overlay-{items.Count + 1}";
+            if (o.Kind == OverlayKind.Image && (o.ImagePath is null || !File.Exists(o.ImagePath)))
+            {
+                notes.Add($"The picture for \"{o.Name}\" wasn't found on this PC.");
+                continue;
+            }
+
+            var (position, size) = o.Placement is { } rect ? OverlayGeometry.Nearest(rect) : (OverlayPosition.TopRight, 0.2);
+            if (o.Kind == OverlayKind.Web && o.Url is { } url)
+            {
+                Redactor.Shared.Register(url);
+                _secrets.Set("overlay.url." + id, url);
+            }
+
+            items.Add(new OverlayConfig
+            {
+                LayerId = id,
+                Name = o.Name,
+                Kind = o.Kind,
+                ImagePath = o.ImagePath,
+                PageWidth = o.Kind == OverlayKind.Web ? o.PageWidth : 1920,
+                PageHeight = o.Kind == OverlayKind.Web ? o.PageHeight : 1080,
+                Position = position,
+                Size = size,
+            });
+        }
+
+        return overlays with { Items = items };
+    }
 
     /// <summary>Global hotkeys (Settings › Hotkeys).</summary>
     public HotkeysViewModel Hotkeys { get; } = new();
@@ -1023,7 +1217,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private void SaveNow()
     {
         _saveTimer.Stop();
-        _settingsStore.Save(new LinkastSettings
+        _settingsStore.Save(CurrentSettings());
+    }
+
+    /// <summary>Everything on screen, as it would be saved.</summary>
+    private LinkastSettings CurrentSettings() => new()
         {
             Theme = SelectedTheme.Theme,
             Stream = new StreamSettings
@@ -1062,8 +1260,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             Overlays = Overlays.ToSettings(),
             Hotkeys = Hotkeys.ToSettings(),
             CustomPresets = Webcam.CustomPresets,
-        });
-    }
+        };
 
     private void ApplyStreamSettings(StreamSettings s)
     {
