@@ -791,6 +791,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     partial void OnSelectedPlatformChanged(StreamPlatformInfo value)
     {
+        OnPropertyChanged(nameof(CanMeasureUpload));
         if (!_loading && value.Server is { } server)
         {
             ServerUrl = server;
@@ -891,6 +892,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         set
         {
             field = value ?? new Secret(string.Empty);
+            OnPropertyChanged(nameof(CanMeasureUpload));
             if (!_loading)
             {
                 _secrets.Set(DpapiSecretStore.StreamKeyName, field);
@@ -902,7 +904,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsActive), nameof(CanEditSettings), nameof(StatusText), nameof(IsBroadcasting), nameof(IsRecording), nameof(IsRecordingOnly), nameof(RecordButtonText), nameof(PillText), nameof(StatusTitleText))]
-    [NotifyCanExecuteChangedFor(nameof(StartCommand), nameof(StopCommand), nameof(InstallUpdateCommand), nameof(ToggleRecordingCommand))]
+    [NotifyCanExecuteChangedFor(nameof(StartCommand), nameof(StopCommand), nameof(InstallUpdateCommand), nameof(ToggleRecordingCommand), nameof(FindBestSettingsCommand), nameof(ApplyRecommendationCommand))]
     public partial StreamState State { get; set; } = StreamState.Idle;
 
     /// <summary>The running session goes to a platform (not only to a file).</summary>
@@ -1039,6 +1041,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
             ReadinessText = "Testing encoders on this PC…";
             _probeResults = await new EncoderCatalog(ffmpeg).ProbeAsync();
+            FindBestSettingsCommand.NotifyCanExecuteChanged();
             Encoders.Clear();
             foreach (var r in _probeResults.Where(r => r.Works))
             {

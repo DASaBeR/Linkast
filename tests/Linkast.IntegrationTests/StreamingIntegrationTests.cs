@@ -306,7 +306,24 @@ public sealed class StreamingIntegrationTests(ITestOutputHelper output) : IAsync
         }
     }
 
+    // A reader that joins a stream which went live a moment ago may find no keyframe yet; try a few times.
     private async Task<string> ProbeAsync(string url)
+    {
+        var result = string.Empty;
+        for (var attempt = 0; attempt < 4 && result.Length == 0; attempt++)
+        {
+            if (attempt > 0)
+            {
+                await Task.Delay(1000);
+            }
+
+            result = await ProbeOnceAsync(url);
+        }
+
+        return result;
+    }
+
+    private async Task<string> ProbeOnceAsync(string url)
     {
         var ffprobe = Path.Combine(Path.GetDirectoryName(_ffmpeg!.Path)!, "ffprobe.exe");
         var psi = new ProcessStartInfo(ffprobe) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };

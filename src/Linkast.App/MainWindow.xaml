@@ -381,6 +381,43 @@
                                 Visibility="{Binding IsSelected, ElementName=TabQuality, Converter={StaticResource BoolToVis}}">
                             <StackPanel>
                                 <TextBlock Text="Quality" Style="{StaticResource Linkast.Card.Title}" />
+                                <!-- Auto setup: measures this PC and the upload, then suggests one setup to apply. -->
+                                <Border Background="{DynamicResource Linkast.Surface2}" CornerRadius="8" Padding="14,12" Margin="0,0,0,14">
+                                    <StackPanel>
+                                        <DockPanel>
+                                            <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Primary}" Command="{Binding FindBestSettingsCommand}"
+                                                    VerticalAlignment="Center" Margin="12,0,0,0" AutomationProperties.Name="Find the best settings">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE9D9;" FontSize="13" Margin="0,0,8,0" />
+                                                    <TextBlock Text="Find the best settings" />
+                                                </StackPanel>
+                                            </Button>
+                                            <StackPanel>
+                                                <TextBlock Text="Not sure what to pick?" FontWeight="SemiBold" />
+                                                <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,2,0,0" TextWrapping="Wrap"
+                                                           Text="Linkast tests the encoders on this PC and your upload, then suggests resolution, frame rate and bitrate. It takes about half a minute." />
+                                            </StackPanel>
+                                        </DockPanel>
+                                        <!-- Upload speed: measured on Twitch (test mode), typed in for other platforms. -->
+                                        <DockPanel Margin="0,10,0,0" Visibility="{Binding CanMeasureUpload, Converter={x:Static vm:Converters.InverseBoolToVisibility}}">
+                                            <TextBlock Text="Your upload speed (Mbps)" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                            <TextBox Width="90" Text="{Binding UploadSpeedMbps, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Your upload speed in megabits per second" />
+                                            <Button Style="{StaticResource Linkast.Button.Subtle}" Command="{Binding OpenSpeedTestCommand}" Margin="8,0,0,0" HorizontalAlignment="Left"
+                                                    Content="Measure it in your browser" ToolTip="Opens speed.cloudflare.com. Use the Upload number." />
+                                        </DockPanel>
+                                        <TextBlock Text="{Binding AutoQualityStatus}" TextWrapping="Wrap" Margin="0,10,0,0"
+                                                   Visibility="{Binding AutoQualityStatus, Converter={x:Static vm:Converters.NotNullToVisibility}}"
+                                                   AutomationProperties.LiveSetting="Polite" />
+                                        <DockPanel Margin="0,10,0,0" Visibility="{Binding HasRecommendation, Converter={StaticResource BoolToVis}}">
+                                            <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Primary}" Command="{Binding ApplyRecommendationCommand}"
+                                                    Content="Apply" Margin="12,0,0,0" MinWidth="90" />
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="Suggested" Style="{StaticResource Linkast.Text.FieldLabel}" />
+                                                <TextBlock Text="{Binding RecommendationText}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                            </StackPanel>
+                                        </DockPanel>
+                                    </StackPanel>
+                                </Border>
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="2*" />

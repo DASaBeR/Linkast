@@ -197,7 +197,9 @@ public static class FfmpegArgumentBuilder
         var f = fps.ToString(Inv);
         return video switch
         {
-            BlankCanvasSource => $"color=c=black:s={width.ToString(Inv)}x{height.ToString(Inv)}:r={f}",
+            // Generated pictures are paced to real time; otherwise FFmpeg makes them as fast as it can and
+            // sends a platform several times the bitrate (captures are paced by the screen already).
+            BlankCanvasSource => $"color=c=black:s={width.ToString(Inv)}x{height.ToString(Inv)}:r={f},realtime",
             DisplaySource { Api: CaptureApi.DesktopDuplication } d =>
                 $"ddagrab=output_idx={d.MonitorIndex.ToString(Inv)}:framerate={f}:draw_mouse={Bool(d.CaptureCursor)}",
             DisplaySource d when d.MonitorHandle is { } h =>
@@ -206,7 +208,7 @@ public static class FfmpegArgumentBuilder
                 $"gfxcapture=monitor_idx={d.MonitorIndex.ToString(Inv)}:max_framerate={f}:capture_cursor={Bool(d.CaptureCursor)}",
             WindowSource w =>
                 $"gfxcapture=hwnd={w.WindowHandle.ToString(Inv)}:max_framerate={f}:capture_cursor={Bool(w.CaptureCursor)}:resize_mode=scale_aspect",
-            TestPatternSource => $"testsrc2=size=1280x720:rate={f}",
+            TestPatternSource => $"testsrc2=size=1280x720:rate={f},realtime",
             _ => throw new NotSupportedException($"Unsupported video source {video.GetType().Name}."),
         };
     }

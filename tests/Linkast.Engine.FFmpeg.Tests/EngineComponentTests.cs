@@ -142,7 +142,7 @@ public class ArgumentBuilderTests
     public void Blank_canvas_needs_no_hwdownload()
     {
         var args = FfmpegArgumentBuilder.Build(Job(new BlankCanvasSource()));
-        Assert.Equal("color=c=black:s=1920x1080:r=60", ValueAfter(args, "-i"));
+        Assert.Equal("color=c=black:s=1920x1080:r=60,realtime", ValueAfter(args, "-i"));
         Assert.DoesNotContain("hwdownload", ValueAfter(args, "-filter_complex"), StringComparison.Ordinal);
     }
 
