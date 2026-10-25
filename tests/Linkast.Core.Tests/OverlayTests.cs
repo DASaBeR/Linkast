@@ -40,6 +40,23 @@ public class OverlayTests
     }
 
     [Fact]
+    public void Web_overlay_page_size_is_clamped_and_kept()
+    {
+        var s = new LinkastSettings
+        {
+            Overlays = new OverlaySettings { Items = [new OverlayConfig { LayerId = "alerts", Kind = OverlayKind.Web, PageWidth = 99999, PageHeight = 1 }] },
+        };
+        var web = SettingsSerializer.Sanitize(s).Overlays.Items[0];
+        Assert.Equal(OverlayKind.Web, web.Kind);
+        Assert.Equal(3840, web.PageWidth);
+        Assert.Equal(100, web.PageHeight);
+
+        // The link is a secret: it is never part of the settings file.
+        var overlaysJson = System.Text.Json.JsonSerializer.Serialize(s.Overlays, SettingsSerializer.Options);
+        Assert.DoesNotContain("url", overlaysJson, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Overlay_settings_are_sanitized_and_round_trip()
     {
         var items = Enumerable.Range(1, 5).Select(i => new OverlayConfig { LayerId = "o", Name = new string('x', 80), Size = 9 }).ToList();

@@ -444,7 +444,14 @@
                                 <Border Style="{StaticResource Linkast.Card}">
                                     <StackPanel>
                                         <DockPanel Margin="0,0,0,6">
-                                            <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Primary}" Command="{Binding AddImageCommand}"
+                                            <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Primary}" Command="{Binding AddWebCommand}" Margin="8,0,0,0" AutomationProperties.Name="Add alerts or web page"
+                                                    ToolTip="Paste the overlay link from Reymit, Streamlabs, StreamElements or another alert service (up to 3 overlays)">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE774;" FontSize="12" Margin="0,0,8,0" />
+                                                    <AccessText Text="Add _alerts or web page" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Primary}" Command="{Binding AddImageCommand}" AutomationProperties.Name="Add picture"
                                                     ToolTip="Add a logo or another picture on top of your stream (up to 3 overlays)">
                                                 <StackPanel Orientation="Horizontal">
                                                     <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE710;" FontSize="12" Margin="0,0,8,0" />
@@ -454,12 +461,12 @@
                                             <TextBlock Text="Overlays" Style="{StaticResource Linkast.Card.Title}" Margin="0" />
                                         </DockPanel>
                                         <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,0,0,12"
-                                                   Text="Pictures on top of your stream, such as a logo. Showing, hiding, moving and resizing work while live." />
+                                                   Text="Alerts, a chat box or a logo on top of your stream. Showing, hiding, moving and resizing work while live." />
 
                                         <Border Background="{DynamicResource Linkast.Surface2}" CornerRadius="{StaticResource Linkast.Radius.Action}" Padding="16,14"
                                                 Visibility="{Binding HasItems, Converter={x:Static vm:Converters.InverseBoolToVisibility}}">
                                             <TextBlock Style="{StaticResource Linkast.Text.Body}" TextAlignment="Center"
-                                                       Text="No overlays yet. Add a picture, for example your logo, and choose where it sits." />
+                                                       Text="No overlays yet. Add your alerts link from your donation or alert service, or a picture such as your logo." />
                                         </Border>
 
                                         <ItemsControl ItemsSource="{Binding Items}" Focusable="False">
@@ -487,10 +494,40 @@
                                                                             Command="{Binding DataContext.RemoveCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}"
                                                                             ToolTip="Remove this overlay" AutomationProperties.Name="Remove overlay" />
                                                                     <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Subtle}" Content="Change picture" MinHeight="30" Padding="10,4"
+                                                                            Visibility="{Binding IsImage, Converter={StaticResource BoolToVis}}"
                                                                             Command="{Binding DataContext.ChangeImageCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}" />
                                                                     <CheckBox DockPanel.Dock="Right" Content="Show" IsChecked="{Binding Visible}" Margin="0,0,10,0" MinWidth="0" VerticalAlignment="Center" />
                                                                     <TextBox Text="{Binding Name, UpdateSourceTrigger=LostFocus}" MaxLength="40" Margin="0,0,10,0" AutomationProperties.Name="Overlay name" />
                                                                 </DockPanel>
+
+                                                                <!-- Web overlay: the link is entered once and then hidden, because the
+                                                                     Linkast window is often on stream and the link holds an account token. -->
+                                                                <StackPanel Margin="0,8,0,0" Visibility="{Binding IsWeb, Converter={StaticResource BoolToVis}}">
+                                                                    <DockPanel Visibility="{Binding IsEditingUrl, Converter={StaticResource BoolToVis}}">
+                                                                        <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Primary}" Content="Save link" Command="{Binding SaveUrlCommand}"
+                                                                                Margin="8,0,0,0" />
+                                                                        <TextBox Text="{Binding UrlDraft, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Overlay link"
+                                                                                 ToolTip="The overlay or alert box link from your alert service, starting with https://" />
+                                                                    </DockPanel>
+                                                                    <DockPanel Visibility="{Binding IsEditingUrl, Converter={x:Static vm:Converters.InverseBoolToVisibility}}">
+                                                                        <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Subtle}" Command="{Binding ReloadCommand}" MinHeight="30" Padding="10,4"
+                                                                                ToolTip="Load the page again, for example after changing your alert design">
+                                                                            <StackPanel Orientation="Horizontal">
+                                                                                <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE72C;" FontSize="12" Margin="0,0,6,0" />
+                                                                                <TextBlock Text="Reload" />
+                                                                            </StackPanel>
+                                                                        </Button>
+                                                                        <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Subtle}" Content="Change link" Command="{Binding ChangeUrlCommand}"
+                                                                                MinHeight="30" Padding="10,4" />
+                                                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE72E;" FontSize="12" Margin="0,0,6,0"
+                                                                                       Foreground="{DynamicResource Linkast.Success}" />
+                                                                            <TextBlock Text="Link saved and hidden" Foreground="{DynamicResource Linkast.TextSecondary}" />
+                                                                        </StackPanel>
+                                                                    </DockPanel>
+                                                                    <TextBlock Text="{Binding Problem}" TextWrapping="Wrap" Foreground="{DynamicResource Linkast.Warning}" Margin="0,6,0,0"
+                                                                               Visibility="{Binding Problem, Converter={x:Static vm:Converters.NotNullToVisibility}}" />
+                                                                </StackPanel>
                                                                 <Grid Margin="0,8,0,0">
                                                                     <Grid.ColumnDefinitions>
                                                                         <ColumnDefinition Width="*" />
@@ -517,6 +554,8 @@
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>
+                                        <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,4,0,0" Visibility="{Binding HasWebItems, Converter={StaticResource BoolToVis}}"
+                                                   Text="Alert sounds reach your stream through System audio (Source &amp; audio tab), like in OBS." />
                                     </StackPanel>
                                 </Border>
 

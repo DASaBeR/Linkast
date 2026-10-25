@@ -70,6 +70,7 @@ public partial class App : Application
                 services.AddSingleton<ISegmentationService, Linkast.Effects.SegmentationService>();
                 services.AddSingleton<BackgroundImageCache>();
                 services.AddSingleton<IFramingService>(sp => new FaceFramingService(sp.GetRequiredService<ICameraService>()));
+                services.AddSingleton<WebOverlayHost>();
                 services.AddSingleton<IOverlayInputProvider, OverlayInputProvider>();
                 services.AddSingleton<IVideoLayerInputProvider>(sp => new CameraLayerPipeInputProvider(
                     sp.GetRequiredService<ICameraService>(),

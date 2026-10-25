@@ -289,7 +289,8 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                     var input = _overlayProvider.Open(overlay, px.Width, px.Height, maxFps);
                     layerInputs.Add(input);
                     await input.StartAsync(ct).ConfigureAwait(false);
-                    jobLayers.Add(new VideoLayerJobInput(input.PipePath, px.Width, px.Height, input.FrameRate, px));
+                    // A web page renders at its own size; FFmpeg scales it into its place.
+                    jobLayers.Add(new VideoLayerJobInput(input.PipePath, input.Width, input.Height, input.FrameRate, px));
                     layerIds.Add(overlay.LayerId);
                 }
             }

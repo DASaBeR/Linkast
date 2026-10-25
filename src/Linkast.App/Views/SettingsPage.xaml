@@ -137,7 +137,7 @@
                         <StackPanel>
                             <TextBlock Text="Privacy" Style="{StaticResource Linkast.Card.Title}" />
                             <TextBlock Style="{StaticResource Linkast.Text.Body}"
-                                       Text="No account, no cloud, no telemetry. Your stream goes straight from this PC to the server you choose. The only other connection Linkast makes on its own is the update check on GitHub." />
+                                       Text="No account, no cloud, no telemetry. Your stream goes straight from this PC to the server you choose. Besides the update check on GitHub, Linkast only connects to the web overlays you add, which load their own pages." />
                         </StackPanel>
                     </Border>
                 </StackPanel>

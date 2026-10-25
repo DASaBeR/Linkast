@@ -6,6 +6,7 @@ using System.Windows.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Linkast.App.Services;
+using Linkast.Core;
 using Linkast.Core.Camera;
 using Linkast.Core.Settings;
 
@@ -29,13 +30,83 @@ public sealed partial class OverlayItemViewModel : ObservableObject
         Size = config.Size;
         Visible = config.Visible;
         ImagePath = config.ImagePath;
+        PageWidth = config.PageWidth;
+        PageHeight = config.PageHeight;
     }
 
     public event EventHandler? Changed;
 
+    /// <summary>Raised when only the picture changed (a web page redrew): the preview updates, nothing is saved.</summary>
+    public event EventHandler? PreviewChanged;
+
+    /// <summary>Raised when the user asks to load the web page again.</summary>
+    public event EventHandler? ReloadRequested;
+
     public string LayerId { get; }
 
     public OverlayKind Kind { get; }
+
+    public bool IsWeb => Kind == OverlayKind.Web;
+
+    public bool IsImage => Kind == OverlayKind.Image;
+
+    /// <summary>Page size for a web overlay, in CSS pixels. Alert services expect 1920 × 1080.</summary>
+    [ObservableProperty]
+    public partial int PageWidth { get; set; }
+
+    [ObservableProperty]
+    public partial int PageHeight { get; set; }
+
+    /// <summary>The web overlay's link. Kept out of settings and logs: it usually holds an account token.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasUrl), nameof(IsEditingUrl))]
+    public partial string? Url { get; set; }
+
+    /// <summary>What the user is typing in the link box.</summary>
+    [ObservableProperty]
+    public partial string? UrlDraft { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsEditingUrl))]
+    public partial bool ChangingUrl { get; set; }
+
+    public bool HasUrl => !string.IsNullOrWhiteSpace(Url);
+
+    public bool IsEditingUrl => IsWeb && (!HasUrl || ChangingUrl);
+
+    /// <summary>Why a web overlay is not showing, if it isn't.</summary>
+    [ObservableProperty]
+    public partial string? Problem { get; set; }
+
+    [RelayCommand]
+    private void SaveUrl()
+    {
+        var url = UrlDraft?.Trim();
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http")
+        {
+            Url = url;
+            UrlDraft = null;
+            ChangingUrl = false;
+            Problem = null;
+        }
+        else
+        {
+            Problem = "Paste the full link that starts with https://, as your alert service shows it.";
+        }
+    }
+
+    [RelayCommand]
+    private void ChangeUrl() => ChangingUrl = true;
+
+    [RelayCommand]
+    private void Reload() => ReloadRequested?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>Shows a new picture of the web page in the preview.</summary>
+    public void SetSnapshot(BitmapSource? snapshot)
+    {
+        Bitmap = snapshot;
+        PreviewChanged?.Invoke(this, EventArgs.Empty);
+    }
 
     [ObservableProperty]
     public partial string Name { get; set; }
@@ -58,11 +129,11 @@ public sealed partial class OverlayItemViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(IsMissing))]
     public partial BitmapSource? Bitmap { get; set; }
 
-    public bool IsMissing => Bitmap is null;
+    public bool IsMissing => IsImage && Bitmap is null;
 
     public bool IsSizeAdjustable => Position != OverlayPosition.FullScreen;
 
-    public double Aspect => OverlayRenderer.AspectOf(Bitmap);
+    public double Aspect => IsWeb ? (double)PageWidth / Math.Max(1, PageHeight) : OverlayRenderer.AspectOf(Bitmap);
 
     public NormalizedRect PlacementOn(double canvasWidth, double canvasHeight) =>
         OverlayGeometry.Place(Position, Size, Aspect, canvasWidth, canvasHeight);
@@ -77,7 +148,19 @@ public sealed partial class OverlayItemViewModel : ObservableObject
 
     partial void OnVisibleChanged(bool value) => Changed?.Invoke(this, EventArgs.Empty);
 
-    partial void OnBitmapChanged(BitmapSource? value) => Changed?.Invoke(this, EventArgs.Empty);
+    partial void OnBitmapChanged(BitmapSource? value)
+    {
+        if (IsImage)
+        {
+            Changed?.Invoke(this, EventArgs.Empty); // a new picture can change the shape
+        }
+    }
+
+    partial void OnUrlChanged(string? value) => Changed?.Invoke(this, EventArgs.Empty);
+
+    partial void OnPageWidthChanged(int value) => Changed?.Invoke(this, EventArgs.Empty);
+
+    partial void OnPageHeightChanged(int value) => Changed?.Invoke(this, EventArgs.Empty);
 
     public OverlayConfig ToConfig() => new()
     {
@@ -86,6 +169,8 @@ public sealed partial class OverlayItemViewModel : ObservableObject
         Kind = Kind,
         ImagePath = ImagePath,
         Position = Position,
+        PageWidth = PageWidth,
+        PageHeight = PageHeight,
         Size = Size,
         Visible = Visible,
     };
@@ -99,19 +184,28 @@ public sealed partial class OverlaysViewModel : ObservableObject
 {
     public const string AwayLayerId = "away-screen";
 
+    private readonly DpapiSecretStore? _secrets;
+    private readonly Dictionary<string, string?> _savedUrls = new(StringComparer.Ordinal);
     private bool _loading;
     private double _canvasWidth = 1920;
     private double _canvasHeight = 1080;
 
-    public OverlaysViewModel()
+    /// <param name="secrets">Where web overlay links are kept (encrypted for this Windows account).</param>
+    public OverlaysViewModel(DpapiSecretStore? secrets = null)
     {
+        _secrets = secrets;
         Items.CollectionChanged += (_, _) =>
         {
             OnPropertyChanged(nameof(CanAdd));
             OnPropertyChanged(nameof(HasItems));
+            OnPropertyChanged(nameof(HasWebItems));
             AddImageCommand.NotifyCanExecuteChanged();
+            AddWebCommand.NotifyCanExecuteChanged();
         };
     }
+
+    /// <summary>Raised when the user asks a web overlay to load again.</summary>
+    public event EventHandler<OverlayItemViewModel>? ReloadRequested;
 
     /// <summary>Raised when something to save changed.</summary>
     public event EventHandler? SettingsChanged;
@@ -124,6 +218,8 @@ public sealed partial class OverlaysViewModel : ObservableObject
     public bool CanAdd => Items.Count < OverlayConfig.MaxOverlays;
 
     public bool HasItems => Items.Count > 0;
+
+    public bool HasWebItems => Items.Any(o => o.IsWeb);
 
     public IReadOnlyList<OverlayPosition> Positions { get; } = Enum.GetValues<OverlayPosition>();
 
@@ -141,10 +237,9 @@ public sealed partial class OverlaysViewModel : ObservableObject
             return;
         }
 
-        var id = Enumerable.Range(1, OverlayConfig.MaxOverlays + Items.Count).Select(i => $"overlay-{i}").First(i => Items.All(o => o.LayerId != i));
         var item = new OverlayItemViewModel(new OverlayConfig
         {
-            LayerId = id,
+            LayerId = NewId(),
             Name = Path.GetFileNameWithoutExtension(path),
             Kind = OverlayKind.Image,
             Position = OverlayPosition.TopRight,
@@ -156,12 +251,35 @@ public sealed partial class OverlaysViewModel : ObservableObject
         Changed(item, liveRelevant: false);
     }
 
+    /// <summary>Alerts, a chat box or any web page with a transparent background, full screen by default.</summary>
+    [RelayCommand(CanExecute = nameof(CanAdd))]
+    private void AddWeb()
+    {
+        var item = new OverlayItemViewModel(new OverlayConfig
+        {
+            LayerId = NewId(),
+            Name = "Alerts",
+            Kind = OverlayKind.Web,
+            Position = OverlayPosition.FullScreen,
+            Size = 1,
+        });
+        Attach(item);
+        Items.Add(item);
+        Changed(item, liveRelevant: false);
+    }
+
     [RelayCommand]
     private void Remove(OverlayItemViewModel item)
     {
         if (Items.Remove(item))
         {
             item.Changed -= OnItemChanged;
+            if (item.IsWeb)
+            {
+                _secrets?.Set(UrlSecretName(item.LayerId), null);
+                _savedUrls.Remove(item.LayerId);
+            }
+
             LiveChanged?.Invoke(this, new OverlayLiveChange(item.LayerId, null));
             Changed(null, liveRelevant: false);
         }
@@ -252,10 +370,21 @@ public sealed partial class OverlaysViewModel : ObservableObject
     /// </summary>
     public IReadOnlyList<OverlayLayerBinding> Bindings(double canvasWidth, double canvasHeight)
     {
-        var list = Items
-            .Where(o => o.Kind == OverlayKind.Image && !string.IsNullOrWhiteSpace(o.ImagePath))
-            .Select(o => new OverlayLayerBinding(o.LayerId, new ImageOverlaySource(o.ImagePath!), o.PlacementOn(canvasWidth, canvasHeight), StartHidden: !o.Visible))
-            .ToList();
+        var list = new List<OverlayLayerBinding>();
+        foreach (var o in Items)
+        {
+            OverlaySource? source = o switch
+            {
+                { IsImage: true, ImagePath: { Length: > 0 } path } => new ImageOverlaySource(path),
+                { IsWeb: true, HasUrl: true } => new WebOverlaySource(new Secret(o.Url!), o.PageWidth, o.PageHeight),
+                _ => null,
+            };
+            if (source is not null)
+            {
+                list.Add(new OverlayLayerBinding(o.LayerId, source, o.PlacementOn(canvasWidth, canvasHeight), StartHidden: !o.Visible));
+            }
+        }
+
         list.Add(new OverlayLayerBinding(
             AwayLayerId,
             new AwayScreenSource(AwayTitle, AwaySubtitle, AwayImagePath),
@@ -278,7 +407,17 @@ public sealed partial class OverlaysViewModel : ObservableObject
             foreach (var config in settings.Items)
             {
                 var item = new OverlayItemViewModel(config);
-                item.Bitmap = OverlayRenderer.LoadImage(config.ImagePath);
+                if (item.IsImage)
+                {
+                    item.Bitmap = OverlayRenderer.LoadImage(config.ImagePath);
+                }
+                else if (_secrets?.Get(UrlSecretName(config.LayerId)) is { } url)
+                {
+                    Redactor.Shared.Register(url);
+                    item.Url = url.Reveal();
+                    _savedUrls[config.LayerId] = item.Url;
+                }
+
                 Attach(item);
                 Items.Add(item);
             }
@@ -297,19 +436,48 @@ public sealed partial class OverlaysViewModel : ObservableObject
         RefreshPreview();
     }
 
-    public OverlaySettings ToSettings() => new()
+    public OverlaySettings ToSettings()
     {
-        Items = [.. Items.Select(o => o.ToConfig())],
-        Away = new AwayScreenSettings
+        // Links go to the encrypted secret store, only when they change.
+        foreach (var web in Items.Where(o => o.IsWeb))
         {
-            Title = AwayTitle,
-            Subtitle = AwaySubtitle,
-            ImagePath = AwayImagePath,
-            MuteSystemAudio = AwayMuteSystemAudio,
-        },
-    };
+            if (!_savedUrls.TryGetValue(web.LayerId, out var saved) || saved != web.Url)
+            {
+                var secret = string.IsNullOrWhiteSpace(web.Url) ? null : new Secret(web.Url);
+                if (secret is not null)
+                {
+                    Redactor.Shared.Register(secret);
+                }
 
-    private void Attach(OverlayItemViewModel item) => item.Changed += OnItemChanged;
+                _secrets?.Set(UrlSecretName(web.LayerId), secret);
+                _savedUrls[web.LayerId] = web.Url;
+            }
+        }
+
+        return new()
+        {
+            Items = [.. Items.Select(o => o.ToConfig())],
+            Away = new AwayScreenSettings
+            {
+                Title = AwayTitle,
+                Subtitle = AwaySubtitle,
+                ImagePath = AwayImagePath,
+                MuteSystemAudio = AwayMuteSystemAudio,
+            },
+        };
+    }
+
+    private void Attach(OverlayItemViewModel item)
+    {
+        item.Changed += OnItemChanged;
+        item.PreviewChanged += (_, _) => RefreshPreview();
+        item.ReloadRequested += (_, _) => ReloadRequested?.Invoke(this, item);
+    }
+
+    private string NewId() =>
+        Enumerable.Range(1, OverlayConfig.MaxOverlays + Items.Count + 1).Select(i => $"overlay-{i}").First(i => Items.All(o => o.LayerId != i));
+
+    private static string UrlSecretName(string layerId) => "overlay.url." + layerId;
 
     private void OnItemChanged(object? sender, EventArgs e) => Changed(sender as OverlayItemViewModel, liveRelevant: true);
 

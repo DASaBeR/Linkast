@@ -48,6 +48,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private readonly AudioLevelMonitor _systemMeter;
     private readonly AudioLevelMonitor _microphoneMeter;
     private readonly DispatcherTimer _meterTimer;
+    private readonly DispatcherTimer _webOverlayTimer;
+    private readonly WebOverlayHost _webOverlays;
+    private bool _syncingWebOverlays;
     private readonly UpdateService _updates;
 
     public MainViewModel(
@@ -63,6 +66,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         IOverlayInputProvider overlayProvider,
         JsonSettingsStore settingsStore,
         DpapiSecretStore secrets,
+        WebOverlayHost webOverlays,
         UpdateService updates,
         ILoggerFactory loggerFactory)
     {
@@ -73,6 +77,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _overlayProvider = overlayProvider;
         _settingsStore = settingsStore;
         _secrets = secrets;
+        _webOverlays = webOverlays;
+        Overlays = new OverlaysViewModel(secrets);
+        Overlays.ReloadRequested += (_, item) => _webOverlays.Get(item.LayerId)?.Reload();
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<MainViewModel>();
         _ui = Application.Current.Dispatcher;
@@ -116,13 +123,14 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         _saveTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(600), DispatcherPriority.Background, (_, _) => SaveNow(), _ui) { IsEnabled = false };
         _snapshotTimer = new DispatcherTimer(TimeSpan.FromSeconds(2), DispatcherPriority.Background, (_, _) => _ = RefreshEditorBackgroundAsync(), _ui) { IsEnabled = false };
+        _webOverlayTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, (_, _) => _ = SyncWebOverlaysAsync(), _ui);
     }
 
     /// <summary>Webcam Studio.</summary>
     public WebcamStudioViewModel Webcam { get; }
 
     /// <summary>Pictures on top of the stream and the "Be right back" screen.</summary>
-    public OverlaysViewModel Overlays { get; } = new();
+    public OverlaysViewModel Overlays { get; }
 
     // ---- Network for the stream ------------------------------------------------------------
 
@@ -917,6 +925,44 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         _pendingMoves[layer.LayerId] = layer.IsShown ? layer.Placement : null;
         _ = SendPendingMovesAsync();
+    }
+
+    /// <summary>
+    /// Runs the web overlays' pages only while they are needed (the preview is on screen or a stream is
+    /// running), so they cost nothing otherwise, and refreshes their picture in the preview once a second.
+    /// </summary>
+    private async Task SyncWebOverlaysAsync()
+    {
+        if (_syncingWebOverlays)
+        {
+            return;
+        }
+
+        _syncingWebOverlays = true;
+        try
+        {
+            var webs = Overlays.Items.Where(o => o.IsWeb && o.HasUrl).ToList();
+            var needed = IsActive || IsStreamPageVisible || IsPreviewVisible;
+            await _webOverlays.KeepOnlyAsync(needed ? [.. webs.Select(w => w.LayerId)] : []);
+            if (!needed)
+            {
+                return;
+            }
+
+            foreach (var web in webs)
+            {
+                var renderer = await _webOverlays.EnsureAsync(web.LayerId, web.Url!, web.PageWidth, web.PageHeight);
+                web.Problem = _webOverlays.ProblemOf(web.LayerId);
+                if (renderer is not null && (IsStreamPageVisible || IsPreviewVisible))
+                {
+                    web.SetSnapshot(renderer.Snapshot());
+                }
+            }
+        }
+        finally
+        {
+            _syncingWebOverlays = false;
+        }
     }
 
     /// <summary>

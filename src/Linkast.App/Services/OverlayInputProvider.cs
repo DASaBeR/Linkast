@@ -7,13 +7,19 @@ namespace Linkast.App.Services;
 
 /// <summary>
 /// Opens overlay layers for the stream. Pictures and the away card are drawn once (on the UI thread,
-/// because they use WPF) and then served as still frames.
+/// because they use WPF) and then served as still frames; web pages come from <see cref="WebOverlayHost"/>.
 /// </summary>
-public sealed class OverlayInputProvider : IOverlayInputProvider
+public sealed class OverlayInputProvider(WebOverlayHost web) : IOverlayInputProvider
 {
     public IVideoLayerInput Open(OverlayLayerBinding overlay, int width, int height, int maxFrameRate)
     {
         ArgumentNullException.ThrowIfNull(overlay);
+        if (overlay.Source is WebOverlaySource page)
+        {
+            // Rendered at the page's own size; FFmpeg scales it into place.
+            return web.Open(overlay.LayerId, page.Url.Reveal(), page.PageWidth, page.PageHeight, maxFrameRate);
+        }
+
         var frame = Application.Current.Dispatcher.Invoke(() => Render(overlay.Source, width, height));
         return new StaticFramePipeInput(overlay.LayerId, frame, width, height);
     }
