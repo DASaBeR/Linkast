@@ -1,0 +1,169 @@
+<UserControl x:Class="Linkast.App.Views.WebcamPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:Linkast.App.ViewModels"
+             xmlns:views="clr-namespace:Linkast.App.Views"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance Type=vm:WebcamStudioViewModel}">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <DataTemplate x:Key="EnumTemplate">
+            <TextBlock Text="{Binding Converter={x:Static vm:Converters.EnumLabel}}" />
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <StackPanel Margin="0,0,8,0">
+
+        <!-- Cameras -->
+        <Border Style="{StaticResource Card}">
+            <StackPanel>
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                        <Button Content="Add camera" Command="{Binding AddCameraCommand}" Margin="0,0,8,0"
+                                ToolTip="Add another camera layer (up to 4)" />
+                        <Button Content="Remove" Command="{Binding RemoveCameraCommand}"
+                                ToolTip="Remove the selected camera layer" />
+                    </StackPanel>
+                    <TextBlock Text="Cameras" Style="{StaticResource CardTitle}" />
+                </DockPanel>
+                <ListBox ItemsSource="{Binding Layers}" SelectedItem="{Binding Selected}" AutomationProperties.Name="Camera layers"
+                         BorderThickness="0" Background="Transparent">
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel />
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
+                            <Setter Property="AutomationProperties.Name" Value="{Binding Name}" />
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:CameraLayerViewModel}">
+                            <StackPanel Orientation="Horizontal" Margin="4,2">
+                                <Ellipse Width="8" Height="8" Margin="0,0,8,0" VerticalAlignment="Center" Fill="{StaticResource LiveBrush}"
+                                         Visibility="{Binding State, Converter={x:Static vm:Converters.RunningToVisibility}}"
+                                         ToolTip="Camera active" />
+                                <TextBlock Text="{Binding Name}" />
+                                <TextBlock Text=" (hidden)" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                           Visibility="{Binding IsShown, Converter={x:Static vm:Converters.InverseBoolToVisibility}}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <TextBlock Style="{StaticResource Hint}"
+                           Text="Each camera layer has its own camera, look and effects. Two layers can use the same camera (for example a close-up and a wide shot); it is opened only once." />
+                <TextBlock Text="{Binding Notice}" TextWrapping="Wrap" Margin="0,6,0,0" Foreground="{StaticResource ConnectingBrush}"
+                           Visibility="{Binding Notice, Converter={x:Static vm:Converters.NotNullToVisibility}}"
+                           AutomationProperties.LiveSetting="Polite" />
+            </StackPanel>
+        </Border>
+
+        <!-- Selected camera's settings: one panel per layer, only the selected one visible. -->
+        <views:LayerPanelHost x:Name="LayerPanels" ItemsSource="{Binding Layers}" Focusable="False">
+            <ItemsControl.ItemContainerStyle>
+                <Style TargetType="ContentPresenter">
+                    <Setter Property="Visibility" Value="{Binding IsSelected, Converter={StaticResource BoolToVis}}" />
+                </Style>
+            </ItemsControl.ItemContainerStyle>
+            <ItemsControl.ItemTemplate>
+                <DataTemplate DataType="{x:Type vm:CameraLayerViewModel}">
+                    <views:CameraLayerPanel />
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </views:LayerPanelHost>
+
+        <!-- Layout and placement -->
+        <Border Style="{StaticResource Card}">
+            <StackPanel>
+                <DockPanel>
+                    <CheckBox DockPanel.Dock="Right" Content="Snap" IsChecked="{Binding SnapToGrid}" />
+                    <TextBlock Text="Layout and position" Style="{StaticResource CardTitle}" />
+                </DockPanel>
+
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="12" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <Label Content="_Layout" Target="{Binding ElementName=LayoutBox}" Style="{StaticResource FieldLabel}" />
+                        <ComboBox x:Name="LayoutBox" ItemsSource="{Binding LayoutOptions}" SelectedItem="{Binding SelectedLayout}"
+                                  ToolTip="Landscape for Twitch and YouTube, vertical for Shorts, TikTok and Reels. Each layout remembers its own positions." />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <Label Content="_Gameplay" Target="{Binding ElementName=FitBox}" Style="{StaticResource FieldLabel}" />
+                        <ComboBox x:Name="FitBox" ItemsSource="{Binding BaseFits}" SelectedItem="{Binding BaseFit}" ItemTemplate="{StaticResource EnumTemplate}" />
+                    </StackPanel>
+                </Grid>
+                <TextBlock Style="{StaticResource Hint}" Text="{Binding CanvasDescription, StringFormat=Output: {0}}" />
+
+                <Border CornerRadius="6" ClipToBounds="True" Margin="0,8,0,0">
+                    <views:SceneEditor Layers="{Binding Layers}" SelectedLayer="{Binding Selected, Mode=TwoWay}"
+                                       CanvasWidth="{Binding CanvasWidth}" CanvasHeight="{Binding CanvasHeight}"
+                                       BasePlacement="{Binding BasePlacement}" BaseFit="{Binding BaseFit}"
+                                       BackgroundSource="{Binding EditorBackground}" Snap="{Binding SnapToGrid}" />
+                </Border>
+                <TextBlock Style="{StaticResource Hint}"
+                           Text="Click a camera to select it. Drag to move and drag a corner to resize; arrow keys nudge. The background is a layout reference that refreshes every 2 seconds. While live, moves apply instantly without restarting." />
+
+                <StackPanel DataContext="{Binding Selected}" Margin="0,8,0,0">
+                    <CheckBox IsChecked="{Binding IsShown}" AutomationProperties.Name="Show in this layout">
+                        <TextBlock>
+                            <Run Text="Show" />
+                            <Run Text="{Binding Name, Mode=OneWay}" />
+                            <Run Text="in this layout" />
+                        </TextBlock>
+                    </CheckBox>
+                    <WrapPanel Margin="0,8,0,0">
+                        <Button Content="Top left" Command="{Binding PlaceAtCommand}" CommandParameter="TopLeft" Margin="0,0,6,6" />
+                        <Button Content="Top right" Command="{Binding PlaceAtCommand}" CommandParameter="TopRight" Margin="0,0,6,6" />
+                        <Button Content="Bottom left" Command="{Binding PlaceAtCommand}" CommandParameter="BottomLeft" Margin="0,0,6,6" />
+                        <Button Content="Bottom right" Command="{Binding PlaceAtCommand}" CommandParameter="BottomRight" Margin="0,0,6,6" />
+                        <Button Content="Center" Command="{Binding PlaceAtCommand}" CommandParameter="Center" Margin="0,0,6,6" />
+                        <Button Content="Full screen" Command="{Binding PlaceAtCommand}" CommandParameter="Full" Margin="0,0,6,6" />
+                    </WrapPanel>
+                </StackPanel>
+                <WrapPanel>
+                    <Button Content="Bring forward" Command="{Binding MoveSelectedUpCommand}" Margin="0,0,6,6"
+                            ToolTip="Draw the selected camera above the others (applies the next time you go live)" />
+                    <Button Content="Send backward" Command="{Binding MoveSelectedDownCommand}" Margin="0,0,6,6" />
+                </WrapPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- Linkast Camera (virtual camera) -->
+        <Border Style="{StaticResource Card}">
+            <StackPanel>
+                <DockPanel>
+                    <CheckBox DockPanel.Dock="Right" Content="On" IsChecked="{Binding VirtualCameraEnabled}"
+                              IsEnabled="{Binding VirtualCameraInstalled}" AutomationProperties.Name="Linkast Camera on"
+                              ToolTip="Send your camera to apps that use the Linkast Camera" />
+                    <TextBlock Text="Linkast Camera for Zoom, Teams and Discord" Style="{StaticResource CardTitle}" />
+                </DockPanel>
+                <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,8"
+                           Text="Use your Linkast look (background blur, auto-framing, picture settings) in video calls: choose “Linkast Camera” as the camera in the other app. Pictures are only made while an app is using it." />
+
+                <Label Content="S_hows" Target="{Binding ElementName=VcamLayerBox}" Style="{StaticResource FieldLabel}" Margin="0,0,0,4" />
+                <ComboBox x:Name="VcamLayerBox" ItemsSource="{Binding Layers}" SelectedItem="{Binding VirtualCameraLayer}"
+                          IsEnabled="{Binding VirtualCameraInstalled}" DisplayMemberPath="Name" />
+
+                <TextBlock Text="{Binding VirtualCameraStatus}" TextWrapping="Wrap" Margin="0,10,0,0"
+                           Foreground="{Binding VirtualCameraProblem, Converter={x:Static vm:Converters.ProblemBrush}}"
+                           AutomationProperties.Name="Linkast Camera status" AutomationProperties.LiveSetting="Polite" />
+                <WrapPanel Margin="0,10,0,0">
+                    <Button Content="Set up Linkast Camera…" Command="{Binding InstallVirtualCameraCommand}" Margin="0,0,8,0"
+                            Visibility="{Binding VirtualCameraCanInstall, Converter={StaticResource BoolToVis}}"
+                            ToolTip="Installs the Linkast Camera for all apps on this PC. Windows asks for administrator permission once." />
+                    <Button Content="Repair or update" Command="{Binding InstallVirtualCameraCommand}" Margin="0,0,8,0"
+                            Visibility="{Binding VirtualCameraInstalled, Converter={StaticResource BoolToVis}}" />
+                    <Button Content="Remove from this PC" Command="{Binding RemoveVirtualCameraCommand}"
+                            Visibility="{Binding VirtualCameraInstalled, Converter={StaticResource BoolToVis}}" />
+                </WrapPanel>
+            </StackPanel>
+        </Border>
+    </StackPanel>
+</UserControl>

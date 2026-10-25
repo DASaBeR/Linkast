@@ -1,0 +1,23 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Linkast.App/Linkast.App.csproj" />
+    <Project Path="src/Linkast.Core/Linkast.Core.csproj" />
+    <Project Path="src/Linkast.Effects/Linkast.Effects.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="src/Linkast.Engine.FFmpeg/Linkast.Engine.FFmpeg.csproj" />
+    <Project Path="src/Linkast.Networking/Linkast.Networking.csproj" />
+    <Project Path="src/Linkast.Platform.Windows/Linkast.Platform.Windows.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Linkast.Core.Tests/Linkast.Core.Tests.csproj" />
+    <Project Path="tests/Linkast.Effects.Tests/Linkast.Effects.Tests.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="tests/Linkast.Engine.FFmpeg.Tests/Linkast.Engine.FFmpeg.Tests.csproj" />
+    <Project Path="tests/Linkast.IntegrationTests/Linkast.IntegrationTests.csproj" />
+    <Project Path="tests/Linkast.Networking.Tests/Linkast.Networking.Tests.csproj">
+      <Platform Project="x64" />
+    </Project>
+  </Folder>
+</Solution>

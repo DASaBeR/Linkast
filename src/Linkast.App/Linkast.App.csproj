@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>Linkast</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- WPF0001: Fluent ThemeMode is experimental. CA1822/CA1826: bindings need instance members and simple LINQ. -->
+    <NoWarn>$(NoWarn);WPF0001;CA1822;CA1826</NoWarn>
+    <!-- Program.Main runs Velopack's install/update hooks before WPF starts. -->
+    <StartupObject>Linkast.App.Program</StartupObject>
+    <ApplicationIcon>Assets\linkast.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="Assets\linkast.ico" />
+    <Resource Include="Assets\linkast-logo.png" />
+    <Resource Include="Assets\linkast-256.png" />
+  </ItemGroup>
+  <!-- Linkast Camera components (tools/build-native.ps1), next to Linkast.exe in vcam\ and never inside
+       the single-file bundle: the setup helper copies the DLL from disk. Absent in builds without C++. -->
+  <ItemGroup>
+    <None Include="..\..\artifacts\native\Release\Linkast.VirtualCamera.dll" Link="vcam\Linkast.VirtualCamera.dll"
+          Condition="Exists('..\..\artifacts\native\Release\Linkast.VirtualCamera.dll')"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <None Include="..\..\native\Linkast.VirtualCamera\LICENSE-Microsoft-Windows-Camera.txt" Link="vcam\LICENSE-Microsoft-Windows-Camera.txt"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <None Include="..\..\artifacts\native\Release\LinkastCameraSetup.exe" Link="vcam\LinkastCameraSetup.exe"
+          Condition="Exists('..\..\artifacts\native\Release\LinkastCameraSetup.exe')"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="LinkastReleaseRepository" Value="$(LinkastReleaseRepository)" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Linkast.Core\Linkast.Core.csproj" />
+    <ProjectReference Include="..\Linkast.Effects\Linkast.Effects.csproj" />
+    <ProjectReference Include="..\Linkast.Engine.FFmpeg\Linkast.Engine.FFmpeg.csproj" />
+    <ProjectReference Include="..\Linkast.Networking\Linkast.Networking.csproj" />
+    <ProjectReference Include="..\Linkast.Platform.Windows\Linkast.Platform.Windows.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.13" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="10.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+    <PackageReference Include="Velopack" Version="1.2.161" />
+  </ItemGroup>
+</Project>

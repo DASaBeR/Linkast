@@ -1,0 +1,18 @@
+# Normalize text to LF in the repository; check out with the platform's native line endings.
+* text=auto
+
+# Windows-specific files keep CRLF in working copies.
+*.sln       text eol=crlf
+*.slnx      text eol=crlf
+*.vcxproj   text eol=crlf
+*.def       text eol=crlf
+*.rc        text eol=crlf
+*.ps1       text eol=crlf
+
+# Binary assets: never touch line endings or diff as text.
+*.png       binary
+*.ico       binary
+*.onnx      binary
+*.zip       binary
+*.exe       binary
+*.dll       binary

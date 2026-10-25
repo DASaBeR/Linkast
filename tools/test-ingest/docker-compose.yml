@@ -1,0 +1,16 @@
+﻿# Local RTMP ingest for development and integration tests. Not part of the product.
+#   docker compose -f tools/test-ingest/docker-compose.yml up -d
+# Publish: rtmp://127.0.0.1:1935/live/<anything>
+# Watch:   ffplay rtmp://127.0.0.1:1935/live/<same key>
+name: linkast-test-ingest
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:1.21.2
+    container_name: linkast-mediamtx
+    environment:
+      MTX_RTSP: "no"
+      MTX_HLS: "no"
+      MTX_WEBRTC: "no"
+      MTX_SRT: "no"
+    ports:
+      - "127.0.0.1:1935:1935"

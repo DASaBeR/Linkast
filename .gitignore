@@ -1,0 +1,30 @@
+## .NET build output
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.rsuser
+TestResults/
+*.trx
+*.coverage
+
+## Bundled FFmpeg is fetched at release time, never committed
+src/Linkast.App/ffmpeg/
+artifacts/
+publish/
+
+## Local secrets and logs
+*.env
+*.pfx
+logs/
+
+## OS / editors
+Thumbs.db
+.DS_Store
+.idea/
+
+## Model binaries are fetched by tools/fetch-models.ps1 (hash-verified), never committed
+models/*.onnx
+models/*.download
+models/RVM-LICENSE.txt

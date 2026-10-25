@@ -1,0 +1,26 @@
+﻿<Project>
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <!-- CA1873: logging-argument cost hint; our log calls are infrequent. -->
+    <NoWarn>$(NoWarn);CA1873</NoWarn>
+    <Authors>Linkast contributors</Authors>
+    <Product>Linkast</Product>
+    <Copyright>Copyright (C) Linkast contributors</Copyright>
+    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    <Version>0.2.0-beta.1</Version>
+    <!-- GitHub repository (owner/name) whose Releases host the installer and updates. -->
+    <LinkastReleaseRepository>DASaBeR/Linkast</LinkastReleaseRepository>
+    <!-- Never ship the redistributable DirectML.dll (proprietary license, data-collection clause).
+         ONNX Runtime uses the DirectML that is part of Windows (System32) instead. See ADR 0007. -->
+    <Microsoft_AI_DirectML_SkipLibraryCopy>true</Microsoft_AI_DirectML_SkipLibraryCopy>
+    <Microsoft_AI_DirectML_SkipDebugLayerCopy>true</Microsoft_AI_DirectML_SkipDebugLayerCopy>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier Condition="'$(OutputType)' == 'WinExe'">win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+</Project>

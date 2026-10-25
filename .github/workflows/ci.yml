@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Fetch models (hash-verified)
+        run: powershell -ExecutionPolicy Bypass -File tools/fetch-models.ps1
+
+      - name: Build Linkast Camera (C++, warnings are errors)
+        run: powershell -ExecutionPolicy Bypass -File tools/build-native.ps1
+
+      - name: Build (warnings are errors)
+        run: dotnet build Linkast.slnx -c Release
+
+      - name: Unit tests
+        run: >
+          dotnet test Linkast.slnx -c Release --no-build
+          --filter "FullyQualifiedName!~Linkast.IntegrationTests"
+          --logger "trx;LogFilePrefix=results"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: "**/TestResults/*.trx"

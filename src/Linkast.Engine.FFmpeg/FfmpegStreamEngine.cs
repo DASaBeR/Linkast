@@ -1,0 +1,560 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+using System.Collections.Concurrent;
+using Linkast.Core;
+using Linkast.Core.Audio;
+using Linkast.Core.Camera;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+
+namespace Linkast.Engine.FFmpeg;
+
+/// <summary>Health and timing thresholds. Defaults suit real streaming; tests may shorten them.</summary>
+public sealed record EngineOptions
+{
+    /// <summary>Maximum time from launch to a healthy stream before the attempt is treated as failed.</summary>
+    public TimeSpan ConnectTimeout { get; init; } = TimeSpan.FromSeconds(20);
+
+    /// <summary>Time without encoder progress (or socket progress) before a live stream counts as stalled.</summary>
+    public TimeSpan StallTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>Frames and bytes must have advanced within this window to count as healthy.</summary>
+    public TimeSpan HealthWindow { get; init; } = TimeSpan.FromSeconds(3);
+
+    /// <summary>Bytes the relay must have forwarded before Live is declared (well past the RTMP handshake).</summary>
+    public long MinBytesForLive { get; init; } = 32 * 1024;
+
+    public TimeSpan GracefulStopTimeout { get; init; } = TimeSpan.FromSeconds(5);
+
+    public TimeSpan TelemetryInterval { get; init; } = TimeSpan.FromSeconds(1);
+}
+
+/// <summary>
+/// <see cref="IStreamEngine"/> backed by a supervised ffmpeg.exe. Owns the session state machine,
+/// health evaluation ("process running" is never treated as "stream healthy"), and bounded reconnect.
+/// </summary>
+public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneControl
+{
+    private const int RecentLineCapacity = 60;
+
+    /// <summary>Highest frame rate camera layers are rendered and piped at.</summary>
+    public const int MaxLayerFrameRate = 30;
+
+    private readonly FfmpegInstallation _ffmpeg;
+    private readonly IOutputTransport _transport;
+    private readonly IAudioInputProvider? _audioProvider;
+    private readonly ILogger _logger;
+    private readonly Redactor _redactor;
+    private readonly EngineOptions _options;
+    private readonly TimeProvider _time;
+    private readonly StreamStateMachine _state = new();
+    private readonly Lock _gate = new();
+
+    private readonly IVideoLayerInputProvider? _layerProvider;
+    private CancellationTokenSource? _runCts;
+    private Task? _runTask;
+    private ActiveComposition? _composition;
+    private int _reconnectCount;
+    private long _sessionStart;
+    private StreamError? _lastError;
+
+    public FfmpegStreamEngine(
+        FfmpegInstallation ffmpeg,
+        IOutputTransport transport,
+        IAudioInputProvider? audioProvider = null,
+        ILogger<FfmpegStreamEngine>? logger = null,
+        Redactor? redactor = null,
+        EngineOptions? options = null,
+        TimeProvider? timeProvider = null,
+        IVideoLayerInputProvider? layerProvider = null)
+    {
+        _layerProvider = layerProvider;
+        _ffmpeg = ffmpeg ?? throw new ArgumentNullException(nameof(ffmpeg));
+        _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+        _audioProvider = audioProvider;
+        _logger = (ILogger?)logger ?? NullLogger.Instance;
+        _redactor = redactor ?? Redactor.Shared;
+        _options = options ?? new EngineOptions();
+        _time = timeProvider ?? TimeProvider.System;
+        _state.Changed += (_, e) =>
+        {
+            LogStateChanged(e.Previous, e.Current, e.Error?.ToString());
+            StateChanged?.Invoke(this, e);
+        };
+    }
+
+    public event EventHandler<StreamStateChangedEventArgs>? StateChanged;
+
+    public event EventHandler<StreamTelemetry>? TelemetryUpdated;
+
+    public event EventHandler<string>? DiagnosticLine;
+
+    public StreamState State => _state.Current;
+
+    public FfmpegInstallation Installation => _ffmpeg;
+
+    public Task StartAsync(StreamSession session, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        lock (_gate)
+        {
+            if (StreamStateMachine.IsActive(_state.Current))
+            {
+                throw new InvalidOperationException("A stream is already running.");
+            }
+
+            _redactor.Register(session.Destination.StreamKey);
+            _state.Transition(StreamState.Preparing);
+
+            var errors = SessionValidator.Validate(session);
+            if (errors.Count > 0)
+            {
+                _lastError = errors[0];
+                _state.Transition(StreamState.Failed, errors[0]);
+                throw new StreamFailureException(errors[0]);
+            }
+
+            _reconnectCount = 0;
+            _lastError = null;
+            _sessionStart = _time.GetTimestamp();
+            _runCts?.Dispose();
+            _runCts = new CancellationTokenSource();
+            var token = _runCts.Token;
+            _runTask = Task.Run(() => RunSessionAsync(session, token), CancellationToken.None);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public async Task StopAsync(CancellationToken cancellationToken = default)
+    {
+        Task? run;
+        lock (_gate)
+        {
+            run = _runTask;
+            if (run is null || !StreamStateMachine.IsActive(_state.Current))
+            {
+                return;
+            }
+
+            _state.TryTransition(StreamState.Stopping);
+            _runCts?.Cancel();
+        }
+
+        await run.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await StopAsync().ConfigureAwait(false);
+        _runCts?.Dispose();
+    }
+
+    private async Task RunSessionAsync(StreamSession session, CancellationToken ct)
+    {
+        var backoff = new ReconnectBackoff(session.Reconnect);
+        try
+        {
+            while (true)
+            {
+                _state.TryTransition(StreamState.Connecting);
+                var error = await RunAttemptAsync(session, backoff, ct).ConfigureAwait(false);
+                if (error is null || ct.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                _lastError = error;
+                if (error.IsRetryable && backoff.NextDelay() is { } delay)
+                {
+                    _reconnectCount++;
+                    LogReconnecting(backoff.Attempts, session.Reconnect.MaxAttempts, delay.TotalSeconds, error.ToString());
+                    _state.TryTransition(StreamState.Reconnecting, error);
+                    PublishTelemetry(session, null, null, null);
+                    try
+                    {
+                        await Task.Delay(delay, _time, ct).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+
+                    continue;
+                }
+
+                _state.TryTransition(StreamState.Failed, error);
+                PublishTelemetry(session, null, null, null);
+                return;
+            }
+
+            _state.TryTransition(StreamState.Stopping);
+            _state.TryTransition(StreamState.Stopped);
+            PublishTelemetry(session, null, null, null);
+        }
+#pragma warning disable CA1031 // The supervisor must never crash the app; report and fail the session instead.
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            LogUnexpected(ex);
+            var error = new StreamError(ErrorCategory.Unknown, "engine.unexpected", "An unexpected error stopped the stream.", _redactor.Redact(ex.Message));
+            _lastError = error;
+            _state.TryTransition(StreamState.Failed, error);
+        }
+    }
+
+    /// <summary>Runs one connection attempt. Returns null when stopped by the user, else the reason it ended.</summary>
+    private async Task<StreamError?> RunAttemptAsync(StreamSession session, ReconnectBackoff backoff, CancellationToken ct)
+    {
+        IOutputLease? lease = null;
+        FfmpegProcess? process = null;
+        var audioInputs = new List<IAudioInput>();
+        var layerInputs = new List<IVideoLayerInput>();
+        var recent = new ConcurrentQueue<string>();
+        var parser = new ProgressParser();
+        EncoderProgress? latest = null;
+
+        try
+        {
+            lease = await _transport.OpenAsync(session.Destination, session.Network, ct).ConfigureAwait(false);
+
+            var jobAudio = new List<AudioJobInput>();
+            foreach (var spec in session.Audio)
+            {
+                if (spec is TestToneSource)
+                {
+                    jobAudio.Add(new ToneAudioJobInput(spec.Gain));
+                    continue;
+                }
+
+                if (_audioProvider is null || !_audioProvider.CanOpen(spec))
+                {
+                    return new StreamError(ErrorCategory.Audio, "audio.unsupported", $"Audio source type {spec.GetType().Name} is not supported on this system.");
+                }
+
+                var input = _audioProvider.Open(spec);
+                audioInputs.Add(input);
+                await input.StartAsync(ct).ConfigureAwait(false);
+                jobAudio.Add(new PipeAudioJobInput(input.PipePath, input.Format, spec.Gain));
+            }
+
+            // Camera layers: rendered by Linkast, overlaid by FFmpeg, movable live through zmq.
+            var jobLayers = new List<VideoLayerJobInput>();
+            var layerIds = new List<string>();
+            int? commandPort = null;
+            if (session.CameraLayers.Count > 0)
+            {
+                if (_layerProvider is null)
+                {
+                    return new StreamError(ErrorCategory.Configuration, "layers.unsupported", "Camera layers are not available in this configuration.");
+                }
+
+                // Cameras rarely deliver more than 30 fps; the overlay repeats the latest camera frame
+                // for a 60 fps stream. Rendering layers at 60 fps doubled the CPU and pipe bandwidth.
+                var layerFps = Math.Min(session.Encoder.Fps, MaxLayerFrameRate);
+                foreach (var binding in session.CameraLayers)
+                {
+                    var px = LayerGeometry.ToPixels(binding.Placement, session.Encoder.Width, session.Encoder.Height);
+                    var input = _layerProvider.Open(binding.Layer, px.Width, px.Height, layerFps);
+                    layerInputs.Add(input);
+                    await input.StartAsync(ct).ConfigureAwait(false);
+                    jobLayers.Add(new VideoLayerJobInput(input.PipePath, px.Width, px.Height, layerFps, px));
+                    layerIds.Add(binding.Layer.LayerId);
+                }
+
+                commandPort = FfmpegCommandChannel.FindFreePort();
+            }
+
+            var args = FfmpegArgumentBuilder.Build(new FfmpegJob(session.Video, jobAudio, session.Encoder, lease.PublishUrl, lease.TcUrl)
+            {
+                Layers = jobLayers,
+                BasePlacement = session.BasePlacement,
+                BaseFit = session.BaseFit,
+                CommandPort = commandPort,
+            });
+            LogLaunching(_redactor.Redact(string.Join(' ', args.Select(QuoteForLog))));
+
+            process = FfmpegProcess.Start(
+                _ffmpeg.Path,
+                args,
+                line =>
+                {
+                    if (parser.Feed(line) is { } p)
+                    {
+                        Volatile.Write(ref latest, p);
+                    }
+                },
+                line =>
+                {
+                    var redacted = _redactor.Redact(line);
+                    recent.Enqueue(redacted);
+                    while (recent.Count > RecentLineCapacity && recent.TryDequeue(out _))
+                    {
+                    }
+
+                    LogFfmpegLine(redacted);
+                    DiagnosticLine?.Invoke(this, redacted);
+                });
+
+            if (commandPort is { } port)
+            {
+                Volatile.Write(ref _composition, new ActiveComposition(new FfmpegCommandChannel(port), layerIds, session.Encoder.Width, session.Encoder.Height));
+            }
+
+            return await SuperviseAsync(session, backoff, lease, process, audioInputs, recent, () => Volatile.Read(ref latest), ct).ConfigureAwait(false);
+        }
+        catch (StreamFailureException ex)
+        {
+            return ex.Error;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return null;
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _composition, null)?.Commands.Dispose();
+            if (process is not null)
+            {
+                await process.DisposeAsync().ConfigureAwait(false);
+            }
+
+            foreach (var l in layerInputs)
+            {
+                await l.DisposeAsync().ConfigureAwait(false);
+            }
+
+            foreach (var a in audioInputs)
+            {
+                await a.DisposeAsync().ConfigureAwait(false);
+            }
+
+            if (lease is not null)
+            {
+                await lease.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async Task<StreamError?> SuperviseAsync(
+        StreamSession session,
+        ReconnectBackoff backoff,
+        IOutputLease lease,
+        FfmpegProcess process,
+        List<IAudioInput> audioInputs,
+        ConcurrentQueue<string> recent,
+        Func<EncoderProgress?> latestProgress,
+        CancellationToken ct)
+    {
+        var attemptStart = _time.GetTimestamp();
+        long? liveSince = null;
+        long lastFrame = -1, lastBytes = -1;
+        var lastFrameAdvance = attemptStart;
+        var lastBytesAdvance = attemptStart;
+        var audioFault = FirstFault(audioInputs.Select(a => a.Completion));
+
+        while (true)
+        {
+            var tick = Task.Delay(_options.TelemetryInterval, _time, ct);
+            var done = await Task.WhenAny(process.Exited, lease.Completion, audioFault, tick).ConfigureAwait(false);
+
+            if (ct.IsCancellationRequested)
+            {
+                await process.StopAsync(_options.GracefulStopTimeout).ConfigureAwait(false);
+                return null;
+            }
+
+            if (done == process.Exited)
+            {
+                // The relay usually knows the precise network reason; give it a moment to report.
+                await Task.WhenAny(lease.Completion, Task.Delay(500, CancellationToken.None)).ConfigureAwait(false);
+                return LeaseError(lease) ?? ErrorClassifier.ClassifyExit(process.Exited.Result, [.. recent]);
+            }
+
+            if (done == lease.Completion)
+            {
+                process.Kill();
+                return LeaseError(lease) ?? new StreamError(ErrorCategory.Network, "network.closed", "The server closed the connection.");
+            }
+
+            if (done == audioFault)
+            {
+                process.Kill();
+                var detail = audioFault.Exception?.GetBaseException().Message;
+                return new StreamError(ErrorCategory.Audio, "audio.device", "An audio device stopped working or was unplugged.", _redactor.Redact(detail));
+            }
+
+            // Periodic health evaluation.
+            var now = _time.GetTimestamp();
+            var progress = latestProgress();
+            var net = lease.Snapshot();
+
+            if (progress is not null && progress.Frame > lastFrame)
+            {
+                lastFrame = progress.Frame;
+                lastFrameAdvance = now;
+            }
+
+            if (net.BytesSent > lastBytes)
+            {
+                lastBytes = net.BytesSent;
+                lastBytesAdvance = now;
+            }
+
+            var framesFresh = progress is not null && _time.GetElapsedTime(lastFrameAdvance, now) <= _options.HealthWindow;
+            var bytesFresh = !lease.IsMeasured
+                || (net.Connected && net.BytesSent >= _options.MinBytesForLive && _time.GetElapsedTime(lastBytesAdvance, now) <= _options.HealthWindow);
+
+            if (_state.Current == StreamState.Connecting)
+            {
+                if (framesFresh && bytesFresh)
+                {
+                    liveSince = now;
+                    _state.TryTransition(StreamState.Live);
+                }
+                else if (_time.GetElapsedTime(attemptStart, now) > _options.ConnectTimeout)
+                {
+                    process.Kill();
+                    return FirstSpecificError(recent)
+                        ?? new StreamError(ErrorCategory.Network, "network.connect_timeout", "Could not start streaming to the server in time.");
+                }
+            }
+            else if (_state.Current == StreamState.Live && liveSince is { } since)
+            {
+                backoff.ReportStable(_time.GetElapsedTime(since, now));
+
+                var frameStall = _time.GetElapsedTime(lastFrameAdvance, now) > _options.StallTimeout;
+                var byteStall = lease.IsMeasured && _time.GetElapsedTime(lastBytesAdvance, now) > _options.StallTimeout;
+                if (frameStall || byteStall)
+                {
+                    process.Kill();
+                    return FirstSpecificError(recent) ?? new StreamError(
+                        ErrorCategory.Network,
+                        "network.stalled",
+                        byteStall ? "The connection stopped sending data." : "The stream stopped making progress (the capture source may be minimized or closed).");
+                }
+            }
+
+            PublishTelemetry(session, progress, net, liveSince is { } s2 ? _time.GetElapsedTime(s2, now) : TimeSpan.Zero);
+        }
+    }
+
+    private void PublishTelemetry(StreamSession session, EncoderProgress? progress, NetworkSnapshot? net, TimeSpan? connectionUptime)
+    {
+        var telemetry = new StreamTelemetry(
+            _state.Current,
+            _time.GetElapsedTime(_sessionStart),
+            connectionUptime ?? TimeSpan.Zero,
+            session.Encoder.Fps,
+            progress,
+            net,
+            _reconnectCount,
+            _lastError);
+        TelemetryUpdated?.Invoke(this, telemetry);
+    }
+
+    public async Task<bool> MoveLayerAsync(string layerId, NormalizedRect placement, CancellationToken cancellationToken = default)
+    {
+        var composition = Volatile.Read(ref _composition);
+        if (composition is null || _state.Current != StreamState.Live)
+        {
+            return false;
+        }
+
+        var index = composition.LayerIds.IndexOf(layerId);
+        if (index < 0)
+        {
+            return false;
+        }
+
+        var px = LayerGeometry.ToPixels(placement, composition.Width, composition.Height);
+        try
+        {
+            var ok = await composition.Commands.MoveLayerAsync(index, px, cancellationToken).ConfigureAwait(false);
+            LogLayerMoved(layerId, px.X, px.Y, px.Width, px.Height, ok);
+            return ok;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false; // the attempt ended while the command was in flight
+        }
+    }
+
+    public async Task<bool> HideLayerAsync(string layerId, CancellationToken cancellationToken = default)
+    {
+        var composition = Volatile.Read(ref _composition);
+        if (composition is null || _state.Current != StreamState.Live)
+        {
+            return false;
+        }
+
+        var index = composition.LayerIds.IndexOf(layerId);
+        if (index < 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            return await composition.Commands.SendAsync($"overlay@cam{index.ToString(inv)}", "x", (composition.Width + 16).ToString(inv), cancellationToken).ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+    }
+
+    private sealed record ActiveComposition(FfmpegCommandChannel Commands, List<string> LayerIds, int Width, int Height);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Layer {LayerId} moved live to {X},{Y} {W}x{H} (ok: {Ok})")]
+    private partial void LogLayerMoved(string layerId, int x, int y, int w, int h, bool ok);
+
+    /// <summary>Completes (faulted) only when one of <paramref name="tasks"/> faults; normal completion is ignored.</summary>
+    private static Task FirstFault(IEnumerable<Task> tasks)
+    {
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        foreach (var t in tasks)
+        {
+            _ = t.ContinueWith(
+                x => tcs.TrySetException(x.Exception!.InnerExceptions),
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
+        }
+
+        return tcs.Task;
+    }
+
+    private static StreamError? LeaseError(IOutputLease lease) =>
+        lease.Completion is { IsFaulted: true } t && t.Exception?.GetBaseException() is StreamFailureException sfe ? sfe.Error : null;
+
+    private static StreamError? FirstSpecificError(ConcurrentQueue<string> recent)
+    {
+        foreach (var line in recent)
+        {
+            if (ErrorClassifier.Classify(line) is { } e)
+            {
+                return e;
+            }
+        }
+
+        return null;
+    }
+
+    private static string QuoteForLog(string a) => a.Contains(' ', StringComparison.Ordinal) || a.Contains(';', StringComparison.Ordinal) ? $"\"{a}\"" : a;
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Stream state {Previous} -> {Current} {Error}")]
+    private partial void LogStateChanged(StreamState previous, StreamState current, string? error);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Launching ffmpeg: {Arguments}")]
+    private partial void LogLaunching(string arguments);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "ffmpeg: {Line}")]
+    private partial void LogFfmpegLine(string line);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Reconnect attempt {Attempt}/{Max} in {DelaySeconds:0.#}s after {Error}")]
+    private partial void LogReconnecting(int attempt, int max, double delaySeconds, string error);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Unexpected engine failure")]
+    private partial void LogUnexpected(Exception ex);
+}

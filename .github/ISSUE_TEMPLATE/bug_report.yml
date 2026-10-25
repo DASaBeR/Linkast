@@ -1,0 +1,41 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please **never paste your stream key**. Use "Copy diagnostics" in Linkast; it removes keys automatically.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Capture (black screen, wrong window, stutter)
+        - Audio
+        - Encoding
+        - Network / connection
+        - User interface
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Game or app captured, and its display mode
+      placeholder: "e.g. Valorant, borderless windowed"
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Paste the output of "Copy diagnostics".
+      render: text
+    validations:
+      required: true

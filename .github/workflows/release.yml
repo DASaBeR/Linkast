@@ -1,0 +1,128 @@
+name: Release
+
+# Builds, tests and publishes a Linkast release to the repository's Releases page.
+#
+# Two ways to run it:
+#  - Actions tab > Release > "Run workflow" (choose the version and whether to publish now), or
+#  - push a tag such as v0.2.0-beta.2 (always creates a draft).
+#
+# Versions with a suffix (0.2.0-beta.2) are published as pre-releases; installed copies of Linkast
+# see a release only once it is published (not while it is a draft).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.2.0-beta.2. Leave empty to use <Version> from Directory.Build.props."
+        required: false
+        default: ""
+      publish:
+        description: "Publish immediately (untick to create a draft you review first)"
+        type: boolean
+        default: true
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Work out the version
+        shell: pwsh
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          [xml]$props = Get-Content Directory.Build.props
+          $propsVersion = ($props.Project.PropertyGroup | Where-Object { $_.Version } | Select-Object -First 1).Version
+
+          if ("${{ github.event_name }}" -eq "push") {
+            $version = "${{ github.ref_name }}".TrimStart("v")
+            if ($version -ne $propsVersion) { throw "Tag ${{ github.ref_name }} does not match <Version> $propsVersion in Directory.Build.props." }
+            $publish = $false
+          } else {
+            $version = if ($env:INPUT_VERSION) { $env:INPUT_VERSION.Trim().TrimStart("v") } else { $propsVersion }
+            if ($version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { throw "'$version' is not a valid version (expected e.g. 1.2.3 or 1.2.3-beta.1)." }
+            $publish = $env:INPUT_PUBLISH -eq "true"
+            if ($version -ne $propsVersion) {
+              # Build with the requested version without committing a change.
+              (Get-Content Directory.Build.props -Raw) -replace "<Version>[^<]+</Version>", "<Version>$version</Version>" | Set-Content Directory.Build.props -Encoding utf8
+            }
+
+            gh release view "v$version" --repo ${{ github.repository }} *> $null
+            if ($LASTEXITCODE -eq 0) { throw "Release v$version already exists. Choose a new version." }
+          }
+
+          $notes = "docs/release-notes/$version.md"
+          if (-not (Test-Path $notes)) {
+            New-Item -ItemType Directory -Force docs/release-notes | Out-Null
+            Set-Content $notes -Encoding utf8 -Value "# Linkast $version`n`nSee the commits since the previous release for what changed. Download **LinkastApp-win-Setup.exe** to install."
+          }
+
+          "VERSION=$version" >> $env:GITHUB_ENV
+          "NOTES=$notes" >> $env:GITHUB_ENV
+          "PRERELEASE=$(if ($version -match '-') { '--pre' } else { '' })" >> $env:GITHUB_ENV
+          "PUBLISH=$(if ($publish) { '--publish' } else { '' })" >> $env:GITHUB_ENV
+          "Releasing $version (publish: $publish)"
+
+      - name: Fetch models (hash-verified)
+        run: powershell -ExecutionPolicy Bypass -File tools/fetch-models.ps1
+
+      - name: Build Linkast Camera (C++)
+        run: powershell -ExecutionPolicy Bypass -File tools/build-native.ps1
+
+      - name: Build (warnings are errors)
+        run: dotnet build Linkast.slnx -c Release
+
+      - name: Unit tests
+        run: dotnet test Linkast.slnx -c Release --no-build --filter "FullyQualifiedName!~Linkast.IntegrationTests"
+
+      - name: Previous release (for small delta updates)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          dotnet tool restore
+          $vpkArgs = @("vpk", "download", "github", "--repoUrl", "https://github.com/${{ github.repository }}", "--token", "${{ secrets.GITHUB_TOKEN }}", "-o", "artifacts/releases")
+          if ($env:PRERELEASE) { $vpkArgs += "--pre" }
+          dotnet @vpkArgs
+
+      - name: Package app and installer (pinned FFmpeg)
+        run: powershell -ExecutionPolicy Bypass -File tools/publish.ps1 -Installer
+
+      - name: FFmpeg corresponding source (required before any release)
+        run: powershell -ExecutionPolicy Bypass -File tools/fetch-ffmpeg-sources.ps1
+
+      - name: Create the GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "v$env:VERSION"
+          $vpkArgs = @("vpk", "upload", "github", "--repoUrl", "https://github.com/${{ github.repository }}", "--token", $env:GH_TOKEN,
+                    "-o", "artifacts/releases", "--tag", $tag, "--releaseName", "Linkast $env:VERSION", "--targetCommitish", "${{ github.sha }}")
+          if ($env:PRERELEASE) { $vpkArgs += "--pre" }
+          if ($env:PUBLISH) { $vpkArgs += "--publish" }
+          dotnet @vpkArgs
+          if ($LASTEXITCODE -ne 0) { throw "Uploading the release failed." }
+
+          gh release upload $tag (Get-Item artifacts/ffmpeg-*-corresponding-source.zip).FullName --repo ${{ github.repository }}
+          gh release edit $tag --notes-file $env:NOTES --repo ${{ github.repository }}
+          $state = if ($env:PUBLISH) { "published" } else { "saved as a draft" }
+          "Release $tag ${state}: https://github.com/${{ github.repository }}/releases/tag/$tag" >> $env:GITHUB_STEP_SUMMARY
