@@ -64,6 +64,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
     private int _reconnectCount;
     private long _sessionStart;
     private StreamError? _lastError;
+    private string? _currentRecording;
 
     public FfmpegStreamEngine(
         FfmpegInstallation ffmpeg,
@@ -98,6 +99,12 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
 
     public event EventHandler<string>? DiagnosticLine;
 
+    /// <summary>Raised on the engine's thread when a recording file is closed (one per connection attempt).</summary>
+    public event EventHandler<string>? RecordingSaved;
+
+    /// <summary>The file being recorded into right now, or null.</summary>
+    public string? CurrentRecording => Volatile.Read(ref _currentRecording);
+
     public StreamState State => _state.Current;
 
     public FfmpegInstallation Installation => _ffmpeg;
@@ -112,7 +119,11 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 throw new InvalidOperationException("A stream is already running.");
             }
 
-            _redactor.Register(session.Destination.StreamKey);
+            if (session.Broadcast)
+            {
+                _redactor.Register(session.Destination.StreamKey);
+            }
+
             _state.Transition(StreamState.Preparing);
 
             var errors = SessionValidator.Validate(session);
@@ -228,7 +239,24 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
 
         try
         {
-            lease = await _transport.OpenAsync(session.Destination, session.Network, ct).ConfigureAwait(false);
+            lease = session.Broadcast
+                ? await _transport.OpenAsync(session.Destination, session.Network, ct).ConfigureAwait(false)
+                : new RecordOnlyLease();
+
+            string? recordingPath = null;
+            if (session.Recording is { } recording)
+            {
+                try
+                {
+                    Directory.CreateDirectory(recording.Folder);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+                {
+                    return new StreamError(ErrorCategory.Configuration, "recording.folder", "The recordings folder can't be created. Choose another folder.", _redactor.Redact(ex.Message));
+                }
+
+                recordingPath = RecordingFiles.NewPath(recording.Folder, _time.GetLocalNow().DateTime);
+            }
 
             var jobAudio = new List<AudioJobInput>();
             foreach (var spec in session.Audio)
@@ -298,8 +326,10 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
             // Always open the command channel: layers move through it, and audio is muted and adjusted live.
             int? commandPort = FfmpegCommandChannel.FindFreePort();
 
-            var args = FfmpegArgumentBuilder.Build(new FfmpegJob(session.Video, jobAudio, session.Encoder, lease.PublishUrl, lease.TcUrl)
+            var args = FfmpegArgumentBuilder.Build(new FfmpegJob(session.Video, jobAudio, session.Encoder,
+                session.Broadcast ? lease.PublishUrl : null, session.Broadcast ? lease.TcUrl : null)
             {
+                RecordingPath = recordingPath,
                 Layers = jobLayers,
                 BasePlacement = session.BasePlacement,
                 BaseFit = session.BaseFit,
@@ -329,6 +359,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                     DiagnosticLine?.Invoke(this, redacted);
                 });
 
+            Volatile.Write(ref _currentRecording, recordingPath);
             if (commandPort is { } port)
             {
                 Volatile.Write(ref _composition, new ActiveComposition(new FfmpegCommandChannel(port), layerIds, session.Encoder.Width, session.Encoder.Height));
@@ -350,6 +381,11 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
             if (process is not null)
             {
                 await process.DisposeAsync().ConfigureAwait(false);
+            }
+
+            if (Interlocked.Exchange(ref _currentRecording, null) is { } saved && File.Exists(saved))
+            {
+                RecordingSaved?.Invoke(this, saved);
             }
 
             foreach (var l in layerInputs)
@@ -470,6 +506,22 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
 
             PublishTelemetry(session, progress, net, liveSince is { } s2 ? _time.GetElapsedTime(s2, now) : TimeSpan.Zero);
         }
+    }
+
+    /// <summary>Stands in for the network output when only recording: nothing to measure or lose.</summary>
+    private sealed class RecordOnlyLease : IOutputLease
+    {
+        public string PublishUrl => string.Empty;
+
+        public string TcUrl => string.Empty;
+
+        public bool IsMeasured => false;
+
+        public Task Completion { get; } = new TaskCompletionSource().Task;
+
+        public NetworkSnapshot Snapshot() => new(0, 0, 0, null, null, null, false);
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private void PublishTelemetry(StreamSession session, EncoderProgress? progress, NetworkSnapshot? net, TimeSpan? connectionUptime)

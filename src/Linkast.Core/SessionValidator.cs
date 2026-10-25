@@ -16,7 +16,12 @@ public static partial class SessionValidator
         ArgumentNullException.ThrowIfNull(session);
         var errors = new List<StreamError>();
         ValidateEncoder(session.Encoder, errors);
-        ValidateDestination(session.Destination, errors);
+        if (session.Broadcast)
+        {
+            ValidateDestination(session.Destination, errors);
+        }
+
+        ValidateRecording(session, errors);
         ValidateSources(session, errors);
         return errors;
     }
@@ -112,6 +117,26 @@ public static partial class SessionValidator
         else if (key.Length > 512 || key.Any(c => char.IsWhiteSpace(c) || char.IsControl(c)))
         {
             errors.Add(Config("destination.key.invalid", "The stream key contains spaces or unsupported characters."));
+        }
+    }
+
+    private static void ValidateRecording(StreamSession s, List<StreamError> errors)
+    {
+        if (s.Recording is null)
+        {
+            if (!s.Broadcast)
+            {
+                errors.Add(Config("recording.none", "Nothing to do: the session neither streams nor records."));
+            }
+
+            return;
+        }
+
+        var folder = s.Recording.Folder;
+        if (string.IsNullOrWhiteSpace(folder) || !Path.IsPathFullyQualified(folder) || folder.StartsWith('-')
+            || folder.Any(char.IsControl) || folder.IndexOfAny(Path.GetInvalidPathChars()) >= 0)
+        {
+            errors.Add(new StreamError(ErrorCategory.Configuration, "recording.folder", "Choose a folder for recordings."));
         }
     }
 

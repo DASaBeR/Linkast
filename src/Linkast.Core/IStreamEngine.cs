@@ -20,6 +20,12 @@ public sealed record StreamSession(
     public Camera.NormalizedRect BasePlacement { get; init; } = new(0, 0, 1, 1);
 
     public Camera.BaseFit BaseFit { get; init; } = Camera.BaseFit.Fit;
+
+    /// <summary>False records without going live (<see cref="Destination"/> is then ignored).</summary>
+    public bool Broadcast { get; init; } = true;
+
+    /// <summary>Also writes the stream to a local file, or null.</summary>
+    public RecordingSpec? Recording { get; init; }
 }
 
 /// <summary>

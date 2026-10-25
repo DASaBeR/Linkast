@@ -2,6 +2,7 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Text;
 using System.Windows;
 using System.Windows.Threading;
@@ -355,7 +356,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     // ---- Readiness -------------------------------------------------------------------------
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(StartCommand))]
+    [NotifyCanExecuteChangedFor(nameof(StartCommand), nameof(ToggleRecordingCommand))]
+    [NotifyPropertyChangedFor(nameof(StatusTitleText))]
     public partial bool IsReady { get; set; }
 
     [ObservableProperty]
@@ -614,9 +616,53 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     // ---- Status ----------------------------------------------------------------------------
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsActive), nameof(CanEditSettings), nameof(StatusText))]
-    [NotifyCanExecuteChangedFor(nameof(StartCommand), nameof(StopCommand), nameof(InstallUpdateCommand))]
+    [NotifyPropertyChangedFor(nameof(IsActive), nameof(CanEditSettings), nameof(StatusText), nameof(IsBroadcasting), nameof(IsRecording), nameof(IsRecordingOnly), nameof(RecordButtonText), nameof(PillText), nameof(StatusTitleText))]
+    [NotifyCanExecuteChangedFor(nameof(StartCommand), nameof(StopCommand), nameof(InstallUpdateCommand), nameof(ToggleRecordingCommand))]
     public partial StreamState State { get; set; } = StreamState.Idle;
+
+    /// <summary>The running session goes to a platform (not only to a file).</summary>
+    public bool IsBroadcasting => IsActive && !_recordOnly;
+
+    /// <summary>The running session writes a file (alone or while streaming).</summary>
+    public bool IsRecording => IsActive && _recording;
+
+    public bool IsRecordingOnly => IsActive && _recordOnly;
+
+    public string RecordButtonText => IsRecordingOnly ? "Stop recording" : "Record";
+
+    private bool _recordOnly;
+    private bool _recording;
+
+    /// <summary>Short, upper-case state pill. Recording without streaming never says LIVE.</summary>
+    public string PillText => State switch
+    {
+        StreamState.Live when _recordOnly => "● REC",
+        StreamState.Live when _recording => "● LIVE · REC",
+        StreamState.Live => "● LIVE",
+        StreamState.Preparing => "PREPARING",
+        StreamState.Connecting when _recordOnly => "STARTING",
+        StreamState.Connecting => "CONNECTING",
+        StreamState.Reconnecting => "RECONNECTING",
+        StreamState.Stopping => "STOPPING",
+        StreamState.Failed => "ERROR",
+        _ => "OFFLINE",
+    };
+
+    public string StatusTitleText => State switch
+    {
+        StreamState.Live when _recordOnly => "Recording (not live)",
+        StreamState.Live when _recording => "Streaming and recording",
+        StreamState.Live => "Streaming normally",
+        StreamState.Preparing => "Getting ready…",
+        StreamState.Connecting when _recordOnly => "Starting recording…",
+        StreamState.Connecting => "Connecting…",
+        StreamState.Reconnecting => "Reconnecting…",
+        StreamState.Stopping when _recordOnly => "Saving recording…",
+        StreamState.Stopping => "Ending stream…",
+        StreamState.Failed => "Stopped with an error",
+        _ when IsReady => "Ready to stream",
+        _ => "Not ready yet",
+    };
 
     public bool IsActive => StreamStateMachine.IsActive(State);
 
@@ -626,7 +672,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     {
         StreamState.Idle => "Offline",
         StreamState.Preparing => "Preparing…",
+        StreamState.Connecting when _recordOnly => "Starting recording…",
         StreamState.Connecting => "Connecting…",
+        StreamState.Live when _recordOnly => "REC",
         StreamState.Live => "LIVE",
         StreamState.Reconnecting => "Reconnecting…",
         StreamState.Stopping => "Stopping…",
@@ -732,6 +780,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             _engine.StateChanged += (_, e) => _ui.InvokeAsync(() => OnStateChanged(e));
             _engine.TelemetryUpdated += (_, t) => _ui.InvokeAsync(() => OnTelemetry(t));
             _engine.DiagnosticLine += (_, line) => _ui.InvokeAsync(() => AppendLog(line));
+            _engine.RecordingSaved += (_, path) => _ui.InvokeAsync(() => OnRecordingSavedAsync(path));
 
             IsReady = SelectedEncoder is not null;
             ReadinessText = IsReady ? "Ready" : "Not ready";
@@ -776,6 +825,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         nameof(SelectedEncoder), nameof(SelectedResolution), nameof(SelectedFrameRate), nameof(VideoBitrateKbps),
         nameof(KeyframeIntervalSeconds), nameof(AudioBitrateKbps), nameof(EncoderPreset),
         nameof(SelectedDestinationKind), nameof(SelectedPlatform), nameof(ServerUrl), nameof(SelectedNetwork), nameof(SelectedTheme),
+        nameof(RecordingFolder), nameof(RecordWhenLive), nameof(RemuxRecordingsToMp4),
     ];
 
     protected override void OnPropertyChanged(System.ComponentModel.PropertyChangedEventArgs e)
@@ -806,6 +856,63 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         {
             UpdateAudioLevelMonitor();
         }
+    }
+
+    // ---- Recording -------------------------------------------------------------------------
+
+    [ObservableProperty]
+    public partial string RecordingFolder { get; set; } = RecordingFiles.DefaultFolder;
+
+    /// <summary>Every stream is also saved to a file.</summary>
+    [ObservableProperty]
+    public partial bool RecordWhenLive { get; set; }
+
+    [ObservableProperty]
+    public partial bool RemuxRecordingsToMp4 { get; set; }
+
+    /// <summary>Where the last recording was saved, shown under the Record button.</summary>
+    [ObservableProperty]
+    public partial string? LastRecordingText { get; set; }
+
+    [RelayCommand]
+    private void ChooseRecordingFolder()
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Folder for recordings", InitialDirectory = Directory.Exists(RecordingFolder) ? RecordingFolder : null };
+        if (dialog.ShowDialog() == true)
+        {
+            RecordingFolder = dialog.FolderName;
+        }
+    }
+
+    [RelayCommand]
+    private void OpenRecordingFolder()
+    {
+        try
+        {
+            Directory.CreateDirectory(RecordingFolder);
+            Process.Start(new ProcessStartInfo("explorer.exe") { ArgumentList = { RecordingFolder }, UseShellExecute = false });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            AppendLog("The recordings folder could not be opened: " + ex.Message);
+        }
+    }
+
+    /// <summary>A recording file was closed: report it, and turn it into an MP4 when asked to.</summary>
+    private async Task OnRecordingSavedAsync(string path)
+    {
+        AppendLog("Recording saved: " + path);
+        LastRecordingText = "Saved " + Path.GetFileName(path);
+        if (!RemuxRecordingsToMp4 || _engine is null)
+        {
+            return;
+        }
+
+        LastRecordingText = "Making an MP4 of " + Path.GetFileName(path) + "…";
+        var ffmpeg = _engine.Installation.Path;
+        var mp4 = await Task.Run(() => FfmpegRemuxer.RemuxToMp4Async(ffmpeg, path));
+        LastRecordingText = mp4 is null ? "Saved " + Path.GetFileName(path) + " (the MP4 copy failed; the MKV was kept)" : "Saved " + Path.GetFileName(mp4);
+        AppendLog(mp4 is null ? "MP4 copy failed; kept " + path : "Recording saved as MP4: " + mp4);
     }
 
     private void ScheduleSave()
@@ -853,6 +960,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 ServerUrl = ServerUrl,
                 NetworkInterfaceId = SelectedNetwork?.Id,
                 NetworkInterfaceName = SelectedNetwork?.IsAutomatic == false ? SelectedNetwork.Name : null,
+                RecordingFolder = RecordingFolder == RecordingFiles.DefaultFolder ? null : RecordingFolder,
+                RecordWhenLive = RecordWhenLive,
+                RemuxRecordingsToMp4 = RemuxRecordingsToMp4,
             },
             Webcam = Webcam.ToSettings(),
             Overlays = Overlays.ToSettings(),
@@ -889,6 +999,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         SelectedDestinationKind = DestinationKinds.FirstOrDefault(d => d.Kind == s.DestinationKind) ?? DestinationKinds[0];
         ServerUrl = s.ServerUrl;
         SelectedPlatform = StreamPlatforms.Get(s.Platform != StreamPlatform.Custom ? s.Platform : StreamPlatforms.Detect(s.ServerUrl));
+        RecordingFolder = string.IsNullOrWhiteSpace(s.RecordingFolder) ? RecordingFiles.DefaultFolder : s.RecordingFolder;
+        RecordWhenLive = s.RecordWhenLive;
+        RemuxRecordingsToMp4 = s.RemuxRecordingsToMp4;
         _savedNetworkId = s.NetworkInterfaceId;
         _savedNetworkName = s.NetworkInterfaceName;
         SelectedNetwork = NetworkOption.Automatic;
@@ -1157,7 +1270,24 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private bool CanStart() => IsReady && !IsActive;
 
     [RelayCommand(CanExecute = nameof(CanStart))]
-    private async Task StartAsync()
+    private Task StartAsync() => StartSessionAsync(recordOnly: false);
+
+    private bool CanToggleRecording() => IsRecordingOnly ? State != StreamState.Stopping : IsReady && !IsActive;
+
+    /// <summary>Records without going live, or stops that recording. A stream records when "Also record" is on.</summary>
+    [RelayCommand(CanExecute = nameof(CanToggleRecording))]
+    private async Task ToggleRecordingAsync()
+    {
+        if (IsRecordingOnly)
+        {
+            await StopAsync();
+            return;
+        }
+
+        await StartSessionAsync(recordOnly: true);
+    }
+
+    private async Task StartSessionAsync(bool recordOnly)
     {
         if (_engine is null || SelectedEncoder is null)
         {
@@ -1167,16 +1297,24 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         LastError = null;
         WarningText = null;
 
-        var session = BuildSession(out var error);
+        var session = BuildSession(recordOnly, out var error);
         if (session is null)
         {
             LastError = error;
             return;
         }
 
+        _recordOnly = recordOnly;
+        _recording = session.Recording is not null;
         try
         {
             await _engine.StartAsync(session);
+            if (recordOnly)
+            {
+                AppendLog($"Recording to {session.Recording!.Folder} with {SelectedEncoder.DisplayName}, {session.Encoder.Width}x{session.Encoder.Height}@{SelectedFrameRate}, {VideoBitrateKbps} kbps");
+                return;
+            }
+
             AppendLog($"Starting stream to {session.Destination.ServerUrl.Host} with {SelectedEncoder.DisplayName}, {session.Encoder.Width}x{session.Encoder.Height}@{SelectedFrameRate}, {VideoBitrateKbps} kbps, {session.CameraLayers.Count} camera(s), layout '{Webcam.ActiveLayout.Name}'");
         }
         catch (StreamFailureException ex)
@@ -1235,7 +1373,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     // ---- Helpers ---------------------------------------------------------------------------
 
-    private StreamSession? BuildSession(out StreamError? error)
+    private StreamSession? BuildSession(bool recordOnly, out StreamError? error)
     {
         error = null;
         VideoSourceSpec video;
@@ -1285,7 +1423,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             });
         }
 
-        if (!Uri.TryCreate(ServerUrl.Trim(), UriKind.Absolute, out var server))
+        var server = new Uri("rtmp://localhost/none");
+        if (!recordOnly && !Uri.TryCreate(ServerUrl.Trim(), UriKind.Absolute, out server))
         {
             error = new StreamError(ErrorCategory.Configuration, "destination.url", "Enter a server URL such as rtmp://live.twitch.tv/app.");
             return null;
@@ -1329,6 +1468,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             Overlays = overlays,
             BasePlacement = layout.BasePlacement,
             BaseFit = layout.BaseFit,
+            Broadcast = !recordOnly,
+            Recording = recordOnly || RecordWhenLive
+                ? new RecordingSpec(RecordingFolder) { RemuxToMp4 = RemuxRecordingsToMp4 }
+                : null,
         };
     }
 

@@ -1,4 +1,4 @@
-﻿<Window x:Class="Linkast.App.MainWindow"
+<Window x:Class="Linkast.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -51,7 +51,7 @@
                     <!-- While streaming, the state and timer stay visible on every page. -->
                     <StackPanel Orientation="Horizontal" Margin="0,0,14,0" Visibility="{Binding IsActive, Converter={StaticResource BoolToVis}}">
                         <Border Style="{Binding State, Converter={x:Static vm:Converters.StateToPillStyle}}">
-                            <TextBlock Text="{Binding State, Converter={x:Static vm:Converters.StateToPillText}}" />
+                            <TextBlock Text="{Binding PillText}" />
                         </Border>
                         <TextBlock Text="{Binding ElapsedText}" Margin="10,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold"
                                    Typography.NumeralAlignment="Tabular" AutomationProperties.Name="Elapsed time" />
@@ -411,6 +411,18 @@
                                 <TextBlock Style="{StaticResource Linkast.Text.Hint}" Text="{Binding EncoderNote}" />
                                 <TextBlock Style="{StaticResource Linkast.Text.Hint}"
                                            Text="Twitch recommends up to 6000 kbps. Your upload speed should be at least 1.5 times the bitrate." />
+                                <TextBlock Text="Recording" Style="{StaticResource Linkast.Text.FieldLabel}" Margin="0,16,0,5" />
+                                <CheckBox Content="Also record when I go live" IsChecked="{Binding RecordWhenLive}"
+                                          ToolTip="Saves every stream to a file on this PC as well. It uses the same encoding, so it costs almost nothing extra." />
+                                <DockPanel Margin="0,8,0,0">
+                                    <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Secondary}" Content="Open" Margin="8,0,0,0"
+                                            Command="{Binding OpenRecordingFolderCommand}" ToolTip="Open the recordings folder" />
+                                    <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Secondary}" Content="Change…" Margin="8,0,0,0"
+                                            Command="{Binding ChooseRecordingFolderCommand}" ToolTip="Choose where recordings are saved" />
+                                    <TextBox Text="{Binding RecordingFolder, Mode=OneWay}" IsReadOnly="True" AutomationProperties.Name="Recordings folder" />
+                                </DockPanel>
+                                <CheckBox Content="Make an MP4 copy when a recording ends" IsChecked="{Binding RemuxRecordingsToMp4}" Margin="0,8,0,0"
+                                          ToolTip="Recordings are saved as MKV, which survives a crash or power cut. MP4 plays in more editors and phones; the copy is quick and keeps the quality." />
                                 <Expander Header="Advanced encoding" Margin="0,12,0,0">
                                     <Grid Margin="0,4,0,0">
                                         <Grid.ColumnDefinitions>
@@ -614,25 +626,19 @@
                             <StackPanel>
                                 <DockPanel Margin="0,0,0,10">
                                     <Border DockPanel.Dock="Right" Style="{Binding State, Converter={x:Static vm:Converters.StateToPillStyle}}">
-                                        <TextBlock Text="{Binding State, Converter={x:Static vm:Converters.StateToPillText}}" />
+                                        <TextBlock Text="{Binding PillText}" />
                                     </Border>
                                     <TextBlock Text="Stream status" Style="{StaticResource Linkast.Card.Title}" Margin="0" />
                                 </DockPanel>
                                 <DockPanel Margin="0,0,0,12">
                                     <TextBlock DockPanel.Dock="Right" Text="{Binding ElapsedText}" Style="{StaticResource Linkast.Text.Timer}"
                                                VerticalAlignment="Top" Margin="10,0,0,0" AutomationProperties.Name="Elapsed time" />
-                                    <TextBlock Style="{StaticResource Linkast.Text.StatusTitle}" AutomationProperties.LiveSetting="Assertive">
-                                        <TextBlock.Text>
-                                            <MultiBinding Converter="{x:Static vm:Converters.StatusTitle}">
-                                                <Binding Path="State" />
-                                                <Binding Path="IsReady" />
-                                            </MultiBinding>
-                                        </TextBlock.Text>
-                                    </TextBlock>
+                                    <TextBlock Style="{StaticResource Linkast.Text.StatusTitle}" AutomationProperties.LiveSetting="Assertive"
+                                               Text="{Binding StatusTitleText}" />
                                 </DockPanel>
                                 <!-- One action slot: Go live while stopped, End stream while running. -->
                                 <Button Style="{StaticResource Linkast.Button.GoLive}" Command="{Binding StartCommand}" ToolTip="Start streaming (Ctrl+Enter)"
-                                        Visibility="{Binding IsActive, Converter={x:Static vm:Converters.InverseBoolToVisibility}}">
+                                        Visibility="{Binding IsBroadcasting, Converter={x:Static vm:Converters.InverseBoolToVisibility}}">
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE768;" FontSize="18" Margin="0,0,10,0" />
                                         <AccessText Text="_Go live" />
@@ -640,13 +646,26 @@
                                 </Button>
                                 <Button Style="{StaticResource Linkast.Button.Destructive}" Command="{Binding StopCommand}" MinHeight="48"
                                         FontSize="{StaticResource Linkast.FontSize.Action}" FontFamily="{DynamicResource Linkast.Font.Display}" FontWeight="Bold"
-                                        Visibility="{Binding IsActive, Converter={StaticResource BoolToVis}}" ToolTip="Stop streaming">
+                                        Visibility="{Binding IsBroadcasting, Converter={StaticResource BoolToVis}}" ToolTip="Stop streaming">
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE71A;" FontSize="16" Margin="0,0,10,0" />
                                         <AccessText Text="_End stream" />
                                     </StackPanel>
                                 </Button>
+                                <!-- Record to a file without going live (Go live records too when "Also record" is on). -->
+                                <Button Style="{StaticResource Linkast.Button.Secondary}" Command="{Binding ToggleRecordingCommand}" Margin="0,8,0,0"
+                                        Visibility="{Binding IsBroadcasting, Converter={x:Static vm:Converters.InverseBoolToVisibility}}"
+                                        ToolTip="Save to a file on this PC without going live. To record your streams, turn on 'Also record when I go live' on the Quality tab."
+                                        AutomationProperties.Name="{Binding RecordButtonText}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE7C8;" FontSize="12" Margin="0,0,8,0"
+                                                   Foreground="{DynamicResource Linkast.Error}" />
+                                        <TextBlock Text="{Binding RecordButtonText}" />
+                                    </StackPanel>
+                                </Button>
                                 <TextBlock Style="{StaticResource Linkast.Text.Hint}" Text="{Binding ReadinessText}" Margin="0,8,0,0" />
+                                <TextBlock Style="{StaticResource Linkast.Text.Hint}" Text="{Binding LastRecordingText}" Margin="0,2,0,0"
+                                           Visibility="{Binding LastRecordingText, Converter={x:Static vm:Converters.NotNullToVisibility}}" />
                                 <!-- Quick actions: both work instantly while live and before going live. -->
                                 <UniformGrid Columns="2" Margin="0,12,-8,0">
                                     <ToggleButton Style="{StaticResource Linkast.ToggleButton.Secondary}" Margin="0,0,8,0" IsChecked="{Binding MicrophoneMuted}"

@@ -25,10 +25,24 @@ public static class FfmpegArgumentBuilder
             throw new StreamFailureException(errors[0]);
         }
 
-        ValidatePublishUrl(job.PublishUrl);
+        if (job.PublishUrl is null && job.RecordingPath is null)
+        {
+            throw new StreamFailureException(new StreamError(ErrorCategory.Configuration, "output.none", "There is no output: neither a stream nor a recording."));
+        }
+
+        if (job.PublishUrl is not null)
+        {
+            ValidatePublishUrl(job.PublishUrl);
+        }
+
         if (job.TcUrl is not null)
         {
             ValidatePublishUrl(job.TcUrl);
+        }
+
+        if (job.RecordingPath is not null)
+        {
+            ValidateRecordingPath(job.RecordingPath);
         }
 
         var e = job.Encoder;
@@ -108,20 +122,74 @@ public static class FfmpegArgumentBuilder
             "-b:a", Kbps(e.AudioKbps),
             "-ar", e.AudioSampleRate.ToString(Inv),
             "-ac", "2",
-            "-f", "flv",
-            "-flvflags", "no_duration_filesize",
         ]);
-
-        if (job.TcUrl is not null)
-        {
-            args.AddRange(["-rtmp_tcurl", job.TcUrl]);
-        }
-
-        args.Add(job.PublishUrl);
+        args.AddRange(OutputArgs(job.PublishUrl, job.TcUrl, job.RecordingPath));
         return args;
     }
 
     public const int MaxLayers = 8;
+
+    /// <summary>
+    /// The output: FLV to the relay, a Matroska file, or both through the <c>tee</c> muxer so the
+    /// picture is encoded once. A failing recording (disk full) never stops the stream; a failing
+    /// stream ends the attempt as before, and the reconnect starts a new file.
+    /// </summary>
+    private static List<string> OutputArgs(string? publishUrl, string? tcUrl, string? recordingPath)
+    {
+        if (recordingPath is null)
+        {
+            List<string> flv = ["-f", "flv", "-flvflags", "no_duration_filesize"];
+            if (tcUrl is not null)
+            {
+                flv.AddRange(["-rtmp_tcurl", tcUrl]);
+            }
+
+            flv.Add(publishUrl!);
+            return flv;
+        }
+
+        if (publishUrl is null)
+        {
+            return ["-f", "matroska", recordingPath];
+        }
+
+        var stream = new StringBuilder("[f=flv:flvflags=no_duration_filesize");
+        if (tcUrl is not null)
+        {
+            stream.Append(":rtmp_tcurl=").Append(TeeEscape(TeeOptionEscape(tcUrl)));
+        }
+
+        stream.Append(']').Append(TeeEscape(publishUrl));
+        var file = "[f=matroska:onfail=ignore]" + TeeEscape(recordingPath);
+
+        // Both formats need the codec headers up front, which the tee muxer can't ask for per output.
+        return ["-flags", "+global_header", "-f", "tee", stream + "|" + file];
+    }
+
+    private const char Backslash = (char)0x5C;
+    private const char Quote = (char)0x27;
+
+    /// <summary>Escapes a tee slave option value (the second parsing level: ':' ']' '=' end a value).</summary>
+    internal static string TeeOptionEscape(string value) => EscapeChars(value, ":]=");
+
+    /// <summary>Escapes a whole tee slave (the first parsing level: '|' separates slaves).</summary>
+    internal static string TeeEscape(string value) => EscapeChars(value, "|");
+
+    private static string EscapeChars(string value, string specials)
+    {
+        var sb = new StringBuilder(value.Length + 8);
+        foreach (var c in value)
+        {
+            if (c == Backslash || c == Quote || specials.Contains(c, StringComparison.Ordinal))
+            {
+                sb.Append(Backslash);
+            }
+
+            sb.Append(c);
+        }
+
+        return sb.ToString();
+    }
 
     /// <summary>The lavfi source graph for input 0.</summary>
     public static string VideoSourceGraph(VideoSourceSpec video, int fps, int width = 1280, int height = 720)
@@ -321,6 +389,15 @@ public static class FfmpegArgumentBuilder
         PcmSampleFormat.S32 => "s32le",
         _ => throw new NotSupportedException(),
     };
+
+    private static void ValidateRecordingPath(string path)
+    {
+        if (!Path.IsPathFullyQualified(path) || !path.EndsWith(".mkv", StringComparison.OrdinalIgnoreCase)
+            || path.Any(char.IsControl) || path.Contains('|', StringComparison.Ordinal) || path.StartsWith('-'))
+        {
+            throw new StreamFailureException(new StreamError(ErrorCategory.Configuration, "recording.path", "The recording file name is not valid."));
+        }
+    }
 
     private static void ValidatePublishUrl(string url)
     {

@@ -30,15 +30,18 @@ public sealed record ToneAudioJobInput(double Gain) : AudioJobInput(Gain);
 public sealed record VideoLayerJobInput(string PipePath, int Width, int Height, int FrameRate, Linkast.Core.Camera.PixelRect Placement);
 
 /// <summary>Fully resolved input to <see cref="FfmpegArgumentBuilder"/>.</summary>
-/// <param name="PublishUrl">Complete RTMP URL including the stream key. Treated as a secret.</param>
+/// <param name="PublishUrl">Complete RTMP URL including the stream key, or null to only record. Treated as a secret.</param>
 /// <param name="TcUrl">tcUrl to announce, or null to let FFmpeg derive it from <paramref name="PublishUrl"/>.</param>
 public sealed record FfmpegJob(
     VideoSourceSpec Video,
     IReadOnlyList<AudioJobInput> Audio,
     EncoderSettings Encoder,
-    string PublishUrl,
+    string? PublishUrl,
     string? TcUrl)
 {
+    /// <summary>A local .mkv file to record into as well (or instead, when <see cref="PublishUrl"/> is null).</summary>
+    public string? RecordingPath { get; init; }
+
     /// <summary>Layers overlaid on the base video, bottom to top. Layer i is named <c>scale@cam{i}</c> / <c>overlay@cam{i}</c>.</summary>
     public IReadOnlyList<VideoLayerJobInput> Layers { get; init; } = [];
 

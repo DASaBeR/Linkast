@@ -91,6 +91,15 @@ public sealed record StreamSettings
 
     public DestinationKind DestinationKind { get; init; } = DestinationKind.Direct;
 
+    /// <summary>Folder for recordings, or null for the Linkast folder in Videos.</summary>
+    public string? RecordingFolder { get; init; }
+
+    /// <summary>Every stream is also saved to a file.</summary>
+    public bool RecordWhenLive { get; init; }
+
+    /// <summary>Recordings are turned into MP4 files when they finish.</summary>
+    public bool RemuxRecordingsToMp4 { get; init; }
+
     public string ServerUrl { get; init; } = string.Empty;
 
     /// <summary>Network adapter ID for the stream, or null for the Windows default route.</summary>
