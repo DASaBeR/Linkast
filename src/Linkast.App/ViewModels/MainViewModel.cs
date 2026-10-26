@@ -1089,6 +1089,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _snapshotTimer.Stop();
+        _fullscreenTimer?.Stop();
         if (_saveTimer.IsEnabled)
         {
             SaveNow();
@@ -1130,6 +1131,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         if (e.PropertyName is nameof(SelectedSourceKind) or nameof(SelectedMonitor) or nameof(SelectedWindow) && IsPreviewVisible)
         {
             _ = RefreshEditorBackgroundAsync();
+        }
+
+        if (e.PropertyName is nameof(SelectedSourceKind) or nameof(SelectedWindow) or nameof(IsStreamPageVisible) or nameof(State))
+        {
+            UpdateFullscreenWatch();
         }
 
         // The constructor sets defaults before the studio exists.

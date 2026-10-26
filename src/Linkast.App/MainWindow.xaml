@@ -142,6 +142,25 @@
                             </StackPanel>
                         </Border>
 
+                        <!-- Shown only when the captured game may come out black. Outside the settings cards so it works while live. -->
+                        <Border Style="{StaticResource Linkast.Issue.Warning}" Margin="0,0,0,14"
+                                Visibility="{Binding HasCaptureHint, Converter={StaticResource BoolToVis}}">
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Left" Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE7BA;" FontSize="16"
+                                           Foreground="{DynamicResource Linkast.Warning}" VerticalAlignment="Top" Margin="0,1,12,0" />
+                                <StackPanel>
+                                    <TextBlock Text="The game may capture as black" FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding CaptureHint}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                                    <Button Style="{StaticResource Linkast.Button.Secondary}" HorizontalAlignment="Left" Margin="0,10,0,0"
+                                            Command="{Binding CaptureDisplayInsteadCommand}" AutomationProperties.Name="Capture this display instead"
+                                            Visibility="{Binding CanCaptureDisplayInstead, Converter={StaticResource BoolToVis}}"
+                                            ToolTip="Capture the whole display with Desktop Duplication. You confirm first; everything on that display may appear on stream.">
+                                        <AccessText Text="Capture this _display instead…" />
+                                    </Button>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+
                         <!-- Settings, one short tab each instead of one long page. -->
                         <ListBox x:Name="StreamTabs" Style="{StaticResource Linkast.Segmented}" HorizontalAlignment="Left" Margin="0,2,0,12"
                                  SelectedIndex="0" AutomationProperties.Name="Stream settings">
@@ -186,9 +205,9 @@
                                             <ComboBox x:Name="WindowBox" ItemsSource="{Binding Windows}" SelectedItem="{Binding SelectedWindow}" />
                                         </StackPanel>
                                     </Grid>
-                                    <TextBlock Style="{StaticResource Linkast.Text.Hint}" Foreground="{DynamicResource Linkast.Warning}" Margin="0,8,0,0"
-                                               Visibility="{Binding IsWindowSource, Converter={StaticResource BoolToVis}}"
-                                               Text="Games in exclusive fullscreen can capture as black. Use borderless or windowed mode, or capture the entire display." />
+                                    <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,8,0,0" TextWrapping="Wrap"
+                                               Visibility="{Binding IsDisplaySource, Converter={StaticResource BoolToVis}}"
+                                               Text="Everything on this display is captured, including notifications, chat and other windows." />
                                     <Expander Header="Advanced capture" Margin="0,12,0,0">
                                         <StackPanel Margin="0,8,0,0">
                                             <CheckBox Content="Use Desktop Duplication instead of Windows Graphics Capture (displays only)"
