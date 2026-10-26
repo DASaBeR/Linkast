@@ -233,6 +233,11 @@ public class ErrorClassifierTests
     [InlineData("[rtmp @ 000001] [error] Server error: Invalid stream key", ErrorCategory.Network, "network.rejected")]
     [InlineData("[out#0/flv @ 0001] [error] Error muxing a packet", ErrorCategory.Network, "network.reset")]
     [InlineData("[Parsed_ddagrab_0 @ 01] [error] DuplicateOutput failed", ErrorCategory.Capture, "capture.dda")]
+    [InlineData("[Parsed_ddagrab_0 @ 01] [error] AcquireNextFrame failed: 887a0026", ErrorCategory.Capture, "capture.dda.lost")]
+    [InlineData("[Parsed_ddagrab_0 @ 01] [error] Output parameters changed!", ErrorCategory.Capture, "capture.dda.lost")]
+    [InlineData("[Parsed_ddagrab_0 @ 01] [error] Desktop duplication access denied", ErrorCategory.Capture, "capture.dda.lost")]
+    [InlineData("[Parsed_ddagrab_0 @ 01] [error] Selected output not supported", ErrorCategory.Capture, "capture.dda.unsupported")]
+    [InlineData("[Parsed_ddagrab_0 @ 01] [error] AcquireNextFrame failed: 887a0005", ErrorCategory.Capture, "capture.dda")]
     [InlineData("[AVFilterGraph @ 01] [error] No such filter: 'foo'", ErrorCategory.Configuration, "config.ffmpeg")]
     [InlineData(@"[in#1 @ 01] [error] Error opening input \\.\pipe\linkast-abc: Broken pipe", ErrorCategory.Audio, "audio.pipe")]
     public void Classifies_known_errors(string line, ErrorCategory category, string code)
@@ -257,6 +262,41 @@ public class ErrorClassifierTests
             "[h264_nvenc @ 2] [error] OpenEncodeSessionEx failed: out of memory",
         ]);
         Assert.Equal("encoder.nvenc.session", e.Code);
+    }
+
+    [Fact]
+    public void Lost_display_is_found_behind_the_demuxer_error_that_follows_it()
+    {
+        var e = ErrorClassifier.ClassifyExit(1,
+        [
+            "[Parsed_ddagrab_0 @ 1] [error] AcquireNextFrame failed: 887a0026",
+            "[in#0/lavfi @ 2] [error] Error during demuxing: Generic error in an external library",
+            "[out#0/flv @ 3] [error] Error muxing a packet",
+        ]);
+        Assert.Equal(ErrorClassifier.CaptureLostCode, e.Code);
+        Assert.True(e.IsRetryable);
+    }
+
+    [Theory]
+    [InlineData("capture.dda.lost", true)]
+    [InlineData("capture.dda", false)]
+    [InlineData("capture.dda.unsupported", false)]
+    [InlineData("capture.wgc", false)]
+    public void Only_a_lost_display_is_retried_among_capture_errors(string code, bool retried) =>
+        Assert.Equal(retried, new StreamError(ErrorCategory.Capture, code, "x").IsRetryable);
+
+    [Fact]
+    public void Capture_restarts_start_fast_and_wait_out_a_uac_prompt()
+    {
+        var b = new ReconnectBackoff(new EngineOptions().CaptureRestart);
+        var delays = new List<TimeSpan>();
+        while (b.NextDelay() is { } d)
+        {
+            delays.Add(d);
+        }
+
+        Assert.Equal(TimeSpan.FromMilliseconds(250), delays[0]);
+        Assert.InRange(delays.Sum(d => d.TotalSeconds), 30, 60);
     }
 
     [Fact]

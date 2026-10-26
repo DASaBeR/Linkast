@@ -9,6 +9,9 @@ namespace Linkast.Engine.FFmpeg;
 /// </summary>
 public static class ErrorClassifier
 {
+    /// <summary>Desktop Duplication lost access to the display; see <see cref="StreamError.IsRetryable"/>.</summary>
+    public const string CaptureLostCode = StreamError.CaptureLostCode;
+
     private sealed record Rule(ErrorCategory Category, string Code, string Message, string[] Needles);
 
     private static readonly Rule[] Rules =
@@ -25,8 +28,14 @@ public static class ErrorClassifier
         new(ErrorCategory.Encoder, "encoder.open", "The encoder rejected these settings. Try a lower resolution, frame rate or another encoder.",
             ["Error while opening encoder", "Could not open encoder", "Error initializing output stream", "Unknown encoder"]),
 
-        // Capture
-        new(ErrorCategory.Capture, "capture.dda", "Desktop Duplication capture failed. Try Windows Graphics Capture or another monitor.",
+        // Capture. ddagrab does not recover by itself: when Windows takes the duplication away (a game
+        // switching display mode, a resolution change, a UAC prompt or the lock screen) it logs one of
+        // these and FFmpeg exits, so the engine restarts the capture. 887a0026 is DXGI_ERROR_ACCESS_LOST.
+        new(ErrorCategory.Capture, CaptureLostCode, "The display changed (for example a game switched between fullscreen and windowed, or a Windows prompt opened). Restarting the capture…",
+            ["AcquireNextFrame failed: 887a0026", "Output parameters changed", "Desktop duplication access denied"]),
+        new(ErrorCategory.Capture, "capture.dda.unsupported", "Desktop Duplication can't capture this display with this PC's graphics setup (common on laptops with two GPUs). Turn off Desktop Duplication under Advanced capture to use Windows Graphics Capture.",
+            ["Selected output not supported"]),
+        new(ErrorCategory.Capture, "capture.dda","Desktop Duplication capture failed. Try Windows Graphics Capture or another monitor.",
             ["ddagrab", "DuplicateOutput", "DXGI_ERROR"]),
         new(ErrorCategory.Capture, "capture.wgc", "Windows Graphics Capture failed. The window may have closed or capture is blocked.",
             ["gfxcapture", "GraphicsCapture", "CreateForWindow", "CreateForMonitor"]),

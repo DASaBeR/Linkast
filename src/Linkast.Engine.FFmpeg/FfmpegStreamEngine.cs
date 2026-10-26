@@ -26,6 +26,12 @@ public sealed record EngineOptions
     public TimeSpan GracefulStopTimeout { get; init; } = TimeSpan.FromSeconds(5);
 
     public TimeSpan TelemetryInterval { get; init; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// Restarts after Desktop Duplication loses the display. Kept apart from the network budget and
+    /// quicker at first; long enough in total (about 45 s) to wait out a UAC prompt or the lock screen.
+    /// </summary>
+    public ReconnectPolicy CaptureRestart { get; init; } = new(15, TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(30));
 }
 
 /// <summary>
@@ -176,22 +182,24 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
     private async Task RunSessionAsync(StreamSession session, CancellationToken ct)
     {
         var backoff = new ReconnectBackoff(session.Reconnect);
+        var captureRestarts = new ReconnectBackoff(_options.CaptureRestart);
         try
         {
             while (true)
             {
                 _state.TryTransition(StreamState.Connecting);
-                var error = await RunAttemptAsync(session, backoff, ct).ConfigureAwait(false);
+                var error = await RunAttemptAsync(session, [backoff, captureRestarts], ct).ConfigureAwait(false);
                 if (error is null || ct.IsCancellationRequested)
                 {
                     break;
                 }
 
                 _lastError = error;
-                if (error.IsRetryable && backoff.NextDelay() is { } delay)
+                var budget = error.Category == ErrorCategory.Capture ? captureRestarts : backoff;
+                if (error.IsRetryable && budget.NextDelay() is { } delay)
                 {
                     _reconnectCount++;
-                    LogReconnecting(backoff.Attempts, session.Reconnect.MaxAttempts, delay.TotalSeconds, error.ToString());
+                    LogReconnecting(budget.Attempts, budget.Policy.MaxAttempts, delay.TotalSeconds, error.ToString());
                     _state.TryTransition(StreamState.Reconnecting, error);
                     PublishTelemetry(session, null, null, null);
                     try
@@ -204,6 +212,12 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                     }
 
                     continue;
+                }
+
+                if (error.Code == StreamError.CaptureLostCode)
+                {
+                    error = error with { UserMessage = "Desktop Duplication could not get the display back. Check that the display is on and unlocked, then start again." };
+                    _lastError = error;
                 }
 
                 _state.TryTransition(StreamState.Failed, error);
@@ -227,7 +241,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
     }
 
     /// <summary>Runs one connection attempt. Returns null when stopped by the user, else the reason it ended.</summary>
-    private async Task<StreamError?> RunAttemptAsync(StreamSession session, ReconnectBackoff backoff, CancellationToken ct)
+    private async Task<StreamError?> RunAttemptAsync(StreamSession session, ReconnectBackoff[] backoffs, CancellationToken ct)
     {
         IOutputLease? lease = null;
         FfmpegProcess? process = null;
@@ -365,7 +379,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 Volatile.Write(ref _composition, new ActiveComposition(new FfmpegCommandChannel(port), layerIds, session.Encoder.Width, session.Encoder.Height));
             }
 
-            return await SuperviseAsync(session, backoff, lease, process, audioInputs, recent, () => Volatile.Read(ref latest), ct).ConfigureAwait(false);
+            return await SuperviseAsync(session, backoffs, lease,process, audioInputs, recent, () => Volatile.Read(ref latest), ct).ConfigureAwait(false);
         }
         catch (StreamFailureException ex)
         {
@@ -407,7 +421,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
 
     private async Task<StreamError?> SuperviseAsync(
         StreamSession session,
-        ReconnectBackoff backoff,
+        ReconnectBackoff[] backoffs,
         IOutputLease lease,
         FfmpegProcess process,
         List<IAudioInput> audioInputs,
@@ -490,7 +504,10 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
             }
             else if (_state.Current == StreamState.Live && liveSince is { } since)
             {
-                backoff.ReportStable(_time.GetElapsedTime(since, now));
+                foreach (var backoff in backoffs)
+                {
+                    backoff.ReportStable(_time.GetElapsedTime(since, now));
+                }
 
                 var frameStall = _time.GetElapsedTime(lastFrameAdvance, now) > _options.StallTimeout;
                 var byteStall = lease.IsMeasured && _time.GetElapsedTime(lastBytesAdvance, now) > _options.StallTimeout;

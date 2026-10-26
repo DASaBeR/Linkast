@@ -16,8 +16,14 @@ public enum ErrorCategory
 /// <summary>A classified, user-presentable error. <see cref="Detail"/> must already be redacted.</summary>
 public sealed record StreamError(ErrorCategory Category, string Code, string UserMessage, string? Detail = null)
 {
-    /// <summary>Network failures are retried by the reconnect policy; others need user action.</summary>
-    public bool IsRetryable => Category == ErrorCategory.Network;
+    /// <summary>Desktop Duplication lost access to the display, for example when a game changed display mode.</summary>
+    public const string CaptureLostCode = "capture.dda.lost";
+
+    /// <summary>
+    /// Network failures are retried by the reconnect policy, and a lost Desktop Duplication by the
+    /// capture restart policy; others need user action.
+    /// </summary>
+    public bool IsRetryable => Category == ErrorCategory.Network || Code == CaptureLostCode;
 
     public override string ToString() => $"[{Category}/{Code}] {UserMessage}";
 }
