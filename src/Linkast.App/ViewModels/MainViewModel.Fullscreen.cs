@@ -18,6 +18,9 @@ public sealed partial class MainViewModel
     private readonly FullscreenTracker _fullscreen = new();
     private DispatcherTimer? _fullscreenTimer;
 
+    // The running stream's picture of the window has been black for a few seconds.
+    private bool _captureLooksBlack;
+
     /// <summary>What to tell the user about the captured window, or null when all looks fine.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasCaptureHint))]
@@ -63,12 +66,27 @@ public sealed partial class MainViewModel
         }
     }
 
+    /// <summary>From telemetry. Black only counts while the window is (or was last seen) fullscreen: a dark scene in a normal window is not a capture problem.</summary>
+    private void UpdateCaptureBlack(bool black)
+    {
+        if (black != _captureLooksBlack)
+        {
+            _captureLooksBlack = black;
+            UpdateCaptureHint();
+        }
+    }
+
     private void UpdateCaptureHint()
     {
         var s = _fullscreen.Current;
         var program = s.ExecutableName ?? "This program";
         var parts = new List<string>();
-        if (s.Kind == FullscreenKind.Exclusive)
+        var black = _captureLooksBlack && IsWindowSource && s.Kind != FullscreenKind.None;
+        if (black)
+        {
+            parts.Add($"The stream shows {program} as black. This happens with games in exclusive fullscreen. Capture its display instead, or switch the game to borderless or windowed mode.");
+        }
+        else if (s.Kind == FullscreenKind.Exclusive)
         {
             parts.Add($"{program} is in exclusive fullscreen, which can capture as black. If it does, capture its display instead, or switch the game to borderless or windowed mode.");
         }
@@ -79,7 +97,7 @@ public sealed partial class MainViewModel
         }
 
         CaptureHint = parts.Count == 0 ? null : string.Join("\n\n", parts);
-        CanCaptureDisplayInstead = s.Kind == FullscreenKind.Exclusive || (s.Kind == FullscreenKind.Fullscreen && s.OptimizationsDisabled);
+        CanCaptureDisplayInstead = black || s.Kind == FullscreenKind.Exclusive || (s.Kind == FullscreenKind.Fullscreen && s.OptimizationsDisabled);
     }
 
     /// <summary>

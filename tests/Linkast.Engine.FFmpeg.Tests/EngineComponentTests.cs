@@ -49,6 +49,24 @@ public class ArgumentBuilderTests
             FfmpegArgumentBuilder.VideoSourceGraph(new WindowSource(1234, "Some \"Game\"; title", "game.exe", false), 30));
 
     [Fact]
+    public void Window_capture_carries_the_black_probe_and_continues_from_its_split()
+    {
+        var graph = ValueAfter(FfmpegArgumentBuilder.Build(Job(new WindowSource(1234, "Game", "game.exe"))), "-filter_complex");
+        Assert.StartsWith("[0:v]hwdownload,format=bgra,fps=60," + BlackProbe.Graph + ";[cap]scale=1920:1080:", graph, StringComparison.Ordinal);
+        Assert.Contains("nullsink;", graph, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(typeof(DisplaySource))]
+    [InlineData(typeof(TestPatternSource))]
+    [InlineData(typeof(BlankCanvasSource))]
+    public void Other_sources_have_no_black_probe(Type source)
+    {
+        VideoSourceSpec video = source == typeof(DisplaySource) ? new DisplaySource(0) : (VideoSourceSpec)Activator.CreateInstance(source)!;
+        Assert.DoesNotContain("blackdetect", ValueAfter(FfmpegArgumentBuilder.Build(Job(video)), "-filter_complex"), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Window_title_never_reaches_arguments()
     {
         var args = FfmpegArgumentBuilder.Build(Job(new WindowSource(42, "evil:title;[x]", "evil.exe")));
@@ -223,6 +241,24 @@ public class ProgressParserTests
 
     [Fact]
     public void Ignores_garbage() => Assert.Null(new ProgressParser().Feed("not a key value"));
+}
+
+public class BlackProbeTests
+{
+    [Theory]
+    [InlineData("lavfi.black_start=0", true)]
+    [InlineData("lavfi.black_start=12.5\r", true)]
+    [InlineData("lavfi.black_end=3", false)]
+    [InlineData("frame:6    pts:6       pts_time:3", null)]
+    [InlineData("[flv @ 01] [warning] lavfi.black_start=1", null)]
+    public void Parses_the_marks(string line, bool? expected) => Assert.Equal(expected, BlackProbe.Parse(line));
+
+    [Theory]
+    [InlineData("frame:0    pts:0       pts_time:0", true)]
+    [InlineData("lavfi.black_end=3", true)]
+    [InlineData("[h264_nvenc @ 01] [error] frame: something failed", false)]
+    [InlineData("frame=  120 fps= 60", false)]
+    public void Knows_its_own_lines(string line, bool expected) => Assert.Equal(expected, BlackProbe.IsProbeLine(line));
 }
 
 public class ErrorClassifierTests

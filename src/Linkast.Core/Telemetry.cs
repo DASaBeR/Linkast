@@ -61,6 +61,9 @@ public sealed record StreamTelemetry(
     int ReconnectCount,
     StreamError? LastError)
 {
+    /// <summary>A captured window has been fully black for a few seconds (see the engine's black probe).</summary>
+    public bool CaptureLooksBlack { get; init; }
+
     /// <summary>Encoder is keeping up when encoded FPS is within 10 % of target and speed is near real time.</summary>
     public bool EncoderOverloaded => Encoder is { Fps: > 0 } e && (e.Fps < TargetFps * 0.9 || e.Speed is > 0 and < 0.95);
 }

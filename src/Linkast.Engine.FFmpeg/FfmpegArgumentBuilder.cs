@@ -241,7 +241,12 @@ public static class FfmpegArgumentBuilder
         }
 
         sb.Append(Inv, $"fps={e.Fps},");
-        var place = basePlacement ?? new Linkast.Core.Camera.NormalizedRect(0, 0, 1, 1);
+        if (video is WindowSource)
+        {
+            sb.Append(BlackProbe.Graph).Append(";[cap]");
+        }
+
+        var place =basePlacement ?? new Linkast.Core.Camera.NormalizedRect(0, 0, 1, 1);
         var full = place is { X: 0, Y: 0, Width: 1, Height: 1 };
         if (full && baseFit == Linkast.Core.Camera.BaseFit.Fit)
         {

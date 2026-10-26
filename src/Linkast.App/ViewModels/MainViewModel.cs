@@ -1793,6 +1793,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         {
             FpsText = UploadText = EncoderText = "–";
             WarningText = null;
+            UpdateCaptureBlack(false);
         }
     }
 
@@ -1821,6 +1822,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             }
         }
 
+        UpdateCaptureBlack(t.CaptureLooksBlack);
         WarningText = t.State == StreamState.Live && t.EncoderOverloaded
             ? "Encoding is falling behind. Lower the resolution or frame rate, or choose a hardware encoder."
             : null;

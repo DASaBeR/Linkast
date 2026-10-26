@@ -32,6 +32,9 @@ public sealed record EngineOptions
     /// quicker at first; long enough in total (about 45 s) to wait out a UAC prompt or the lock screen.
     /// </summary>
     public ReconnectPolicy CaptureRestart { get; init; } = new(15, TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(30));
+
+    /// <summary>How long a captured window must stay black before telemetry says so; loading screens are shorter.</summary>
+    public TimeSpan BlackAfter { get; init; } = TimeSpan.FromSeconds(3);
 }
 
 /// <summary>
@@ -71,6 +74,9 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
     private long _sessionStart;
     private StreamError? _lastError;
     private string? _currentRecording;
+
+    // When the black probe last saw black start in this attempt (a timestamp), or 0.
+    private long _blackSince;
 
     public FfmpegStreamEngine(
         FfmpegInstallation ffmpeg,
@@ -350,6 +356,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 CommandPort = commandPort,
             });
             LogLaunching(_redactor.Redact(string.Join(' ', args.Select(QuoteForLog))));
+            Interlocked.Exchange(ref _blackSince, 0);
 
             process = FfmpegProcess.Start(
                 _ffmpeg.Path,
@@ -363,6 +370,17 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 },
                 line =>
                 {
+                    if (BlackProbe.IsProbeLine(line))
+                    {
+                        if (BlackProbe.Parse(line) is { } black)
+                        {
+                            Interlocked.Exchange(ref _blackSince, black ? _time.GetTimestamp() : 0);
+                            LogBlackProbe(black);
+                        }
+
+                        return;
+                    }
+
                     var redacted = _redactor.Redact(line);
                     recent.Enqueue(redacted);
                     while (recent.Count > RecentLineCapacity && recent.TryDequeue(out _))
@@ -391,6 +409,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
         }
         finally
         {
+            Interlocked.Exchange(ref _blackSince, 0);
             Interlocked.Exchange(ref _composition, null)?.Commands.Dispose();
             if (process is not null)
             {
@@ -551,7 +570,10 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
             progress,
             net,
             _reconnectCount,
-            _lastError);
+            _lastError)
+        {
+            CaptureLooksBlack = Interlocked.Read(ref _blackSince) is var since and not 0 && _time.GetElapsedTime(since) >= _options.BlackAfter,
+        };
         TelemetryUpdated?.Invoke(this, telemetry);
     }
 
@@ -726,6 +748,9 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Reconnect attempt {Attempt}/{Max} in {DelaySeconds:0.#}s after {Error}")]
     private partial void LogReconnecting(int attempt, int max, double delaySeconds, string error);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Captured window black: {Black}")]
+    private partial void LogBlackProbe(bool black);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Unexpected engine failure")]
     private partial void LogUnexpected(Exception ex);
