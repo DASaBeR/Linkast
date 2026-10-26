@@ -8,6 +8,8 @@ using Xunit.Abstractions;
 namespace Linkast.IntegrationTests;
 
 /// <summary>The black probe's graph on the real FFmpeg: the escaping holds and both marks reach stderr.</summary>
+// Runs FFmpeg and a capture: kept out of parallel runs, which could starve it (or the encoder speed test) of CPU.
+[Collection("ingest")]
 public sealed class BlackProbeIntegrationTests(ITestOutputHelper output)
 {
     [SkippableFact]
