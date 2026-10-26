@@ -62,6 +62,22 @@ Measured over 20 s while live at 1080p60 and 6 Mbps, capturing a mostly static d
 
 Linkast was force-killed while live. Its FFmpeg child exited immediately because of the job object, and no ffmpeg.exe was left behind.
 
+## Fullscreen capture checks (2026-10-26)
+
+These checks were made without games, as decided in the [plan](fullscreen-capture-plan.md).
+
+| Check | Result |
+|---|---|
+| Fullscreen detection on a real borderless window that fills the monitor, a normal window and a minimized one | Fullscreen, None, None |
+| "Disable fullscreen optimizations" flag read from AppCompatFlags\Layers (set on a test program only, then removed) | Read correctly |
+| Black probe graph on FFmpeg 9.0.1: 3 s black, then a picture | Black start at 0 s, end at 3 s (integration test) |
+| Window capture (WGC) of a black borderless window, through the engine | Telemetry reports black; a window with a picture does not (integration test) |
+| Probe cost at 1080p60 | Within measurement noise (±0.4 s CPU over 20 s) |
+| Hint in the app: shows for a fullscreen window with optimizations off, stays after it minimizes | Verified through UI Automation |
+| "Capture this display instead": warning dialog, then Entire display with the privacy note | Verified through UI Automation |
+| Desktop Duplication restart after access loss | Error text taken from the FFmpeg 9.0.1 source and covered by unit tests. **Not yet triggered for real** (resolution change, Win+L or a UAC prompt while live). |
+| Exclusive fullscreen (`QUNS_RUNNING_D3D_FULL_SCREEN`) | **Not yet seen for real**; needs a game or a Direct3D exclusive-mode test app. |
+
 ## Still to do (Milestone 1 exit)
 
 - [ ] One real platform session (Twitch or YouTube, RTMPS) for 30 minutes. Needs the maintainer's stream key.

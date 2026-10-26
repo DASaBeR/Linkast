@@ -1,5 +1,19 @@
 # Plan: exclusive-fullscreen games
 
+## Status (2026-10-26)
+
+| Phase | Status |
+|---|---|
+| 1. Detect fullscreen | Done |
+| 2. Detect a black stream | Done |
+| 3. Hint, privacy warning and switch | Done |
+| 4. Desktop Duplication recovery | Done |
+| 6. Tests and docs | Done |
+| 0. Measure with games | Deferred |
+| 5. Automatic mode | Deferred |
+
+What was checked, and what wasn't, is recorded in [capture-compatibility.md](capture-compatibility.md#fullscreen-capture-checks-2026-10-26).
+
 Today the Source tab always warns that exclusive-fullscreen games can capture as black and tells users to switch to borderless ([MainWindow.xaml:191](../src/Linkast.App/MainWindow.xaml)). The goal is to let people keep exclusive fullscreen where Windows allows it. Linkast should notice when the current capture cannot see the game and move to a method that can.
 
 ## Ground rules

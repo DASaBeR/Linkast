@@ -38,7 +38,7 @@ Linkast tests every encoder when it starts and offers only those that work. Hard
 |---|---|---|
 | Display | Windows Graphics Capture | Verified |
 | Display | Desktop Duplication | Verified (option under *Advanced capture*) |
-| Window or game | Windows Graphics Capture | Verified for normal and borderless windows. **Exclusive-fullscreen games** may capture black; use borderless (field test A3). |
+| Window or game | Windows Graphics Capture | Verified for normal and borderless windows. **Exclusive-fullscreen games** may capture black. Linkast then shows a hint and offers to capture the display instead (field test A3). |
 | Multiple monitors, mixed DPI | | Expected |
 | Hybrid-graphics laptops | | Expected. Capture runs on the GPU that drives the display. |
 

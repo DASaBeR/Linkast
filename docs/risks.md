@@ -6,11 +6,11 @@ Status as of Milestone 1. "Verified" means demonstrated on the development machi
 
 | Risk | Status | Mitigation / next step |
 |---|---|---|
-| Exclusive-fullscreen games capture as black with Windows Graphics Capture. | Open. Needs the game matrix in [capture-compatibility.md](capture-compatibility.md). | Offer Desktop Duplication for displays. Guide users to borderless mode. A hook-based game capture is out of scope without a separate anti-cheat assessment. |
+| Exclusive-fullscreen games capture as black with Windows Graphics Capture. | Mitigated, not yet measured with games ([plan](fullscreen-capture-plan.md)). | Linkast detects exclusive fullscreen and a black window capture, and offers to capture the display with Desktop Duplication after a privacy warning. Desktop Duplication restarts by itself when a game changes display mode. Games that stay black with both methods still need borderless. Hook-based capture stays out of scope: nothing may touch the game process. |
 | Desktop Duplication output index may not match Linkast's monitor index on multi-GPU or hybrid-graphics laptops. | Open. WGC uses the exact HMONITOR, so it is unaffected. | Enumerate DXGI outputs directly in Milestone 2. |
 | GPU-side scaling (`scale_d3d11`) fails on this driver with E_INVALIDARG. | Verified failure. Linkast downloads frames to the CPU and scales there. | NVENC zero-copy at native resolution works. Use it when the output size equals the capture size. Planned optimization. |
 | A minimized window stops producing frames and the stall detector reconnects in a loop. | Open. | Detect minimized windows and show a dedicated message instead of reconnecting. |
-| HDR displays. | Untested. | Add to the compatibility matrix. |
+| HDR displays. | Untested. Desktop Duplication asks Windows for 8-bit BGRA, so Windows converts HDR to SDR. | Add to the compatibility matrix. |
 
 ## Audio
 

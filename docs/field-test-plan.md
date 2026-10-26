@@ -51,6 +51,12 @@ For each game, try the three capture modes and note whether the stream shows the
 
 **Expected:** Borderless and windowed work in all modes. Results for exclusive fullscreen are what we need to learn.
 
+When a single-window capture of an exclusive-fullscreen game is black, also check:
+
+- A yellow hint, "The game may capture as black", appears on the Stream page within a few seconds, and stays after you switch back to Linkast.
+- **Capture this display instead** asks first, warning that notifications and other windows on that display may appear on stream. After **Yes**, the stream restarts with the game visible.
+- Switching the game between fullscreen and windowed while capturing the display shows *Reconnecting* briefly, then the stream continues.
+
 ### A4. Audio/video sync (clap test)
 - **Steps:**
   1. Stream with your microphone on and the webcam visible.
