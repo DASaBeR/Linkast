@@ -18,14 +18,15 @@ public sealed record OverlayPreview(ImageSource Image, NormalizedRect Placement)
 /// <summary>A change to show on a running stream: a new placement, or null to hide.</summary>
 public sealed record OverlayLiveChange(string LayerId, NormalizedRect? Placement);
 
-/// <summary>One picture (or, later, web) overlay.</summary>
-public sealed partial class OverlayItemViewModel : ObservableObject
+/// <summary>One picture or web overlay. The editor moves it through <see cref="ISceneItem"/>.</summary>
+public sealed partial class OverlayItemViewModel : ObservableObject, ISceneItem
 {
     public OverlayItemViewModel(OverlayConfig config)
     {
         LayerId = config.LayerId;
         Kind = config.Kind;
         Name = config.Name;
+        CustomPlacement = config.CustomPlacement;
         Position = config.Position;
         Size = config.Size;
         Visible = config.Visible;
@@ -118,33 +119,103 @@ public sealed partial class OverlayItemViewModel : ObservableObject
     [ObservableProperty]
     public partial double Size { get; set; }
 
+    /// <summary>Where it was dragged to, used while <see cref="Position"/> is Custom.</summary>
     [ObservableProperty]
+    public partial NormalizedRect? CustomPlacement { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsShown))]
     public partial bool Visible { get; set; }
+
+    /// <summary>True while this overlay is the one being dragged or resized in the editor.</summary>
+    [ObservableProperty]
+    public partial bool IsSelected { get; set; }
 
     [ObservableProperty]
     public partial string? ImagePath { get; set; }
 
     /// <summary>The picture, for the thumbnail and the preview. Null when the file is missing.</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsMissing))]
+    [NotifyPropertyChangedFor(nameof(IsMissing), nameof(Preview))]
     public partial BitmapSource? Bitmap { get; set; }
 
     public bool IsMissing => IsImage && Bitmap is null;
 
-    public bool IsSizeAdjustable => Position != OverlayPosition.FullScreen;
+    public bool IsSizeAdjustable => Position is not (OverlayPosition.FullScreen or OverlayPosition.Custom);
+
+    public bool IsShown => Visible;
+
+    public ImageSource? Preview => Bitmap;
 
     public double Aspect => IsWeb ? (double)PageWidth / Math.Max(1, PageHeight) : OverlayRenderer.AspectOf(Bitmap);
 
+    /// <summary>The output canvas, so <see cref="Placement"/> can be worked out for the editor.</summary>
+    public double CanvasWidth { get; private set; } = 1920;
+
+    public double CanvasHeight { get; private set; } = 1080;
+
+    private bool _placing;
+
+    /// <summary>Where it is on the canvas. Setting it (a drag in the editor) makes the position Custom.</summary>
+    public NormalizedRect Placement
+    {
+        get => PlacementOn(CanvasWidth, CanvasHeight);
+        set
+        {
+            var rect = value.Clamped();
+            if (Position == OverlayPosition.Custom && CustomPlacement == rect)
+            {
+                return;
+            }
+
+            // One notification for the pair, not one per property.
+            _placing = true;
+            try
+            {
+                CustomPlacement = rect;
+                Position = OverlayPosition.Custom;
+            }
+            finally
+            {
+                _placing = false;
+            }
+
+            PlacementChanged();
+        }
+    }
+
     public NormalizedRect PlacementOn(double canvasWidth, double canvasHeight) =>
-        OverlayGeometry.Place(Position, Size, Aspect, canvasWidth, canvasHeight);
+        Position == OverlayPosition.Custom && CustomPlacement is { } custom
+            ? custom.Clamped()
+            : OverlayGeometry.Place(Position, Size, Aspect, canvasWidth, canvasHeight);
+
+    public void SetCanvas(double width, double height)
+    {
+        (CanvasWidth, CanvasHeight) = (width, height);
+        OnPropertyChanged(nameof(Placement));
+    }
+
+    /// <summary>Something that moves or reshapes the overlay changed: the editor redraws, and it is saved and applied live.</summary>
+    private void PlacementChanged()
+    {
+        if (_placing)
+        {
+            return;
+        }
+
+        OnPropertyChanged(nameof(Placement));
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
 
     partial void OnImagePathChanged(string? value) => Bitmap = OverlayRenderer.LoadImage(value);
 
     partial void OnNameChanged(string value) => Changed?.Invoke(this, EventArgs.Empty);
 
-    partial void OnPositionChanged(OverlayPosition value) => Changed?.Invoke(this, EventArgs.Empty);
+    partial void OnPositionChanged(OverlayPosition value) => PlacementChanged();
 
-    partial void OnSizeChanged(double value) => Changed?.Invoke(this, EventArgs.Empty);
+    partial void OnSizeChanged(double value) => PlacementChanged();
+
+    partial void OnCustomPlacementChanged(NormalizedRect? value) => PlacementChanged();
 
     partial void OnVisibleChanged(bool value) => Changed?.Invoke(this, EventArgs.Empty);
 
@@ -152,15 +223,15 @@ public sealed partial class OverlayItemViewModel : ObservableObject
     {
         if (IsImage)
         {
-            Changed?.Invoke(this, EventArgs.Empty); // a new picture can change the shape
+            PlacementChanged(); // a new picture can change the shape
         }
     }
 
     partial void OnUrlChanged(string? value) => Changed?.Invoke(this, EventArgs.Empty);
 
-    partial void OnPageWidthChanged(int value) => Changed?.Invoke(this, EventArgs.Empty);
+    partial void OnPageWidthChanged(int value) => PlacementChanged();
 
-    partial void OnPageHeightChanged(int value) => Changed?.Invoke(this, EventArgs.Empty);
+    partial void OnPageHeightChanged(int value) => PlacementChanged();
 
     public OverlayConfig ToConfig() => new()
     {
@@ -172,13 +243,15 @@ public sealed partial class OverlayItemViewModel : ObservableObject
         PageWidth = PageWidth,
         PageHeight = PageHeight,
         Size = Size,
+        CustomPlacement = CustomPlacement,
         Visible = Visible,
     };
 }
 
 /// <summary>
-/// Overlays on top of the stream (pictures now, web alerts later) and the "Be right back" screen.
-/// Visibility, position and size apply to a running stream instantly; adding an overlay needs the next go-live.
+/// Overlays on top of the stream (pictures and web alerts) and the "Be right back" screen.
+/// Visibility, position and size apply to a running stream instantly; adding an overlay needs a restart,
+/// which the main view model offers.
 /// </summary>
 public sealed partial class OverlaysViewModel : ObservableObject
 {
@@ -223,7 +296,24 @@ public sealed partial class OverlaysViewModel : ObservableObject
 
     public IReadOnlyList<OverlayPosition> Positions { get; } = Enum.GetValues<OverlayPosition>();
 
-    /// <summary>What the output preview draws above the cameras.</summary>
+    /// <summary>The overlay being dragged or resized in the editor, if any. Cameras keep their own selection.</summary>
+    [ObservableProperty]
+    public partial OverlayItemViewModel? Selected { get; set; }
+
+    partial void OnSelectedChanged(OverlayItemViewModel? oldValue, OverlayItemViewModel? newValue)
+    {
+        if (oldValue is not null)
+        {
+            oldValue.IsSelected = false;
+        }
+
+        if (newValue is not null)
+        {
+            newValue.IsSelected = true;
+        }
+    }
+
+    /// <summary>What the output preview draws above everything: the away screen while it is on. The overlays themselves are editor items.</summary>
     [ObservableProperty]
     public partial IReadOnlyList<OverlayPreview> PreviewItems { get; set; } = [];
 
@@ -248,7 +338,8 @@ public sealed partial class OverlaysViewModel : ObservableObject
         item.ImagePath = path;
         Attach(item);
         Items.Add(item);
-        Changed(item, liveRelevant: false);
+        Selected = item;
+        Changed(item, liveRelevant: true); // while live, this is where a restart is offered
     }
 
     /// <summary>Alerts, a chat box or any web page with a transparent background, full screen by default.</summary>
@@ -265,7 +356,8 @@ public sealed partial class OverlaysViewModel : ObservableObject
         });
         Attach(item);
         Items.Add(item);
-        Changed(item, liveRelevant: false);
+        Selected = item;
+        Changed(item, liveRelevant: false); // nothing to show until the link is saved
     }
 
     [RelayCommand]
@@ -273,6 +365,11 @@ public sealed partial class OverlaysViewModel : ObservableObject
     {
         if (Items.Remove(item))
         {
+            if (ReferenceEquals(Selected, item))
+            {
+                Selected = null;
+            }
+
             item.Changed -= OnItemChanged;
             if (item.IsWeb)
             {
@@ -361,6 +458,11 @@ public sealed partial class OverlaysViewModel : ObservableObject
     public void SetCanvas(double width, double height)
     {
         (_canvasWidth, _canvasHeight) = (width, height);
+        foreach (var o in Items)
+        {
+            o.SetCanvas(width, height);
+        }
+
         RefreshPreview();
     }
 
@@ -398,6 +500,7 @@ public sealed partial class OverlaysViewModel : ObservableObject
         _loading = true;
         try
         {
+            Selected = null;
             foreach (var old in Items)
             {
                 old.Changed -= OnItemChanged;
@@ -469,6 +572,7 @@ public sealed partial class OverlaysViewModel : ObservableObject
 
     private void Attach(OverlayItemViewModel item)
     {
+        item.SetCanvas(_canvasWidth, _canvasHeight);
         item.Changed += OnItemChanged;
         item.PreviewChanged += (_, _) => RefreshPreview();
         item.ReloadRequested += (_, _) => ReloadRequested?.Invoke(this, item);
@@ -498,10 +602,7 @@ public sealed partial class OverlaysViewModel : ObservableObject
 
     private void RefreshPreview()
     {
-        var list = Items
-            .Where(o => o.Visible && o.Bitmap is not null)
-            .Select(o => new OverlayPreview(o.Bitmap!, o.PlacementOn(_canvasWidth, _canvasHeight)))
-            .ToList();
+        var list = new List<OverlayPreview>();
         if (IsAway)
         {
             // A small rendering is plenty for the preview.

@@ -57,6 +57,35 @@ public class OverlayTests
     }
 
     [Fact]
+    public void A_dragged_overlay_keeps_its_rectangle_and_needs_one()
+    {
+        var dragged = new NormalizedRect(0.6, 0.7, 0.3, 0.2);
+        var s = new LinkastSettings
+        {
+            Overlays = new OverlaySettings
+            {
+                Items =
+                [
+                    new OverlayConfig { LayerId = "a", Position = OverlayPosition.Custom, CustomPlacement = dragged },
+                    new OverlayConfig { LayerId = "b", Position = OverlayPosition.Custom },
+                    new OverlayConfig { LayerId = "c", Position = OverlayPosition.Custom, CustomPlacement = new NormalizedRect(2, 2, 0.5, 0.5) },
+                ],
+            },
+        };
+        var clean = SettingsSerializer.Sanitize(s).Overlays.Items;
+        Assert.Equal(OverlayPosition.Custom, clean[0].Position);
+        Assert.Equal(dragged, clean[0].CustomPlacement);
+        Assert.Equal(OverlayPosition.FullScreen, clean[1].Position);
+        Assert.Equal(new NormalizedRect(0.5, 0.5, 0.5, 0.5), clean[2].CustomPlacement);
+
+        var (back, _) = SettingsSerializer.Deserialize(SettingsSerializer.Serialize(s));
+        Assert.Equal(dragged, back.Overlays.Items[0].CustomPlacement);
+
+        // Custom and full screen are placed alike by the geometry; the view model substitutes the rectangle.
+        Assert.Equal(OverlayGeometry.Place(OverlayPosition.FullScreen, 1, 1, 1920, 1080), OverlayGeometry.Place(OverlayPosition.Custom, 1, 1, 1920, 1080));
+    }
+
+    [Fact]
     public void Overlay_settings_are_sanitized_and_round_trip()
     {
         var items = Enumerable.Range(1, 5).Select(i => new OverlayConfig { LayerId = "o", Name = new string('x', 80), Size = 9 }).ToList();

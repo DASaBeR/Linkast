@@ -101,6 +101,7 @@ public static class Converters
         Core.Camera.OverlayPosition.BottomLeft => "Bottom left",
         Core.Camera.OverlayPosition.BottomCenter => "Bottom center",
         Core.Camera.OverlayPosition.BottomRight => "Bottom right",
+        Core.Camera.OverlayPosition.Custom => "Custom (dragged in the preview)",
         _ => v?.ToString(),
     });
 

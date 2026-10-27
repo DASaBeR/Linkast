@@ -56,7 +56,7 @@ public sealed class CameraStudioContext
 /// straight into <see cref="Layer"/>, which the preview and the stream read each frame, so changes are
 /// visible immediately and need no restart. The placement shown here is the one in the active layout.
 /// </summary>
-public sealed partial class CameraLayerViewModel : ObservableObject, IAsyncDisposable
+public sealed partial class CameraLayerViewModel : ObservableObject, IAsyncDisposable, ISceneItem
 {
     private const int PreviewMaxWidth = 480;
 
@@ -102,6 +102,8 @@ public sealed partial class CameraLayerViewModel : ObservableObject, IAsyncDispo
     /// <summary>True while this layer is the one being edited.</summary>
     [ObservableProperty]
     public partial bool IsSelected { get; set; }
+
+    ImageSource? ISceneItem.Preview => Preview;
 
     public override string ToString() => Name;
 

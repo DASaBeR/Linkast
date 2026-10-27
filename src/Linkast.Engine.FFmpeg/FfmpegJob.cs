@@ -52,4 +52,7 @@ public sealed record FfmpegJob(
     public Linkast.Core.Camera.NormalizedRect BasePlacement { get; init; } = new(0, 0, 1, 1);
 
     public Linkast.Core.Camera.BaseFit BaseFit { get; init; } = Linkast.Core.Camera.BaseFit.Fit;
+
+    /// <summary>The part of the base video that is shown, as fractions of it (default: all of it).</summary>
+    public Linkast.Core.Camera.NormalizedRect BaseCrop { get; init; } = new(0, 0, 1, 1);
 }

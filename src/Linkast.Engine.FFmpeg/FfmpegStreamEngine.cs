@@ -353,6 +353,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 Layers = jobLayers,
                 BasePlacement = session.BasePlacement,
                 BaseFit = session.BaseFit,
+                BaseCrop = session.BaseCrop,
                 CommandPort = commandPort,
             });
             LogLaunching(_redactor.Redact(string.Join(' ', args.Select(QuoteForLog))));

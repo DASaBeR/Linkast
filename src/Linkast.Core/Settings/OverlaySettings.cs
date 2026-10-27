@@ -30,8 +30,11 @@ public sealed record OverlayConfig
 
     public OverlayPosition Position { get; init; } = OverlayPosition.FullScreen;
 
-    /// <summary>Width as a fraction of the stream's width (0.05–1). Ignored for full screen.</summary>
+    /// <summary>Width as a fraction of the stream's width (0.05–1). Ignored for full screen and custom.</summary>
     public double Size { get; init; } = 0.25;
+
+    /// <summary>Where the overlay was dragged to, normalized to the canvas, when <see cref="Position"/> is Custom.</summary>
+    public NormalizedRect? CustomPlacement { get; init; }
 
     /// <summary>Shown on the stream. A hidden overlay stays set up but is not drawn.</summary>
     public bool Visible { get; init; } = true;
@@ -75,6 +78,9 @@ public sealed record OverlaySettings
                 continue;
             }
 
+            // A custom spot needs its rectangle; without one the overlay falls back to full screen.
+            var custom = o.CustomPlacement is { Width: > 0, Height: > 0 } c ? c.Clamped() : (NormalizedRect?)null;
+            var position = Enum.IsDefined(o.Position) ? o.Position : OverlayPosition.FullScreen;
             items.Add(o with
             {
                 LayerId = id,
@@ -82,8 +88,9 @@ public sealed record OverlaySettings
                 Kind = Enum.IsDefined(o.Kind) ? o.Kind : OverlayKind.Image,
                 PageWidth = Math.Clamp(o.PageWidth, 100, 3840),
                 PageHeight = Math.Clamp(o.PageHeight, 100, 3840),
-                Position = Enum.IsDefined(o.Position) ? o.Position : OverlayPosition.FullScreen,
+                Position = position == OverlayPosition.Custom && custom is null ? OverlayPosition.FullScreen : position,
                 Size = double.IsFinite(o.Size) ? Math.Clamp(o.Size, 0.05, 1) : 0.25,
+                CustomPlacement = custom,
             });
         }
 

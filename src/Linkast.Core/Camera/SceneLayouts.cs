@@ -38,6 +38,12 @@ public sealed record SceneLayout
 
     public BaseFit BaseFit { get; init; } = BaseFit.Fit;
 
+    /// <summary>
+    /// The part of the captured picture that is shown, as fractions of the capture (the whole picture by
+    /// default). Trimmed from the edges in the editor with Alt-drag, like cropping a source in OBS.
+    /// </summary>
+    public NormalizedRect BaseCrop { get; init; } = new(0, 0, 1, 1);
+
     /// <summary>Placement per camera layer ID. Cameras without an entry are hidden in this layout.</summary>
     public IReadOnlyDictionary<string, NormalizedRect> CameraPlacements { get; init; } = new Dictionary<string, NormalizedRect>();
 
@@ -64,8 +70,11 @@ public sealed record SceneLayout
     public bool CanSwitchLiveFrom(SceneLayout other)
     {
         ArgumentNullException.ThrowIfNull(other);
-        return Orientation == other.Orientation && BasePlacement == other.BasePlacement && BaseFit == other.BaseFit;
+        return Orientation == other.Orientation && BasePlacement == other.BasePlacement && BaseFit == other.BaseFit && BaseCrop == other.BaseCrop;
     }
+
+    /// <summary>Smallest part of the capture that can be kept on each axis.</summary>
+    public const double MinCrop = 0.05;
 
     public SceneLayout Clamped() => this with
     {
@@ -73,6 +82,7 @@ public sealed record SceneLayout
         Orientation = Enum.IsDefined(Orientation) ? Orientation : OutputOrientation.Landscape,
         BaseFit = Enum.IsDefined(BaseFit) ? BaseFit : BaseFit.Fit,
         BasePlacement = BasePlacement.Width <= 0 || BasePlacement.Height <= 0 ? new NormalizedRect(0, 0, 1, 1) : BasePlacement.Clamped(),
+        BaseCrop = BaseCrop.Width <= 0 || BaseCrop.Height <= 0 ? new NormalizedRect(0, 0, 1, 1) : BaseCrop.Clamped(MinCrop),
         CameraPlacements = (CameraPlacements ?? new Dictionary<string, NormalizedRect>())
             .ToDictionary(kv => kv.Key, kv => kv.Value.Clamped()),
     };

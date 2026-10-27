@@ -43,6 +43,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private readonly Dictionary<string, NormalizedRect?> _pendingMoves = [];
     private bool _moveInFlight;
     private readonly HashSet<string> _liveLayerIds = [];
+
+    // Overlays added while live that were already offered a restart, so a drag does not ask again.
+    private readonly HashSet<string> _restartOffered = [];
+    private bool _baseChangeNoted;
     private readonly AudioLevelMonitor _levelMonitor;
     private readonly AudioLevelBus _systemLevels = new();
     private readonly AudioLevelBus _microphoneLevels = new();
@@ -94,6 +98,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _meterTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(66), DispatcherPriority.Background, (_, _) => ReadStreamMeters(), _ui) { IsEnabled = false };
         Webcam = new WebcamStudioViewModel(cameras, _ui, segmentation, backgroundImages, framing, audioLevels);
         Webcam.SettingsChanged += (_, _) => ScheduleSave();
+        Webcam.BaseChanged += (_, _) => OnBaseChanged();
         Webcam.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName is nameof(WebcamStudioViewModel.CanvasWidth) or nameof(WebcamStudioViewModel.CanvasHeight))
@@ -310,7 +315,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 continue;
             }
 
-            var (position, size) = o.Placement is { } rect ? OverlayGeometry.Nearest(rect) : (OverlayPosition.TopRight, 0.2);
+            // OBS says exactly where the overlay was; it is kept as a custom spot.
+            var (position, size) = o.Placement is null ? (OverlayPosition.TopRight, 0.2) : (OverlayPosition.Custom, Math.Round(Math.Clamp(o.Placement.Value.Width, 0.05, 1), 2));
             if (o.Kind == OverlayKind.Web && o.Url is { } url)
             {
                 Redactor.Shared.Register(url);
@@ -327,6 +333,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 PageHeight = o.Kind == OverlayKind.Web ? o.PageHeight : 1080,
                 Position = position,
                 Size = size,
+                CustomPlacement = o.Placement,
             });
         }
 
@@ -1381,7 +1388,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     /// <summary>
     /// An overlay moved, appeared or disappeared, or the away screen was switched. While live this uses
-    /// the same instant path as camera moves; an overlay added after going live appears next time.
+    /// the same instant path as camera moves; an overlay added after going live needs a restart, offered once.
     /// </summary>
     private void OnOverlayLiveChanged(OverlayLiveChange change)
     {
@@ -1394,7 +1401,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         {
             if (change.Placement is not null)
             {
-                AppendLog("The new overlay will appear the next time you go live.");
+                OfferRestartForNewOverlay(change.LayerId);
             }
 
             return;
@@ -1402,6 +1409,54 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         _pendingMoves[change.LayerId] = change.Placement;
         _ = SendPendingMovesAsync();
+    }
+
+    /// <summary>
+    /// FFmpeg's inputs are fixed when it starts, so an overlay added while live can only show after a
+    /// restart. Asked once per overlay; a web overlay waits until it has a link.
+    /// </summary>
+    private void OfferRestartForNewOverlay(string layerId)
+    {
+        var item = Overlays.Items.FirstOrDefault(o => o.LayerId == layerId);
+        if (item is null || (item.IsWeb && !item.HasUrl) || !_restartOffered.Add(layerId))
+        {
+            return;
+        }
+
+        var answer = MessageBox.Show(
+            Application.Current.MainWindow,
+            $"\"{item.Name}\" isn't part of the running stream yet.\n\nThe stream has to restart to show it, which takes a few seconds. Restart the stream now?",
+            "Show the new overlay",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (answer != MessageBoxResult.Yes)
+        {
+            AppendLog($"\"{item.Name}\" will appear the next time you go live.");
+            return;
+        }
+
+        _ = _ui.BeginInvoke(async () =>
+        {
+            AppendLog($"Restarting the stream to show \"{item.Name}\".");
+            await StopAsync();
+            await StartAsync();
+        }, DispatcherPriority.Background);
+    }
+
+    /// <summary>The gameplay area or its trim changed. The base video is not a live layer, so this waits for the next start.</summary>
+    private void OnBaseChanged()
+    {
+        if (!IsActive)
+        {
+            return;
+        }
+
+        Webcam.Notice = "Changes to the game picture's size or trim apply the next time you go live.";
+        if (!_baseChangeNoted)
+        {
+            _baseChangeNoted = true;
+            AppendLog("The game picture's size or trim changed; it applies the next time you go live.");
+        }
     }
 
     private async Task SendPendingMovesAsync()
@@ -1750,6 +1805,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             .Select(l => new CameraLayerBinding(l.Layer, layout.CameraPlacements[l.LayerId]))
             .ToList();
         _liveLayerIds.Clear();
+        _restartOffered.Clear();
+        _baseChangeNoted = false;
         var overlays = Overlays.Bindings(canvasWidth, canvasHeight);
         _liveLayerIds.UnionWith(cameras.Select(c => c.Layer.LayerId));
         _liveLayerIds.UnionWith(overlays.Select(o => o.LayerId));
@@ -1769,6 +1826,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             Overlays = overlays,
             BasePlacement = layout.BasePlacement,
             BaseFit = layout.BaseFit,
+            BaseCrop = layout.BaseCrop,
             Broadcast = !recordOnly,
             Recording = recordOnly || RecordWhenLive
                 ? new RecordingSpec(RecordingFolder) { RemuxToMp4 = RemuxRecordingsToMp4 }

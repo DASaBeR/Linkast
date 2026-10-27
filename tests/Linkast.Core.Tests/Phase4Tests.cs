@@ -361,6 +361,19 @@ public class SceneLayoutTests
         Assert.True(land2.CanSwitchLiveFrom(land));
         Assert.False(SceneLayout.DefaultVertical("a").CanSwitchLiveFrom(land));
         Assert.False((land with { BaseFit = BaseFit.Fill }).CanSwitchLiveFrom(land));
+        Assert.False((land with { BaseCrop = new NormalizedRect(0.1, 0, 0.8, 1) }).CanSwitchLiveFrom(land));
+    }
+
+    [Fact]
+    public void Gameplay_crop_keeps_at_least_a_sliver_and_stays_inside_the_picture()
+    {
+        var land = SceneLayout.DefaultLandscape("a");
+        Assert.Equal(new NormalizedRect(0, 0, 1, 1), land.Clamped().BaseCrop);
+        var crop = (land with { BaseCrop = new NormalizedRect(0.9, -1, 0.5, 0.001) }).Clamped().BaseCrop;
+        Assert.Equal(SceneLayout.MinCrop, crop.Height, 6);
+        Assert.Equal(0.5, crop.X, 6);
+        Assert.Equal(0, crop.Y, 6);
+        Assert.Equal(new NormalizedRect(0, 0, 1, 1), (land with { BaseCrop = new NormalizedRect(0, 0, 0, 0) }).Clamped().BaseCrop);
     }
 
     [Fact]

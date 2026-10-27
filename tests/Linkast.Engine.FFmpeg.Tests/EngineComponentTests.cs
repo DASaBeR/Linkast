@@ -149,6 +149,19 @@ public class ArgumentBuilderTests
     }
 
     [Fact]
+    public void Trimmed_edges_crop_the_capture_before_it_is_scaled()
+    {
+        var job = Job() with { BaseCrop = new Linkast.Core.Camera.NormalizedRect(0.1, 0.05, 0.8, 0.9) };
+        var graph = ValueAfter(FfmpegArgumentBuilder.Build(job), "-filter_complex");
+        Assert.Contains("crop=w=iw*0.8:h=ih*0.9:x=iw*0.1:y=ih*0.05,scale=1920:1080", graph, StringComparison.Ordinal);
+
+        // The whole picture needs no crop filter at all, and a crop that keeps nothing is not sent.
+        Assert.DoesNotContain("crop=w=iw", ValueAfter(FfmpegArgumentBuilder.Build(Job()), "-filter_complex"), StringComparison.Ordinal);
+        var tiny = Job() with { BaseCrop = new Linkast.Core.Camera.NormalizedRect(0.5, 0.5, 0.001, 0.001) };
+        Assert.Contains("crop=w=iw*0.05:h=ih*0.05", ValueAfter(FfmpegArgumentBuilder.Build(tiny), "-filter_complex"), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Fit_in_a_region_centres_inside_it()
     {
         var graph = FfmpegArgumentBuilder.FilterGraph(new DisplaySource(0), [new ToneAudioJobInput(0)], EncoderSettings.Default1080p60("libx264"), [], null,

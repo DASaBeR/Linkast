@@ -53,6 +53,9 @@ public sealed partial class WebcamStudioViewModel : ObservableObject, IAsyncDisp
     /// <summary>Raised when the set of layers or whether any of them needs the audio level changed.</summary>
     public event EventHandler? LayersChanged;
 
+    /// <summary>Raised when the gameplay area or its trim is changed in the editor (not when a layout is loaded or switched).</summary>
+    public event EventHandler? BaseChanged;
+
     /// <summary>Set by the main view model to confirm layout switches while live.</summary>
     public LayoutSwitchHandler? LayoutSwitching { get; set; }
 
@@ -332,7 +335,35 @@ public sealed partial class WebcamStudioViewModel : ObservableObject, IAsyncDisp
 
     public double CanvasHeight => ActiveLayout.CanvasSize(_landscapeWidth, _landscapeHeight).Height;
 
-    public NormalizedRect BasePlacement => ActiveLayout.BasePlacement;
+    /// <summary>Where the gameplay goes in the active layout. Set by the editor when the user drags or resizes it.</summary>
+    public NormalizedRect BasePlacement
+    {
+        get => ActiveLayout.BasePlacement;
+        set => SetBase(value.Clamped(), BaseCrop);
+    }
+
+    /// <summary>The part of the captured picture shown in the active layout. Set by the editor's Alt-drag.</summary>
+    public NormalizedRect BaseCrop
+    {
+        get => ActiveLayout.BaseCrop;
+        set => SetBase(BasePlacement, value.Clamped(SceneLayout.MinCrop));
+    }
+
+    private void SetBase(NormalizedRect placement, NormalizedRect crop)
+    {
+        if (_applying || (placement == BasePlacement && crop == BaseCrop))
+        {
+            return;
+        }
+
+        var i = ActiveIndex();
+        _layouts[i] = _layouts[i] with { BasePlacement = placement, BaseCrop = crop };
+        OnPropertyChanged(nameof(ActiveLayout));
+        OnPropertyChanged(nameof(BasePlacement));
+        OnPropertyChanged(nameof(BaseCrop));
+        BaseChanged?.Invoke(this, EventArgs.Empty);
+        Changed();
+    }
 
     public string CanvasDescription => string.Create(CultureInfo.InvariantCulture,
         $"{CanvasWidth:0} × {CanvasHeight:0} {(IsVertical ? "vertical" : "landscape")}");
@@ -458,6 +489,7 @@ public sealed partial class WebcamStudioViewModel : ObservableObject, IAsyncDisp
         OnPropertyChanged(nameof(CanvasWidth));
         OnPropertyChanged(nameof(CanvasHeight));
         OnPropertyChanged(nameof(BasePlacement));
+        OnPropertyChanged(nameof(BaseCrop));
         OnPropertyChanged(nameof(CanvasDescription));
     }
 

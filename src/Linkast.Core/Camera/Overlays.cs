@@ -33,7 +33,7 @@ public interface IOverlayInputProvider
     IVideoLayerInput Open(OverlayLayerBinding overlay, int width, int height, int maxFrameRate);
 }
 
-/// <summary>Where an overlay sits on the stream. Simple choices instead of free dragging.</summary>
+/// <summary>Where an overlay sits on the stream: one of nine spots, full screen, or wherever it was dragged.</summary>
 public enum OverlayPosition
 {
     FullScreen,
@@ -46,6 +46,9 @@ public enum OverlayPosition
     BottomLeft,
     BottomCenter,
     BottomRight,
+
+    /// <summary>Placed by hand in the preview; the rectangle is stored with the overlay.</summary>
+    Custom,
 }
 
 public static class OverlayGeometry
@@ -92,7 +95,7 @@ public static class OverlayGeometry
         aspect = double.IsFinite(aspect) && aspect > 0 ? aspect : 16.0 / 9;
         var canvasAspect = canvasWidth / canvasHeight;
         double w, h;
-        if (position == OverlayPosition.FullScreen)
+        if (position is OverlayPosition.FullScreen or OverlayPosition.Custom)
         {
             (w, h) = aspect >= canvasAspect ? (1.0, canvasAspect / aspect) : (aspect / canvasAspect, 1.0);
             return new NormalizedRect((1 - w) / 2, (1 - h) / 2, w, h);

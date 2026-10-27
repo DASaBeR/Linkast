@@ -114,7 +114,7 @@ public static class FfmpegArgumentBuilder
             }
         }
 
-        args.AddRange(["-filter_complex", FilterGraph(job.Video, audio, e, job.Layers, job.CommandPort, job.BasePlacement, job.BaseFit)]);
+        args.AddRange(["-filter_complex", FilterGraph(job.Video, audio, e, job.Layers, job.CommandPort, job.BasePlacement, job.BaseFit, job.BaseCrop)]);
         args.AddRange(["-map", "[vout]", "-map", "[aout]"]);
         args.AddRange(VideoEncoderArgs(e));
         args.AddRange([
@@ -223,7 +223,8 @@ public static class FfmpegArgumentBuilder
         IReadOnlyList<VideoLayerJobInput> layers,
         int? commandPort,
         Linkast.Core.Camera.NormalizedRect? basePlacement = null,
-        Linkast.Core.Camera.BaseFit baseFit = Linkast.Core.Camera.BaseFit.Fit)
+        Linkast.Core.Camera.BaseFit baseFit = Linkast.Core.Camera.BaseFit.Fit,
+        Linkast.Core.Camera.NormalizedRect? baseCrop = null)
     {
         ArgumentNullException.ThrowIfNull(audio);
         ArgumentNullException.ThrowIfNull(e);
@@ -244,6 +245,14 @@ public static class FfmpegArgumentBuilder
         if (video is WindowSource)
         {
             sb.Append(BlackProbe.Graph).Append(";[cap]");
+        }
+
+        // The edges the user trimmed off (Alt-drag in the editor), as fractions so the capture size
+        // does not matter. The probe above still watches the whole picture.
+        var crop = (baseCrop ?? new Linkast.Core.Camera.NormalizedRect(0, 0, 1, 1)).Clamped(Linkast.Core.Camera.SceneLayout.MinCrop);
+        if (crop is not { X: 0, Y: 0, Width: 1, Height: 1 })
+        {
+            sb.Append(Inv, $"crop=w=iw*{Frac(crop.Width)}:h=ih*{Frac(crop.Height)}:x=iw*{Frac(crop.X)}:y=ih*{Frac(crop.Y)},");
         }
 
         var place =basePlacement ?? new Linkast.Core.Camera.NormalizedRect(0, 0, 1, 1);
@@ -424,6 +433,9 @@ public static class FfmpegArgumentBuilder
     }
 
     private static string Kbps(int kbps) => kbps.ToString(Inv) + "k";
+
+    /// <summary>A 0–1 fraction for a filter expression: plain digits, never a culture-specific separator.</summary>
+    private static string Frac(double value) => Math.Clamp(value, 0, 1).ToString("0.####", Inv);
 
     private static string Bool(bool b) => b ? "1" : "0";
 }

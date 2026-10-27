@@ -109,7 +109,7 @@
                         <TextBlock Text="Preview your output, choose your network, then go live." Style="{StaticResource Linkast.Text.Hint}"
                                    FontSize="12" Margin="0,2,0,16" />
 
-                        <!-- Output preview: the same scene the stream draws, read-only here. -->
+                        <!-- Output preview: the same scene the stream draws. Overlays, cameras and the game picture can be dragged here. -->
                         <Border Style="{StaticResource Linkast.Card}">
                             <StackPanel>
                                 <DockPanel Margin="0,0,0,12">
@@ -130,15 +130,18 @@
                                 <Border CornerRadius="{StaticResource Linkast.Radius.Preview}" BorderBrush="{DynamicResource Linkast.BorderStrong}"
                                         BorderThickness="1" Background="#FF05060E" Padding="1">
                                     <Grid DataContext="{Binding Webcam}">
-                                        <views:SceneEditor Layers="{Binding Layers}" CanvasWidth="{Binding CanvasWidth}" CanvasHeight="{Binding CanvasHeight}"
-                                                           BasePlacement="{Binding BasePlacement}" BaseFit="{Binding BaseFit}"
+                                        <views:SceneEditor Layers="{Binding Layers}" SelectedLayer="{Binding Selected, Mode=TwoWay}"
+                                                           CanvasWidth="{Binding CanvasWidth}" CanvasHeight="{Binding CanvasHeight}"
+                                                           BasePlacement="{Binding BasePlacement, Mode=TwoWay}" BaseFit="{Binding BaseFit}" BaseCrop="{Binding BaseCrop, Mode=TwoWay}"
                                                            BackgroundSource="{Binding EditorBackground}" MaxHeight="340" IsPreviewOnly="True"
+                                                           Overlays="{Binding DataContext.Overlays.Items, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                           SelectedOverlay="{Binding DataContext.Overlays.Selected, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}"
                                                            OverlayItems="{Binding DataContext.Overlays.PreviewItems, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                           IsHitTestVisible="False" Focusable="False" AutomationProperties.Name="Output preview" />
+                                                           AutomationProperties.Name="Output preview" />
                                     </Grid>
                                 </Border>
                                 <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,8,0,0"
-                                           Text="What viewers see. The screen picture here refreshes every 2 seconds; the stream itself runs at full frame rate." />
+                                           Text="What viewers see. Drag an overlay, a camera or the game picture to move it and drag a corner to resize it; hold Alt and drag an edge of the game picture to trim it. The screen picture here refreshes every 2 seconds; the stream itself runs at full frame rate." />
                             </StackPanel>
                         </Border>
 
@@ -529,7 +532,7 @@
                                             <TextBlock Text="Overlays" Style="{StaticResource Linkast.Card.Title}" Margin="0" />
                                         </DockPanel>
                                         <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,0,0,12"
-                                                   Text="Alerts, a chat box or a logo on top of your stream. Showing, hiding, moving and resizing work while live." />
+                                                   Text="Alerts, a chat box or a logo on top of your stream. Drag an overlay in the Output preview to put it anywhere and drag its corner to resize it. Showing, hiding, moving and resizing work while live." />
 
                                         <Border Background="{DynamicResource Linkast.Surface2}" CornerRadius="{StaticResource Linkast.Radius.Action}" Padding="16,14"
                                                 Visibility="{Binding HasItems, Converter={x:Static vm:Converters.InverseBoolToVisibility}}">

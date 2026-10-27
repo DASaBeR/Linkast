@@ -21,6 +21,9 @@ public sealed record StreamSession(
 
     public Camera.BaseFit BaseFit { get; init; } = Camera.BaseFit.Fit;
 
+    /// <summary>The part of the captured picture that is shown, as fractions of it (default: all of it).</summary>
+    public Camera.NormalizedRect BaseCrop { get; init; } = new(0, 0, 1, 1);
+
     /// <summary>False records without going live (<see cref="Destination"/> is then ignored).</summary>
     public bool Broadcast { get; init; } = true;
 
