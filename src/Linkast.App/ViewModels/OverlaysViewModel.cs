@@ -13,9 +13,6 @@ using Linkast.Core.Settings;
 
 namespace Linkast.App.ViewModels;
 
-/// <summary>An overlay as the output preview draws it.</summary>
-public sealed record OverlayPreview(ImageSource Image, NormalizedRect Placement);
-
 /// <summary>A change to show on a running stream: a new placement, or null to hide.</summary>
 public sealed record OverlayLiveChange(string LayerId, NormalizedRect? Placement);
 
@@ -331,17 +328,17 @@ public sealed partial class OverlayItemViewModel : ObservableObject, ISceneItem
 }
 
 /// <summary>
-/// Overlays on top of the stream (pictures and web alerts) and the "Be right back" screen.
-/// Visibility, position and size apply to a running stream instantly; adding an overlay needs a restart,
-/// which the main view model offers.
+/// Overlays on top of the stream (pictures and web alerts). Each scene shows or hides each overlay
+/// (<see cref="OverlayItemViewModel.Visible"/> is "shown in the active scene"); position and size are
+/// the same in every scene. Showing, hiding, moving and resizing apply to a running stream instantly;
+/// adding an overlay needs a restart, which the main view model offers.
 /// </summary>
 public sealed partial class OverlaysViewModel : ObservableObject
 {
-    public const string AwayLayerId = "away-screen";
-
     private readonly DpapiSecretStore? _secrets;
     private readonly Dictionary<string, string?> _savedUrls = new(StringComparer.Ordinal);
     private bool _loading;
+    private bool _applyingScene;
     private double _canvasWidth = 1920;
     private double _canvasHeight = 1080;
 
@@ -356,6 +353,7 @@ public sealed partial class OverlaysViewModel : ObservableObject
             OnPropertyChanged(nameof(HasWebItems));
             AddImageCommand.NotifyCanExecuteChanged();
             AddWebCommand.NotifyCanExecuteChanged();
+            ItemsChanged?.Invoke(this, EventArgs.Empty);
         };
     }
 
@@ -365,8 +363,14 @@ public sealed partial class OverlaysViewModel : ObservableObject
     /// <summary>Raised when something to save changed.</summary>
     public event EventHandler? SettingsChanged;
 
-    /// <summary>Raised when an overlay or the away screen should move, appear or disappear on a running stream.</summary>
+    /// <summary>Raised when an overlay should move, appear or disappear on a running stream.</summary>
     public event EventHandler<OverlayLiveChange>? LiveChanged;
+
+    /// <summary>Raised when the user shows or hides an overlay (in the active scene), not when a scene is applied.</summary>
+    public event EventHandler<OverlayItemViewModel>? VisibilityChanged;
+
+    /// <summary>Raised when overlays are added or removed, or a web overlay's link changes (the mixer has a fader per web overlay).</summary>
+    public event EventHandler? ItemsChanged;
 
     public ObservableCollection<OverlayItemViewModel> Items { get; } = [];
 
@@ -394,10 +398,6 @@ public sealed partial class OverlaysViewModel : ObservableObject
             newValue.IsSelected = true;
         }
     }
-
-    /// <summary>What the output preview draws above everything: the away screen while it is on. The overlays themselves are editor items.</summary>
-    [ObservableProperty]
-    public partial IReadOnlyList<OverlayPreview> PreviewItems { get; set; } = [];
 
     // ---- Overlays ---------------------------------------------------------------------------
 
@@ -479,101 +479,28 @@ public sealed partial class OverlaysViewModel : ObservableObject
         }
     }
 
-    // ---- Be right back ------------------------------------------------------------------------
+    // ---- Scenes, stream and preview -----------------------------------------------------------
 
-    /// <summary>The away screen covers the stream (game, cameras and overlays) without stopping it.</summary>
-    [ObservableProperty]
-    public partial bool IsAway { get; set; }
-
-    [ObservableProperty]
-    public partial string AwayTitle { get; set; } = "Be right back";
-
-    [ObservableProperty]
-    public partial string? AwaySubtitle { get; set; } = "Stay tuned.";
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasAwayImage), nameof(HasAwayCustom))]
-    public partial string? AwayImagePath { get; set; }
-
-    /// <summary>A video that loops while the screen is on (a "Starting soon" or "Thanks for watching" clip). Wins over the picture.</summary>
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasAwayVideo), nameof(HasAwayCustom), nameof(AwayVideoName))]
-    public partial string? AwayVideoPath { get; set; }
-
-    [ObservableProperty]
-    public partial bool AwayMuteSystemAudio { get; set; } = true;
-
-    /// <summary>A small picture of the away screen for the settings card.</summary>
-    [ObservableProperty]
-    public partial ImageSource? AwayThumbnail { get; set; }
-
-    public bool HasAwayImage => !string.IsNullOrWhiteSpace(AwayImagePath);
-
-    public bool HasAwayVideo => !string.IsNullOrWhiteSpace(AwayVideoPath);
-
-    /// <summary>A picture or a video replaces the built-in card.</summary>
-    public bool HasAwayCustom => HasAwayImage || HasAwayVideo;
-
-    public string? AwayVideoName => HasAwayVideo ? Path.GetFileName(AwayVideoPath) : null;
-
-    [RelayCommand]
-    private void ToggleAway() => IsAway = !IsAway;
-
-    [RelayCommand]
-    private void ChooseAwayImage()
+    /// <summary>
+    /// Shows exactly the overlays <paramref name="scene"/> shows. While live, each one that changes is
+    /// shown or hidden in the stream at once (through <see cref="LiveChanged"/>).
+    /// </summary>
+    public void ApplyScene(SceneLayout scene)
     {
-        if (PickImage() is { } path)
+        ArgumentNullException.ThrowIfNull(scene);
+        _applyingScene = true;
+        try
         {
-            AwayVideoPath = null;
-            AwayImagePath = path;
+            foreach (var o in Items)
+            {
+                o.Visible = scene.Shows(o.LayerId);
+            }
+        }
+        finally
+        {
+            _applyingScene = false;
         }
     }
-
-    [RelayCommand]
-    private void ChooseAwayVideo()
-    {
-        var dialog = new Microsoft.Win32.OpenFileDialog
-        {
-            Title = "Choose a video to loop",
-            Filter = "Videos (*.mp4;*.mkv;*.mov;*.webm;*.avi)|*.mp4;*.mkv;*.mov;*.webm;*.avi",
-        };
-        if (dialog.ShowDialog() == true)
-        {
-            AwayVideoPath = dialog.FileName;
-        }
-    }
-
-    [RelayCommand]
-    private void UseAwayCard()
-    {
-        AwayVideoPath = null;
-        AwayImagePath = null;
-    }
-
-    partial void OnIsAwayChanged(bool value)
-    {
-        LiveChanged?.Invoke(this, new OverlayLiveChange(AwayLayerId, value ? new NormalizedRect(0, 0, 1, 1) : null));
-        RefreshPreview();
-    }
-
-    partial void OnAwayTitleChanged(string value) => AwayLooksChanged();
-
-    partial void OnAwaySubtitleChanged(string? value) => AwayLooksChanged();
-
-    partial void OnAwayImagePathChanged(string? value) => AwayLooksChanged();
-
-    partial void OnAwayVideoPathChanged(string? value) => AwayLooksChanged();
-
-    partial void OnAwayMuteSystemAudioChanged(bool value) => Changed(null, liveRelevant: false);
-
-    private void AwayLooksChanged()
-    {
-        AwayThumbnail = RenderAway(384, 216);
-        RefreshPreview();
-        Changed(null, liveRelevant: false);
-    }
-
-    // ---- Stream and preview -------------------------------------------------------------------
 
     /// <summary>Called when the output canvas changes size or orientation.</summary>
     public void SetCanvas(double width, double height)
@@ -583,13 +510,11 @@ public sealed partial class OverlaysViewModel : ObservableObject
         {
             o.SetCanvas(width, height);
         }
-
-        RefreshPreview();
     }
 
     /// <summary>
-    /// The overlays for a new stream, bottom to top, with the away screen last so it covers everything.
-    /// Hidden overlays are included off the canvas so they can be shown live without a restart.
+    /// The overlays for a new stream, bottom to top. Hidden overlays are included off the canvas so they
+    /// can be shown live (by a scene switch) without a restart.
     /// </summary>
     public IReadOnlyList<OverlayLayerBinding> Bindings(double canvasWidth, double canvasHeight)
     {
@@ -608,11 +533,6 @@ public sealed partial class OverlaysViewModel : ObservableObject
             }
         }
 
-        list.Add(new OverlayLayerBinding(
-            AwayLayerId,
-            new AwayScreenSource(AwayTitle, AwaySubtitle, AwayImagePath, AwayVideoPath),
-            new NormalizedRect(0, 0, 1, 1),
-            StartHidden: !IsAway));
         return list;
     }
 
@@ -645,20 +565,11 @@ public sealed partial class OverlaysViewModel : ObservableObject
                 Attach(item);
                 Items.Add(item);
             }
-
-            AwayTitle = settings.Away.Title;
-            AwaySubtitle = settings.Away.Subtitle;
-            AwayImagePath = settings.Away.ImagePath;
-            AwayVideoPath = settings.Away.VideoPath;
-            AwayMuteSystemAudio = settings.Away.MuteSystemAudio;
         }
         finally
         {
             _loading = false;
         }
-
-        AwayThumbnail = RenderAway(384, 216);
-        RefreshPreview();
     }
 
     public OverlaySettings ToSettings()
@@ -679,26 +590,26 @@ public sealed partial class OverlaysViewModel : ObservableObject
             }
         }
 
-        return new()
-        {
-            Items = [.. Items.Select(o => o.ToConfig())],
-            Away = new AwayScreenSettings
-            {
-                Title = AwayTitle,
-                Subtitle = AwaySubtitle,
-                ImagePath = AwayImagePath,
-                VideoPath = AwayVideoPath,
-                MuteSystemAudio = AwayMuteSystemAudio,
-            },
-        };
+        // Showing and hiding is stored per scene; the overlay itself is always on.
+        return new() { Items = [.. Items.Select(o => o.ToConfig() with { Visible = true })] };
     }
 
     private void Attach(OverlayItemViewModel item)
     {
         item.SetCanvas(_canvasWidth, _canvasHeight);
         item.Changed += OnItemChanged;
-        item.PreviewChanged += (_, _) => RefreshPreview();
         item.ReloadRequested += (_, _) => ReloadRequested?.Invoke(this, item);
+        item.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(OverlayItemViewModel.Visible) && !_applyingScene && !_loading)
+            {
+                VisibilityChanged?.Invoke(this, item);
+            }
+            else if (e.PropertyName == nameof(OverlayItemViewModel.Url))
+            {
+                ItemsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        };
     }
 
     private string NewId() =>
@@ -715,52 +626,35 @@ public sealed partial class OverlaysViewModel : ObservableObject
             return;
         }
 
-        RefreshPreview();
-        SettingsChanged?.Invoke(this, EventArgs.Empty);
+        if (!_applyingScene)
+        {
+            SettingsChanged?.Invoke(this, EventArgs.Empty);
+        }
+
         if (liveRelevant && item is not null)
         {
             LiveChanged?.Invoke(this, new OverlayLiveChange(item.LayerId, item.Visible ? item.PlacementOn(_canvasWidth, _canvasHeight) : null));
         }
     }
 
-    private void RefreshPreview()
-    {
-        var list = new List<OverlayPreview>();
-        if (IsAway)
-        {
-            // A small rendering is plenty for the preview.
-            var (w, h) = _canvasWidth >= _canvasHeight ? (480, (int)Math.Round(480 * _canvasHeight / _canvasWidth)) : ((int)Math.Round(480 * _canvasWidth / _canvasHeight), 480);
-            list.Add(new OverlayPreview(RenderAway(Math.Max(w, 2), Math.Max(h, 2)), new NormalizedRect(0, 0, 1, 1)));
-        }
-
-        PreviewItems = list;
-    }
-
-    private BitmapSource RenderAway(int width, int height)
-    {
-        if (HasAwayVideo)
-        {
-            // The video plays in the stream; the preview and thumbnail only say which one.
-            return OverlayRenderer.RenderAwayCard(width, height, AwayTitle, $"Video: {AwayVideoName}");
-        }
-
-        if (OverlayRenderer.LoadImage(AwayImagePath) is { } picture)
-        {
-            var frame = OverlayRenderer.ToLayerFrame(picture, width, height, cover: true);
-            var bmp = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, frame, width * 4);
-            bmp.Freeze();
-            return bmp;
-        }
-
-        return OverlayRenderer.RenderAwayCard(width, height, AwayTitle, AwaySubtitle);
-    }
-
-    private static string? PickImage()
+    /// <summary>Asks for a picture file (overlays and scene backgrounds).</summary>
+    public static string? PickImage()
     {
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
             Title = "Choose a picture",
             Filter = "Pictures (*.png;*.jpg;*.jpeg;*.gif;*.bmp)|*.png;*.jpg;*.jpeg;*.gif;*.bmp",
+        };
+        return dialog.ShowDialog() == true ? dialog.FileName : null;
+    }
+
+    /// <summary>Asks for a video file that a scene plays on a loop.</summary>
+    public static string? PickVideo()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Choose a video to loop",
+            Filter = "Videos (*.mp4;*.mkv;*.mov;*.webm;*.avi)|*.mp4;*.mkv;*.mov;*.webm;*.avi",
         };
         return dialog.ShowDialog() == true ? dialog.FileName : null;
     }

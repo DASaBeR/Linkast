@@ -37,7 +37,10 @@ public static class OverlayRenderer
         }
     }
 
-    /// <summary>The built-in away card: the navy brand background, the Linkast logo and the text.</summary>
+    /// <summary>
+    /// The Linkast card (scene backgrounds): the navy brand background, the Linkast logo and the text.
+    /// An empty title leaves only the background and the logo (for example behind a large camera).
+    /// </summary>
     public static BitmapSource RenderAwayCard(int width, int height, string title, string? subtitle)
     {
         var visual = new DrawingVisual();

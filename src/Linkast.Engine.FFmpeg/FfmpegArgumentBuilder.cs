@@ -55,22 +55,40 @@ public static class FfmpegArgumentBuilder
             "-stats_period", "1",
         };
 
-        // Input 0: base video.
-        args.AddRange(["-thread_queue_size", "64", "-f", "lavfi", "-i", VideoSourceGraph(job.Video, e.Fps, e.Width, e.Height)]);
+        // Input 0: the canvas, paced to real time. Everything, including the captured game, is drawn
+        // on it as a layer, so every part of a scene can be moved, refitted or hidden live.
+        args.AddRange(["-thread_queue_size", "64", "-f", "lavfi", "-i", VideoSourceGraph(new BlankCanvasSource(), e.Fps, e.Width, e.Height)]);
 
-        // Inputs 1..L: rendered camera layers (raw BGRA with alpha), timestamped by frame count.
+        // Input 1: the captured game or screen, if there is one.
+        if (HasCapture(job.Video))
+        {
+            args.AddRange(["-thread_queue_size", "64", "-f", "lavfi", "-i", VideoSourceGraph(job.Video, e.Fps, e.Width, e.Height)]);
+        }
+
+        // Then the layers: scene media files, and rendered cameras and overlays (raw BGRA with alpha).
         if (job.Layers.Count > MaxLayers)
         {
-            throw new StreamFailureException(new StreamError(ErrorCategory.Configuration, "layers.count", $"At most {MaxLayers} layers (cameras and overlays) are supported."));
+            throw new StreamFailureException(new StreamError(ErrorCategory.Configuration, "layers.count", $"At most {MaxLayers} layers (cameras, overlays and scene pictures) are supported."));
         }
 
         foreach (var layer in job.Layers)
         {
-            if (layer.FilePath is { } file)
+            if (layer.AudioName is { } audioName)
             {
-                ValidateVideoFilePath(file);
-                args.AddRange(["-stream_loop", "-1", "-re", "-i", file]);
-                continue;
+                ValidateChannelName(audioName);
+            }
+
+            switch (layer.Kind)
+            {
+                case LayerInputKind.LoopingVideo:
+                    ValidateMediaFilePath(layer.FilePath);
+                    args.AddRange(["-thread_queue_size", "64", "-stream_loop", "-1", "-re", "-i", layer.FilePath!]);
+                    continue;
+                case LayerInputKind.Still:
+                    // Read once; the overlay repeats the last picture for ever (eof_action=repeat).
+                    ValidateMediaFilePath(layer.FilePath);
+                    args.AddRange(["-i", layer.FilePath!]);
+                    continue;
             }
 
             ValidatePipePath(layer.PipePath);
@@ -121,7 +139,7 @@ public static class FfmpegArgumentBuilder
             }
         }
 
-        args.AddRange(["-filter_complex", FilterGraph(job.Video, audio, e, job.Layers, job.CommandPort, job.BasePlacement, job.BaseFit, job.BaseCrop)]);
+        args.AddRange(["-filter_complex", FilterGraph(job.Video, audio, e, job.Layers, job.CommandPort, job.BasePlacement, job.BaseFit, job.BaseCrop, job.ShowCapture)]);
         args.AddRange(["-map", "[vout]", "-map", "[aout]"]);
         args.AddRange(VideoEncoderArgs(e));
         args.AddRange([
@@ -220,9 +238,17 @@ public static class FfmpegArgumentBuilder
         };
     }
 
+    /// <summary>True when the video source has a captured picture; a blank canvas has none.</summary>
+    public static bool HasCapture(VideoSourceSpec video) => video is not BlankCanvasSource;
+
     public static string FilterGraph(VideoSourceSpec video, IReadOnlyList<AudioJobInput> audio, EncoderSettings e) =>
         FilterGraph(video, audio, e, [], null);
 
+    /// <summary>
+    /// The whole graph. Input 0 is the canvas, input 1 the capture (if any), then one input per layer,
+    /// then the audio inputs. The capture and every layer are overlaid with named filters
+    /// (<c>overlay@base</c>, <c>scale@camI</c> / <c>overlay@camI</c>) that the command channel moves live.
+    /// </summary>
     public static string FilterGraph(
         VideoSourceSpec video,
         IReadOnlyList<AudioJobInput> audio,
@@ -231,98 +257,93 @@ public static class FfmpegArgumentBuilder
         int? commandPort,
         Linkast.Core.Camera.NormalizedRect? basePlacement = null,
         Linkast.Core.Camera.BaseFit baseFit = Linkast.Core.Camera.BaseFit.Fit,
-        Linkast.Core.Camera.NormalizedRect? baseCrop = null)
+        Linkast.Core.Camera.NormalizedRect? baseCrop = null,
+        bool showCapture = true)
     {
         ArgumentNullException.ThrowIfNull(audio);
         ArgumentNullException.ThrowIfNull(e);
         ArgumentNullException.ThrowIfNull(layers);
-        var w = e.Width.ToString(Inv);
-        var h = e.Height.ToString(Inv);
         var sb = new StringBuilder();
 
-        // Capture sources produce D3D11 frames; download once, then make constant frame rate
-        // (WGC only emits frames on change) and letterbox into the target size.
-        sb.Append("[0:v]");
-        if (video is not (TestPatternSource or BlankCanvasSource))
+        // Blending happens in YUV 4:2:0: a BGRA alpha blend of a large layer (for example 844 × 844 in
+        // a vertical layout) costs about three times the CPU and could not keep 1080 × 1920 at 60 fps.
+        sb.Append("[0:v]format=yuv420p[canvas];");
+        var below = "canvas";
+        var nextInput = 1;
+        if (HasCapture(video))
         {
-            sb.Append("hwdownload,format=bgra,");
-        }
-
-        sb.Append(Inv, $"fps={e.Fps},");
-        if (video is WindowSource)
-        {
-            sb.Append(BlackProbe.Graph).Append(";[cap]");
-        }
-
-        // The edges the user trimmed off (Alt-drag in the editor), as fractions so the capture size
-        // does not matter. The probe above still watches the whole picture.
-        var crop = (baseCrop ?? new Linkast.Core.Camera.NormalizedRect(0, 0, 1, 1)).Clamped(Linkast.Core.Camera.SceneLayout.MinCrop);
-        if (crop is not { X: 0, Y: 0, Width: 1, Height: 1 })
-        {
-            sb.Append(Inv, $"crop=w=iw*{Frac(crop.Width)}:h=ih*{Frac(crop.Height)}:x=iw*{Frac(crop.X)}:y=ih*{Frac(crop.Y)},");
-        }
-
-        var place =basePlacement ?? new Linkast.Core.Camera.NormalizedRect(0, 0, 1, 1);
-        var full = place is { X: 0, Y: 0, Width: 1, Height: 1 };
-        if (full && baseFit == Linkast.Core.Camera.BaseFit.Fit)
-        {
-            sb.Append(Inv, $"scale={w}:{h}:flags=bicubic:force_original_aspect_ratio=decrease,");
-            sb.Append(Inv, $"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2");
-        }
-        else
-        {
-            // Gameplay in part of the canvas (for example the top of a vertical layout).
-            var r = Linkast.Core.Camera.LayerGeometry.ToPixels(place, e.Width, e.Height);
-            if (baseFit == Linkast.Core.Camera.BaseFit.Fill)
+            // Capture sources produce D3D11 frames; download once, then make constant frame rate (WGC
+            // only emits frames on change). The black probe watches the whole picture, before the trim.
+            sb.Append("[1:v]");
+            if (video is not TestPatternSource)
             {
-                sb.Append(Inv, $"scale={r.Width}:{r.Height}:flags=bicubic:force_original_aspect_ratio=increase,");
-                sb.Append(Inv, $"crop={r.Width}:{r.Height},");
-                sb.Append(Inv, $"pad={w}:{h}:{r.X}:{r.Y}");
+                sb.Append("hwdownload,format=bgra,");
+            }
+
+            sb.Append(Inv, $"fps={e.Fps},");
+            if (video is WindowSource)
+            {
+                sb.Append(BlackProbe.Graph).Append(";[cap]");
+            }
+
+            var b = BaseLayerArgs.For(
+                basePlacement ?? new Linkast.Core.Camera.NormalizedRect(0, 0, 1, 1),
+                baseCrop ?? new Linkast.Core.Camera.NormalizedRect(0, 0, 1, 1),
+                baseFit, e.Width, e.Height, hidden: !showCapture);
+
+            // Quoted because the expressions contain commas (min(a,b)), which separate filters otherwise.
+            sb.Append(Inv, $"crop@base=w='{b.CropW}':h='{b.CropH}':x='{b.CropX}':y='{b.CropY}',");
+            sb.Append(Inv, $"scale@base=w='{b.ScaleW}':h='{b.ScaleH}':flags=bicubic,format=yuva420p[game];");
+            sb.Append(Inv, $"[canvas][game]overlay@base=x='{b.OverlayX}':y='{b.OverlayY}':eval=frame:format=yuv420[base];");
+            below = "base";
+            nextInput = 2;
+        }
+
+        // Each layer: scale@camI (resizable live) then overlay@camI (movable live). Names are what
+        // FfmpegCommandChannel addresses through the zmq filter. Scene media cover the canvas at a
+        // fixed size and are only shown and hidden; a still picture is read once and repeated.
+        var w = e.Width.ToString(Inv);
+        var h = e.Height.ToString(Inv);
+        for (var i = 0; i < layers.Count; i++)
+        {
+            var l = layers[i];
+            var p = l.Placement;
+            var input = nextInput + i;
+            if (l.Cover)
+            {
+                sb.Append(Inv, $"[{input}:v]scale@cam{i}=w={w}:h={h}:flags=bicubic:force_original_aspect_ratio=increase,crop={w}:{h},format=yuva420p[cam{i}];");
             }
             else
             {
-                sb.Append(Inv, $"scale={r.Width}:{r.Height}:flags=bicubic:force_original_aspect_ratio=decrease,");
-                sb.Append(Inv, $"pad={w}:{h}:{r.X}+({r.Width}-iw)/2:{r.Y}+({r.Height}-ih)/2");
+                sb.Append(Inv, $"[{input}:v]scale@cam{i}=w={p.Width}:h={p.Height}:flags=bicubic,format=yuva420p[cam{i}];");
             }
+
+            var eof = l.Kind == LayerInputKind.Still ? "repeat" : "pass";
+            sb.Append(Inv, $"[{below}][cam{i}]overlay@cam{i}=x={p.X}:y={p.Y}:eval=frame:format=yuv420:eof_action={eof}[comp{i}];");
+            below = $"comp{i}";
         }
 
-        if (layers.Count == 0 && commandPort is null)
+        sb.Append(Inv, $"[{below}]");
+        if (commandPort is { } port)
         {
-            sb.Append(Inv, $",format={PixelFormat(e.EncoderId)}[vout]");
-        }
-        else
-        {
-            // Each layer: scale@camI (resizable live) then overlay@camI (movable live). Names are what
-            // FfmpegCommandChannel addresses through the zmq filter. Blending happens in YUV 4:2:0:
-            // a BGRA alpha blend of a large camera (for example 844 × 844 in a vertical layout) costs
-            // about three times the CPU and could not keep 1080 × 1920 at 60 fps.
-            sb.Append(",format=yuv420p[base]");
-            var below = "base";
-            for (var i = 0; i < layers.Count; i++)
-            {
-                var l = layers[i];
-                var p = l.Placement;
-                sb.Append(Inv, $";[{i + 1}:v]scale@cam{i}=w={p.Width}:h={p.Height}:flags=bicubic,format=yuva420p[cam{i}]");
-                sb.Append(Inv, $";[{below}][cam{i}]overlay@cam{i}=x={p.X}:y={p.Y}:eval=frame:format=yuv420:eof_action=pass[comp{i}]");
-                below = $"comp{i}";
-            }
-
-            sb.Append(Inv, $";[{below}]");
-            if (commandPort is { } port)
-            {
-                // Two escaping levels: '\:' for the option parser, doubled for the graph parser.
-                sb.Append(Inv, $@"zmq=bind_address=tcp\\://127.0.0.1\\:{port},");
-            }
-
-            sb.Append(Inv, $"format={PixelFormat(e.EncoderId)}[vout]");
+            // Two escaping levels: '\:' for the option parser, doubled for the graph parser.
+            sb.Append(Inv, $@"zmq=bind_address=tcp\\://127.0.0.1\\:{port},");
         }
 
+        sb.Append(Inv, $"format={PixelFormat(e.EncoderId)}[vout]");
+
+        // Audio: the pipes and tones, then the sound of scene videos (from their own inputs).
         var sr = e.AudioSampleRate.ToString(Inv);
-        var firstAudio = 1 + layers.Count;
+        var firstAudio = nextInput + layers.Count;
+        var branches = new List<string>();
         for (var i = 0; i < audio.Count; i++)
         {
             var a = audio[i];
-            var gain = Math.Clamp(a.Gain, 0, 4).ToString("0.###", Inv);
+            if (a.Name is { } channel)
+            {
+                ValidateChannelName(channel);
+            }
+
             var at = a.Name is { } name ? "@" + name : string.Empty;
             sb.Append(Inv, $";[{firstAudio + i}:a]aresample={sr}:async=1000,aformat=sample_fmts=fltp:channel_layouts=stereo,");
             if (a.NoiseSuppression is { } denoise)
@@ -330,25 +351,53 @@ public static class FfmpegArgumentBuilder
                 sb.Append(Inv, $"afftdn{at}=nr={NoiseReduction(denoise)}:nf=-40,");
             }
 
-            sb.Append(Inv, $"volume{at}={gain}[a{i}]");
+            sb.Append(Inv, $"volume{at}={Gain(a.Gain)}[a{i}]");
+            branches.Add($"a{i}");
         }
 
-        if (audio.Count == 1)
+        for (var i = 0; i < layers.Count; i++)
         {
-            sb.Append(";[a0]anull[aout]");
+            if (layers[i].AudioName is { } media)
+            {
+                ValidateChannelName(media);
+                sb.Append(Inv, $";[{nextInput + i}:a]aresample={sr}:async=1000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume@{media}={Gain(layers[i].AudioGain)}[m{i}]");
+                branches.Add($"m{i}");
+            }
+        }
+
+        if (branches.Count == 1)
+        {
+            sb.Append(Inv, $";[{branches[0]}]anull[aout]");
         }
         else
         {
             sb.Append(';');
-            for (var i = 0; i < audio.Count; i++)
+            foreach (var branch in branches)
             {
-                sb.Append(Inv, $"[a{i}]");
+                sb.Append(Inv, $"[{branch}]");
             }
 
-            sb.Append(Inv, $"amix=inputs={audio.Count}:duration=longest:normalize=0[aout]");
+            sb.Append(Inv, $"amix=inputs={branches.Count}:duration=longest:normalize=0[aout]");
         }
 
         return sb.ToString();
+    }
+
+    private static string Gain(double gain) => Math.Clamp(gain, 0, 4).ToString("0.###", Inv);
+
+    /// <summary>
+    /// A live audio channel's name becomes part of a filter name (<c>volume@name</c>) and of zmq
+    /// commands, so only lower-case letters, digits and '_' are allowed.
+    /// </summary>
+    public static bool IsValidChannelName(string? name) =>
+        name is { Length: > 0 and <= 40 } && name.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '_');
+
+    private static void ValidateChannelName(string name)
+    {
+        if (!IsValidChannelName(name))
+        {
+            throw new StreamFailureException(new StreamError(ErrorCategory.Configuration, "audio.channel", "An internal audio channel name is not valid. This is a Linkast bug; please report it."));
+        }
     }
 
     /// <summary>
@@ -431,11 +480,11 @@ public static class FfmpegArgumentBuilder
         }
     }
 
-    private static void ValidateVideoFilePath(string path)
+    private static void ValidateMediaFilePath(string? path)
     {
-        if (!Path.IsPathFullyQualified(path) || path.Any(char.IsControl) || path.StartsWith('-'))
+        if (path is null || !Path.IsPathFullyQualified(path) || path.Any(char.IsControl) || path.StartsWith('-'))
         {
-            throw new StreamFailureException(new StreamError(ErrorCategory.Configuration, "overlay.video", "The away screen's video file name is not valid."));
+            throw new StreamFailureException(new StreamError(ErrorCategory.Configuration, "scene.media", "A scene's picture or video file name is not valid."));
         }
     }
 
@@ -448,9 +497,6 @@ public static class FfmpegArgumentBuilder
     }
 
     private static string Kbps(int kbps) => kbps.ToString(Inv) + "k";
-
-    /// <summary>A 0–1 fraction for a filter expression: plain digits, never a culture-specific separator.</summary>
-    private static string Frac(double value) => Math.Clamp(value, 0, 1).ToString("0.####", Inv);
 
     private static string Bool(bool b) => b ? "1" : "0";
 }

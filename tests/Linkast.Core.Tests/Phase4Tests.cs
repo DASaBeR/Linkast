@@ -353,15 +353,65 @@ public class SceneLayoutTests
         Assert.Equal((1080, 1920), SceneLayout.DefaultVertical("a").CanvasSize(1920, 1080));
     }
 
+    /// <summary>Every source is in the running stream, so only a change of orientation needs a restart.</summary>
     [Fact]
-    public void Live_switching_only_between_same_orientation_and_base()
+    public void Live_switching_only_needs_the_same_orientation()
     {
         var land = SceneLayout.DefaultLandscape("a");
         var land2 = land with { Id = Guid.NewGuid(), CameraPlacements = new Dictionary<string, NormalizedRect> { ["a"] = new(0.05, 0.05, 0.2, 0.2) } };
         Assert.True(land2.CanSwitchLiveFrom(land));
+        Assert.True((land with { BaseFit = BaseFit.Fill, BaseCrop = new NormalizedRect(0.1, 0, 0.8, 1), ShowCapture = false }).CanSwitchLiveFrom(land));
+        Assert.True(SceneLayout.Create(SceneKind.Ending, "a").CanSwitchLiveFrom(land));
         Assert.False(SceneLayout.DefaultVertical("a").CanSwitchLiveFrom(land));
-        Assert.False((land with { BaseFit = BaseFit.Fill }).CanSwitchLiveFrom(land));
-        Assert.False((land with { BaseCrop = new NormalizedRect(0.1, 0, 0.8, 1) }).CanSwitchLiveFrom(land));
+    }
+
+    [Fact]
+    public void Ready_made_scenes_start_with_what_they_are_for()
+    {
+        var scenes = SceneLayout.DefaultScenes("cam");
+        Assert.Equal([SceneKind.StartingSoon, SceneKind.Gaming, SceneKind.JustChatting, SceneKind.BeRightBack, SceneKind.Ending, SceneKind.Gaming], scenes.Select(s => s.Kind));
+        Assert.Equal(scenes.Count, scenes.Select(s => s.Id).Distinct().Count());
+
+        var gaming = scenes[1];
+        Assert.True(gaming.ShowCapture);
+        Assert.Null(gaming.Media);
+        Assert.Contains("cam", gaming.CameraPlacements.Keys);
+
+        // Covering scenes hide the game, show the card with their words and silence the game.
+        var ending = scenes[4];
+        Assert.False(ending.ShowCapture);
+        Assert.Equal(("Thanks for watching", SceneMediaKind.Card), (ending.Media!.Title, ending.Media.Kind));
+        Assert.Empty(ending.CameraPlacements);
+        Assert.True(ending.Mutes(AudioChannels.Game));
+        Assert.False(ending.Mutes(AudioChannels.Microphone));
+
+        // Just chatting: the camera large, on the card's background without words.
+        var chatting = scenes[2];
+        Assert.False(chatting.ShowCapture);
+        Assert.Equal(string.Empty, chatting.Media!.Title);
+        Assert.True(chatting.CameraPlacements["cam"].Width >= 0.5);
+
+        Assert.Equal(OutputOrientation.Vertical, SceneLayout.Create(SceneKind.JustChatting, "cam", OutputOrientation.Vertical).Orientation);
+    }
+
+    [Fact]
+    public void Scene_values_are_cleaned()
+    {
+        var s = new SceneLayout
+        {
+            Name = new string('x', 80),
+            Kind = (SceneKind)99,
+            HiddenOverlays = ["a", "a", " "],
+            MutedChannels = ["game", "Bad Name", "game"],
+            Media = new SceneMedia { Kind = (SceneMediaKind)7, Path = "  ", Title = new string('t', 90) },
+        }.Clamped();
+        Assert.Equal(40, s.Name.Length);
+        Assert.Equal(SceneKind.Custom, s.Kind);
+        Assert.Equal(["a"], s.HiddenOverlays);
+        Assert.Equal(["game"], s.MutedChannels);
+        Assert.Equal((SceneMediaKind.Card, (string?)null, 60), (s.Media!.Kind, s.Media.Path, s.Media.Title.Length));
+        Assert.False(s.Shows("a"));
+        Assert.True(s.Shows("b"));
     }
 
     [Fact]

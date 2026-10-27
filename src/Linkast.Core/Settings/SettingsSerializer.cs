@@ -50,6 +50,11 @@ public static class SettingsSerializer
             var version = node["schemaVersion"]?.GetValue<int>() ?? 0;
             var migrated = Migrate(node, version);
             var settings = node.Deserialize<LinkastSettings>(Options) ?? new LinkastSettings();
+            if (version < 3)
+            {
+                settings = MigrateToScenes(settings);
+                migrated = true;
+            }
             var outcome = version > LinkastSettings.CurrentSchemaVersion ? SettingsLoadOutcome.NewerVersion
                 : migrated ? SettingsLoadOutcome.Migrated
                 : SettingsLoadOutcome.Loaded;
@@ -129,6 +134,65 @@ public static class SettingsSerializer
         webcam["selectedLayerId"] = layerId;
     }
 
+    /// <summary>
+    /// Version 2 had layouts, an away screen and a per-overlay "show" switch. Version 3 has scenes: the
+    /// built-in layouts become the Gaming scenes, the away screen becomes the Be right back scene (with
+    /// its picture and its "mute PC sound" choice), Starting soon, Just chatting and Ending are added,
+    /// and an overlay that was switched off is hidden in every scene.
+    /// </summary>
+    internal static LinkastSettings MigrateToScenes(LinkastSettings s)
+    {
+        var webcam = s.Webcam ?? new WebcamSettings();
+        var overlays = s.Overlays ?? new OverlaySettings();
+        var firstLayer = webcam.Layers is { Count: > 0 } layers ? layers[0]?.LayerId : null;
+        var hidden = (overlays.Items ?? []).Where(o => o is { Visible: false }).Select(o => o.LayerId).ToList();
+
+        var scenes = (webcam.Layouts ?? []).Where(l => l is not null).Select(l => l.Id == SceneLayout.LandscapeId || l.Id == SceneLayout.VerticalId
+            ? l with
+            {
+                Kind = SceneKind.Gaming,
+                Name = l.Name is "Landscape (16:9)" ? "Gaming" : l.Name is "Vertical (9:16): game on top, camera below" ? "Gaming (vertical)" : l.Name,
+            }
+            : l).ToList();
+
+        var away = overlays.Away ?? new AwayScreenSettings();
+        var brb = SceneLayout.Create(SceneKind.BeRightBack, firstLayer, id: SceneLayout.BeRightBackId) with
+        {
+            Media = away.ImagePath is { Length: > 0 } picture
+                ? new SceneMedia { Kind = SceneMediaKind.Picture, Path = picture, Title = away.Title, Subtitle = away.Subtitle }
+                : new SceneMedia { Kind = SceneMediaKind.Card, Title = away.Title, Subtitle = away.Subtitle },
+            MutedChannels = away.MuteSystemAudio ? [AudioChannels.System, AudioChannels.Game] : [AudioChannels.Game],
+        };
+
+        // New scenes go around the existing ones: Starting soon first, then the rest after the Gaming scenes.
+        var gaming = scenes.FindIndex(l => l.Id == SceneLayout.LandscapeId);
+        var after = gaming < 0 ? scenes.Count : gaming + 1;
+        foreach (var added in new[]
+        {
+            SceneLayout.Create(SceneKind.Ending, firstLayer, id: SceneLayout.EndingId),
+            brb,
+            SceneLayout.Create(SceneKind.JustChatting, firstLayer, id: SceneLayout.JustChattingId),
+        })
+        {
+            if (scenes.All(l => l.Id != added.Id))
+            {
+                scenes.Insert(after, added);
+            }
+        }
+
+        if (scenes.All(l => l.Id != SceneLayout.StartingSoonId))
+        {
+            scenes.Insert(0, SceneLayout.Create(SceneKind.StartingSoon, firstLayer, id: SceneLayout.StartingSoonId));
+        }
+
+        return s with
+        {
+            Webcam = webcam with { Layouts = [.. scenes.Select(l => l with { HiddenOverlays = [.. l.HiddenOverlays.Union(hidden)] })] },
+            Overlays = overlays with { Items = [.. (overlays.Items ?? []).Where(o => o is not null).Select(o => o with { Visible = true })] },
+            Hotkeys = (s.Hotkeys ?? new HotkeySettings()).WithNewDefaults(), // the scene hotkeys
+        };
+    }
+
     /// <summary>Clamps every value into its valid range and drops broken entries.</summary>
     public static LinkastSettings Sanitize(LinkastSettings s)
     {
@@ -147,6 +211,12 @@ public static class SettingsSerializer
                 KeyframeIntervalSeconds = Math.Clamp(stream.KeyframeIntervalSeconds, 1, 10),
                 AudioBitrateKbps = Math.Clamp(stream.AudioBitrateKbps, 32, 512),
                 ServerUrl = stream.ServerUrl ?? string.Empty,
+                EndSceneSeconds = Math.Clamp(stream.EndSceneSeconds, 3, 120),
+                // Empty collections stay the shared defaults, so untouched settings still compare equal.
+                ChannelVolumes = stream.ChannelVolumes is not { Count: > 0 } volumes ? StreamSettings.NoVolumes : volumes
+                    .Where(kv => IsChannel(kv.Key))
+                    .ToDictionary(kv => kv.Key, kv => Math.Clamp(Finite(kv.Value, 100), 0, 200), StringComparer.Ordinal),
+                MutedChannels = stream.MutedChannels is not { Count: > 0 } muted ? [] : [.. muted.Where(IsChannel).Distinct(StringComparer.Ordinal)],
             },
             Webcam = SanitizeWebcam(webcam),
             Overlays = (s.Overlays ?? new OverlaySettings()).Sanitized(),
@@ -203,8 +273,7 @@ public static class SettingsSerializer
             .ToList();
         if (layouts.Count == 0)
         {
-            layouts.Add(SceneLayout.DefaultLandscape(layers[0].LayerId));
-            layouts.Add(SceneLayout.DefaultVertical(layers[0].LayerId));
+            layouts.AddRange(SceneLayout.DefaultScenes(layers[0].LayerId));
         }
 
         return webcam with
@@ -224,4 +293,8 @@ public static class SettingsSerializer
     }
 
     private static double Finite(double v, double fallback) => double.IsFinite(v) ? v : fallback;
+
+    /// <summary>A mixer channel name: lower-case letters, digits and '_' (it becomes part of an FFmpeg filter name).</summary>
+    private static bool IsChannel(string? name) =>
+        name is { Length: > 0 and <= 40 } && name.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '_');
 }

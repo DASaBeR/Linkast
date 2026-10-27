@@ -30,7 +30,7 @@ public sealed class WebOverlayHost : IAsyncDisposable
 
         try
         {
-            var renderer = await WebOverlayRenderer.CreateAsync(url, width, height);
+            var renderer = await WebOverlayRenderer.CreateAsync(layerId, url, width, height);
             _renderers[layerId] = (url, width, height, renderer);
             _problems.Remove(layerId);
             return renderer;

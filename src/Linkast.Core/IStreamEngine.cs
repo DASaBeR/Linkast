@@ -13,8 +13,14 @@ public sealed record StreamSession(
     /// <summary>Camera layers composited over <see cref="Video"/>, bottom to top.</summary>
     public IReadOnlyList<Camera.CameraLayerBinding> CameraLayers { get; init; } = [];
 
-    /// <summary>Overlays (pictures, web alerts, the away screen) drawn above the cameras, bottom to top.</summary>
+    /// <summary>Overlays (pictures, web alerts) drawn above the cameras, bottom to top.</summary>
     public IReadOnlyList<Camera.OverlayLayerBinding> Overlays { get; init; } = [];
+
+    /// <summary>Scene pictures and videos: they cover the canvas above the captured game and below the cameras.</summary>
+    public IReadOnlyList<Camera.MediaLayerBinding> Media { get; init; } = [];
+
+    /// <summary>False starts with the captured game or screen hidden (it can be shown live).</summary>
+    public bool ShowCapture { get; init; } = true;
 
     /// <summary>Where the gameplay or screen capture goes on the canvas (default: all of it).</summary>
     public Camera.NormalizedRect BasePlacement { get; init; } = new(0, 0, 1, 1);

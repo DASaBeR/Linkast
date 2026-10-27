@@ -12,9 +12,46 @@ using Linkast.Platform.Windows.Camera;
 
 namespace Linkast.App.ViewModels;
 
-/// <summary>A layout in the picker. Layouts themselves are immutable records kept by the studio.</summary>
-public sealed record LayoutOption(Guid Id, string Name)
+/// <summary>
+/// A scene in the scene strip and the pickers. The scenes themselves are immutable records kept by the
+/// studio; this is what the UI shows of one.
+/// </summary>
+public sealed partial class LayoutOption(Guid id, string name, SceneKind kind, bool isVertical) : ObservableObject
 {
+    public Guid Id { get; } = id;
+
+    [ObservableProperty]
+    public partial string Name { get; set; } = name;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Glyph))]
+    public partial SceneKind Kind { get; set; } = kind;
+
+    [ObservableProperty]
+    public partial bool IsVertical { get; set; } = isVertical;
+
+    /// <summary>1 to 9 for the first nine scenes (their hotkey number), else 0.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasNumber))]
+    public partial int Number { get; set; }
+
+    public bool HasNumber => Number > 0;
+
+    /// <summary>The scene on stream (or, offline, the one the preview shows).</summary>
+    [ObservableProperty]
+    public partial bool IsActive { get; set; }
+
+    /// <summary>Segoe Fluent icon for the kind of scene.</summary>
+    public string Glyph => Kind switch
+    {
+        SceneKind.StartingSoon => "", // stopwatch
+        SceneKind.Gaming => "", // game
+        SceneKind.JustChatting => "", // chat
+        SceneKind.BeRightBack => "", // pause
+        SceneKind.Ending => "", // close/wave
+        _ => "", // display
+    };
+
     public override string ToString() => Name;
 }
 
@@ -53,8 +90,14 @@ public sealed partial class WebcamStudioViewModel : ObservableObject, IAsyncDisp
     /// <summary>Raised when the set of layers or whether any of them needs the audio level changed.</summary>
     public event EventHandler? LayersChanged;
 
-    /// <summary>Raised when the gameplay area or its trim is changed in the editor (not when a layout is loaded or switched).</summary>
+    /// <summary>Raised when the gameplay area, its trim or fit, or whether it shows is changed in the active scene (not when a scene is switched).</summary>
     public event EventHandler? BaseChanged;
+
+    /// <summary>
+    /// Raised after the active scene changed (a switch) or something in it that the stream shows besides
+    /// cameras and the game changed (its background, muted sounds or hidden overlays).
+    /// </summary>
+    public event EventHandler<SceneLayout>? ActiveSceneChanged;
 
     /// <summary>Set by the main view model to confirm layout switches while live.</summary>
     public LayoutSwitchHandler? LayoutSwitching { get; set; }
@@ -118,11 +161,12 @@ public sealed partial class WebcamStudioViewModel : ObservableObject, IAsyncDisp
         var used = Layers.Select(l => l.WantedDeviceId).ToHashSet(StringComparer.OrdinalIgnoreCase);
         Attach(layer);
 
-        // New cameras appear in every landscape layout (in a free corner) and are hidden in vertical ones.
+        // New cameras appear in every landscape game scene (in a free corner) and are hidden in vertical
+        // ones and in scenes that cover the game (Starting soon, Be right back, Ending, Just chatting).
         for (var i = 0; i < _layouts.Count; i++)
         {
             var layout = _layouts[i];
-            if (layout.Orientation != OutputOrientation.Landscape)
+            if (layout.Orientation != OutputOrientation.Landscape || layout.Kind is not (SceneKind.Gaming or SceneKind.Custom))
             {
                 continue;
             }
@@ -380,6 +424,227 @@ public sealed partial class WebcamStudioViewModel : ObservableObject, IAsyncDisp
 
         var i = ActiveIndex();
         _layouts[i] = _layouts[i] with { BaseFit = value };
+        BaseChanged?.Invoke(this, EventArgs.Empty);
+        Changed();
+    }
+
+    /// <summary>The game or screen capture shows in the active scene.</summary>
+    public bool ShowCapture
+    {
+        get => ActiveLayout.ShowCapture;
+        set
+        {
+            if (value == ShowCapture)
+            {
+                return;
+            }
+
+            var i = ActiveIndex();
+            _layouts[i] = _layouts[i] with { ShowCapture = value };
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ActiveLayout));
+            BaseChanged?.Invoke(this, EventArgs.Empty);
+            Changed();
+        }
+    }
+
+    // ---- Scenes -------------------------------------------------------------------------------
+
+    /// <summary>The kinds offered by "Add scene", each with what it starts with.</summary>
+    public IReadOnlyList<SceneKind> SceneKinds { get; } =
+        [SceneKind.Gaming, SceneKind.JustChatting, SceneKind.StartingSoon, SceneKind.BeRightBack, SceneKind.Ending, SceneKind.Custom];
+
+    public const int MaxScenes = 12;
+
+    public bool CanAddScene => _layouts.Count < MaxScenes;
+
+    public bool CanDeleteScene => _layouts.Count > 1;
+
+    /// <summary>Changes the active scene with <paramref name="change"/> (its background, muted sounds, hidden overlays or name).</summary>
+    public void UpdateActiveScene(Func<SceneLayout, SceneLayout> change)
+    {
+        ArgumentNullException.ThrowIfNull(change);
+        var i = ActiveIndex();
+        var updated = change(_layouts[i]).Clamped() with { Id = _layouts[i].Id };
+        if (updated == _layouts[i])
+        {
+            return;
+        }
+
+        _layouts[i] = updated;
+        if (LayoutOptions.FirstOrDefault(o => o.Id == updated.Id) is { } option)
+        {
+            option.Name = updated.Name;
+            option.Kind = updated.Kind;
+        }
+
+        OnPropertyChanged(nameof(ActiveLayout));
+        ActiveSceneChanged?.Invoke(this, updated);
+        Changed();
+    }
+
+    /// <summary>Adds a ready-made scene of <paramref name="kind"/> after the active one, with the active scene's orientation, and switches to it.</summary>
+    [RelayCommand]
+    private void AddScene(SceneKind kind)
+    {
+        if (!CanAddScene)
+        {
+            return;
+        }
+
+        var scene = SceneLayout.Create(kind, Layers.FirstOrDefault()?.LayerId, ActiveLayout.Orientation);
+        var (cw, ch) = scene.CanvasSize(_landscapeWidth, _landscapeHeight);
+        foreach (var layer in Layers)
+        {
+            if (scene.CameraPlacements.TryGetValue(layer.LayerId, out var p))
+            {
+                scene = scene.WithPlacement(layer.LayerId, LayerGeometry.FitInside(p, layer.LayerAspectRatio, cw, ch));
+            }
+        }
+
+        InsertScene(scene with { Name = UniqueName(scene.Name) });
+    }
+
+    /// <summary>A copy of the active scene, placed after it.</summary>
+    [RelayCommand]
+    private void DuplicateScene()
+    {
+        if (CanAddScene)
+        {
+            InsertScene(ActiveLayout with { Id = Guid.NewGuid(), Name = UniqueName(ActiveLayout.Name + " copy") });
+        }
+    }
+
+    [RelayCommand]
+    private async Task DeleteSceneAsync(LayoutOption? option)
+    {
+        var id = option?.Id ?? _activeLayoutId;
+        var index = _layouts.FindIndex(l => l.Id == id);
+        if (index < 0 || _layouts.Count <= 1)
+        {
+            return;
+        }
+
+        // Leaving the active scene goes through the normal switch (it may need to ask while live).
+        if (id == _activeLayoutId)
+        {
+            var next = _layouts[index == 0 ? 1 : index - 1];
+            if (LayoutSwitching is { } ask && !await ask(_layouts[index], next))
+            {
+                return;
+            }
+
+            _activeLayoutId = next.Id;
+            _layouts.RemoveAt(index);
+            RebuildSceneOptions();
+            ApplyActiveLayoutToLayers();
+            ActiveSceneChanged?.Invoke(this, ActiveLayout);
+        }
+        else
+        {
+            _layouts.RemoveAt(index);
+            RebuildSceneOptions();
+        }
+
+        SceneListChanged();
+    }
+
+    [RelayCommand]
+    private void MoveSceneEarlier(LayoutOption? option) => MoveScene(option, -1);
+
+    [RelayCommand]
+    private void MoveSceneLater(LayoutOption? option) => MoveScene(option, +1);
+
+    /// <summary>Switches to the scene with this number (1 = first), as the scene hotkeys do.</summary>
+    public void SwitchToNumber(int number)
+    {
+        if (number >= 1 && number <= LayoutOptions.Count)
+        {
+            SelectedLayout = LayoutOptions[number - 1];
+        }
+    }
+
+    /// <summary>Switches to <paramref name="id"/> if it exists. Returns false when there is no such scene.</summary>
+    public bool SwitchTo(Guid id)
+    {
+        if (LayoutOptions.FirstOrDefault(o => o.Id == id) is not { } option)
+        {
+            return false;
+        }
+
+        SelectedLayout = option;
+        return true;
+    }
+
+    public SceneLayout? FindScene(Guid id) => _layouts.Find(l => l.Id == id);
+
+    private void MoveScene(LayoutOption? option, int delta)
+    {
+        var from = _layouts.FindIndex(l => l.Id == (option?.Id ?? _activeLayoutId));
+        var to = Math.Clamp(from + delta, 0, _layouts.Count - 1);
+        if (from < 0 || from == to)
+        {
+            return;
+        }
+
+        var scene = _layouts[from];
+        _layouts.RemoveAt(from);
+        _layouts.Insert(to, scene);
+        RebuildSceneOptions();
+        SceneListChanged();
+    }
+
+    private void InsertScene(SceneLayout scene)
+    {
+        _layouts.Insert(ActiveIndex() + 1, scene);
+        RebuildSceneOptions();
+        SceneListChanged();
+        SwitchTo(scene.Id);
+    }
+
+    private string UniqueName(string name)
+    {
+        var candidate = name;
+        for (var n = 2; _layouts.Any(l => string.Equals(l.Name, candidate, StringComparison.OrdinalIgnoreCase)); n++)
+        {
+            candidate = string.Create(CultureInfo.InvariantCulture, $"{name} {n}");
+        }
+
+        return candidate;
+    }
+
+    /// <summary>Recreates the strip's items from the scenes, keeping the selection.</summary>
+    private void RebuildSceneOptions()
+    {
+        var was = _applying;
+        _applying = true;
+        try
+        {
+            LayoutOptions.Clear();
+            for (var i = 0; i < _layouts.Count; i++)
+            {
+                var l = _layouts[i];
+                LayoutOptions.Add(new LayoutOption(l.Id, l.Name, l.Kind, l.Orientation == OutputOrientation.Vertical)
+                {
+                    Number = i < 9 ? i + 1 : 0,
+                    IsActive = l.Id == _activeLayoutId,
+                });
+            }
+
+            SelectedLayout = LayoutOptions.FirstOrDefault(o => o.Id == _activeLayoutId);
+        }
+        finally
+        {
+            _applying = was;
+        }
+    }
+
+    private void SceneListChanged()
+    {
+        OnPropertyChanged(nameof(CanAddScene));
+        OnPropertyChanged(nameof(CanDeleteScene));
+        AddSceneCommand.NotifyCanExecuteChanged();
+        DuplicateSceneCommand.NotifyCanExecuteChanged();
         Changed();
     }
 
@@ -431,6 +696,7 @@ public sealed partial class WebcamStudioViewModel : ObservableObject, IAsyncDisp
 
             _activeLayoutId = to.Id;
             ApplyActiveLayoutToLayers();
+            ActiveSceneChanged?.Invoke(this, ActiveLayout);
             Changed();
         }
         finally
@@ -478,6 +744,10 @@ public sealed partial class WebcamStudioViewModel : ObservableObject, IAsyncDisp
 
             BaseFit = layout.BaseFit;
             SelectedLayout = LayoutOptions.FirstOrDefault(o => o.Id == layout.Id);
+            foreach (var option in LayoutOptions)
+            {
+                option.IsActive = option.Id == layout.Id;
+            }
         }
         finally
         {
@@ -490,6 +760,7 @@ public sealed partial class WebcamStudioViewModel : ObservableObject, IAsyncDisp
         OnPropertyChanged(nameof(CanvasHeight));
         OnPropertyChanged(nameof(BasePlacement));
         OnPropertyChanged(nameof(BaseCrop));
+        OnPropertyChanged(nameof(ShowCapture));
         OnPropertyChanged(nameof(CanvasDescription));
     }
 
@@ -542,13 +813,8 @@ public sealed partial class WebcamStudioViewModel : ObservableObject, IAsyncDisp
 
             _layouts.Clear();
             _layouts.AddRange(s.Layouts.Count > 0 ? s.Layouts : new WebcamSettings().Layouts);
-            LayoutOptions.Clear();
-            foreach (var l in _layouts)
-            {
-                LayoutOptions.Add(new LayoutOption(l.Id, l.Name));
-            }
-
             _activeLayoutId = s.ActiveLayout.Id;
+            RebuildSceneOptions();
             SnapToGrid = s.SnapToGrid;
 
             foreach (var config in s.Layers.Take(CameraLayerConfig.MaxLayers))
@@ -585,6 +851,8 @@ public sealed partial class WebcamStudioViewModel : ObservableObject, IAsyncDisp
 
         ApplyActiveLayoutToLayers();
         OnLayersChanged();
+        SceneListChanged();
+        ActiveSceneChanged?.Invoke(this, ActiveLayout);
     }
 
     public WebcamSettings ToSettings() => new()

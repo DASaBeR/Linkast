@@ -18,6 +18,22 @@ public enum HotkeyAction
 
     /// <summary>Starts or stops a recording (without going live).</summary>
     Record,
+
+    /// <summary>The next scene in the scene strip (wraps around).</summary>
+    NextScene,
+
+    PreviousScene,
+
+    /// <summary>Scene 1 to 9 of the scene strip.</summary>
+    Scene1,
+    Scene2,
+    Scene3,
+    Scene4,
+    Scene5,
+    Scene6,
+    Scene7,
+    Scene8,
+    Scene9,
 }
 
 /// <summary>Modifier keys. The values are those of Win32 <c>RegisterHotKey</c>.</summary>
@@ -130,7 +146,38 @@ public sealed record HotkeySettings
         [HotkeyAction.ToggleCameras] = "Ctrl+Alt+C",
         [HotkeyAction.BeRightBack] = "Ctrl+Alt+B",
         [HotkeyAction.Record] = "Ctrl+Alt+R",
+        [HotkeyAction.NextScene] = "Ctrl+Alt+Right",
+        [HotkeyAction.PreviousScene] = "Ctrl+Alt+Left",
+        [HotkeyAction.Scene1] = "Ctrl+Alt+1",
+        [HotkeyAction.Scene2] = "Ctrl+Alt+2",
+        [HotkeyAction.Scene3] = "Ctrl+Alt+3",
+        [HotkeyAction.Scene4] = "Ctrl+Alt+4",
+        [HotkeyAction.Scene5] = "Ctrl+Alt+5",
+        [HotkeyAction.Scene6] = "Ctrl+Alt+6",
+        [HotkeyAction.Scene7] = "Ctrl+Alt+7",
+        [HotkeyAction.Scene8] = "Ctrl+Alt+8",
+        [HotkeyAction.Scene9] = "Ctrl+Alt+9",
     };
+
+    /// <summary>The scene number (1–9) of a scene hotkey, or 0.</summary>
+    public static int SceneNumber(HotkeyAction action) =>
+        action is >= HotkeyAction.Scene1 and <= HotkeyAction.Scene9 ? action - HotkeyAction.Scene1 + 1 : 0;
+
+    /// <summary>Adds the default key of every action that has none, unless that key is already taken.</summary>
+    public HotkeySettings WithNewDefaults()
+    {
+        var merged = new Dictionary<HotkeyAction, string>(Bindings ?? Defaults);
+        var used = merged.Values.Select(Hotkey.Parse).OfType<Hotkey>().ToHashSet();
+        foreach (var (action, text) in Defaults)
+        {
+            if (!merged.ContainsKey(action) && Hotkey.Parse(text) is { } key && used.Add(key))
+            {
+                merged[action] = text;
+            }
+        }
+
+        return this with { Bindings = merged };
+    }
 
     /// <summary>The valid hotkey of each action (null if none).</summary>
     public Hotkey? Get(HotkeyAction action) => Bindings.TryGetValue(action, out var text) ? Hotkey.Parse(text) : null;

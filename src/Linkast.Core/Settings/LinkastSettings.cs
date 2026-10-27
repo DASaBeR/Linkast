@@ -9,8 +9,12 @@ namespace Linkast.Core.Settings;
 /// </summary>
 public sealed record LinkastSettings
 {
-    /// <summary>2: multiple camera layers and layouts (Phase 4). 1: single webcam (Phase 1).</summary>
-    public const int CurrentSchemaVersion = 2;
+    /// <summary>
+    /// 3: layouts are scenes (game shown or not, a background, hidden overlays, muted sounds), the Be
+    /// right back screen is a scene, and the mixer has a fader per source. 2: multiple camera layers and
+    /// layouts (Phase 4). 1: single webcam (Phase 1).
+    /// </summary>
+    public const int CurrentSchemaVersion = 3;
 
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;
 
@@ -110,6 +114,27 @@ public sealed record StreamSettings
 
     /// <summary>Adapter name at the time it was chosen, shown when it is not connected.</summary>
     public string? NetworkInterfaceName { get; init; }
+
+    /// <summary>The scene Go live starts on (for example Starting soon), or null to stay on the current scene.</summary>
+    public Guid? StartSceneId { get; init; }
+
+    /// <summary>The scene End stream shows first (for example Ending), or null to end at once.</summary>
+    public Guid? EndSceneId { get; init; }
+
+    /// <summary>How long the end scene is on before the stream ends by itself.</summary>
+    public int EndSceneSeconds { get; init; } = 10;
+
+    /// <summary>The captured game's own sound gets its own fader (it is also part of desktop audio).</summary>
+    public bool SeparateGameAudio { get; init; }
+
+    /// <summary>Fader positions (0–200 %) of the channels other than desktop audio and the microphone, by channel.</summary>
+    public IReadOnlyDictionary<string, double> ChannelVolumes { get; init; } = NoVolumes;
+
+    /// <summary>Shared so that default settings compare equal (records compare collections by reference).</summary>
+    internal static readonly IReadOnlyDictionary<string, double> NoVolumes = new Dictionary<string, double>();
+
+    /// <summary>Channels muted in the mixer (in every scene).</summary>
+    public IReadOnlyList<string> MutedChannels { get; init; } = [];
 }
 
 /// <summary>One camera layer: which camera, and how it looks (camera-level). Placement lives in layouts.</summary>
@@ -152,7 +177,8 @@ public sealed record WebcamSettings
 {
     public IReadOnlyList<CameraLayerConfig> Layers { get; init; } = [new CameraLayerConfig()];
 
-    public IReadOnlyList<SceneLayout> Layouts { get; init; } = [SceneLayout.DefaultLandscape("camera-1"), SceneLayout.DefaultVertical("camera-1")];
+    /// <summary>The scenes (stored as layouts), in the order of the scene strip.</summary>
+    public IReadOnlyList<SceneLayout> Layouts { get; init; } = SceneLayout.DefaultScenes("camera-1");
 
     public Guid? ActiveLayoutId { get; init; } = SceneLayout.LandscapeId;
 

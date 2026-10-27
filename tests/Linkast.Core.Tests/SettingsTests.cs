@@ -51,7 +51,7 @@ public class SettingsSerializerTests
         var (back, outcome) = SettingsSerializer.Deserialize(json);
 
         Assert.Equal(SettingsLoadOutcome.Loaded, outcome);
-        Assert.Contains("\"schemaVersion\": 2", json, StringComparison.Ordinal);
+        Assert.Contains("\"schemaVersion\": 3", json, StringComparison.Ordinal);
         Assert.Contains("\"shape\": \"Circle\"", json, StringComparison.Ordinal); // enums as names
         Assert.Equal("Window", back.Stream.SourceKind);
         Assert.Equal(["face", "desk"], back.Webcam.Layers.Select(l => l.LayerId));
@@ -72,6 +72,55 @@ public class SettingsSerializerTests
         Assert.Equal(-5, back.Webcam.HardwareByDevice["dev"][HardwareControl.Exposure]);
         Assert.Null(back.Webcam.HardwareByDevice["dev"][HardwareControl.Focus]);
         Assert.Equal(custom.Id, Assert.Single(back.CustomPresets).Id);
+    }
+
+    /// <summary>Version 2 had layouts, an away screen and an on/off switch per overlay; version 3 has scenes.</summary>
+    [Fact]
+    public void Version_2_file_migrates_to_scenes()
+    {
+        const string v2 = """
+            {
+              "schemaVersion": 2,
+              "webcam": {
+                "layers": [ { "layerId": "camera-1", "name": "Face" } ],
+                "layouts": [
+                  { "id": "6f1c1a40-0b7e-4d61-9b70-1c0f3a9e0101", "name": "Landscape (16:9)", "cameraPlacements": { "camera-1": { "x": 0.7, "y": 0.7, "width": 0.25, "height": 0.25 } } },
+                  { "id": "6f1c1a40-0b7e-4d61-9b70-1c0f3a9e0102", "name": "My vertical", "orientation": "Vertical" }
+                ],
+                "activeLayoutId": "6f1c1a40-0b7e-4d61-9b70-1c0f3a9e0101"
+              },
+              "overlays": {
+                "items": [ { "layerId": "overlay-1", "name": "Alerts", "kind": "Web", "visible": false }, { "layerId": "overlay-2", "name": "Logo" } ],
+                "away": { "title": "Back soon", "subtitle": "Grab a drink", "imagePath": "C:\\Pictures\\brb.png", "muteSystemAudio": true }
+              }
+            }
+            """;
+        var (s, outcome) = SettingsSerializer.Deserialize(v2);
+        Assert.Equal(SettingsLoadOutcome.Migrated, outcome);
+
+        var scenes = s.Webcam.Layouts;
+        Assert.Equal(["Starting soon", "Gaming", "Just chatting", "Be right back", "Ending", "My vertical"], scenes.Select(l => l.Name));
+        Assert.Equal(SceneLayout.LandscapeId, s.Webcam.ActiveLayoutId);
+        Assert.Equal(SceneKind.Gaming, scenes[1].Kind);
+        Assert.Equal(0.7, scenes[1].CameraPlacements["camera-1"].X, 6); // the old placement is kept
+        Assert.Equal("My vertical", scenes[5].Name); // a name the user changed is kept
+
+        // The away screen is the Be right back scene, with its picture, words and "mute PC sound".
+        var brb = scenes[3];
+        Assert.Equal(SceneLayout.BeRightBackId, brb.Id);
+        Assert.Equal((SceneMediaKind.Picture, @"C:\Pictures\brb.png", "Back soon", "Grab a drink"), (brb.Media!.Kind, brb.Media.Path, brb.Media.Title, brb.Media.Subtitle));
+        Assert.True(brb.Mutes(AudioChannels.System));
+        Assert.False(brb.ShowCapture);
+
+        // The overlay that was off is hidden in every scene and itself switched on; the other shows everywhere.
+        Assert.All(scenes, l => Assert.False(l.Shows("overlay-1")));
+        Assert.All(scenes, l => Assert.True(l.Shows("overlay-2")));
+        Assert.All(s.Overlays.Items, o => Assert.True(o.Visible));
+
+        // Loading the saved result again changes nothing.
+        var (again, outcome2) = SettingsSerializer.Deserialize(SettingsSerializer.Serialize(s));
+        Assert.Equal(SettingsLoadOutcome.Loaded, outcome2);
+        Assert.Equal(scenes.Select(l => l.Id), again.Webcam.Layouts.Select(l => l.Id));
     }
 
     [Fact]
@@ -107,7 +156,8 @@ public class SettingsSerializerTests
         Assert.Equal(LayerShape.Circle, layer.Look.Shape);
         Assert.Equal(0.4, layer.Look.Adjustments.Brightness);
         Assert.Equal(CameraPresets.MinimalId, layer.PresetId);
-        Assert.Equal(2, s.Webcam.Layouts.Count);
+        // The two layouts of version 2 plus the scenes version 3 adds (Starting soon, Just chatting, Be right back, Ending).
+        Assert.Equal(6, s.Webcam.Layouts.Count);
         Assert.Equal(SceneLayout.LandscapeId, s.Webcam.ActiveLayoutId);
         Assert.Equal(new NormalizedRect(0.521, 0.376, 0.232, 0.412), s.Webcam.ActiveLayout.CameraPlacements["camera-1"]);
         Assert.Contains(s.Webcam.Layouts, l => l.Orientation == OutputOrientation.Vertical && l.CameraPlacements.ContainsKey("camera-1"));
@@ -138,9 +188,9 @@ public class SettingsSerializerTests
         Assert.Equal(CameraLayerConfig.MaxLayers, s.Webcam.Layers.Count);
         Assert.Equal(s.Webcam.Layers.Count, s.Webcam.Layers.Select(l => l.LayerId).Distinct().Count());
         Assert.All(s.Webcam.Layers, l => Assert.False(string.IsNullOrWhiteSpace(l.Name)));
-        Assert.Empty(s.Webcam.Layouts[0].CameraPlacements); // placement for a missing layer dropped
-        Assert.Equal("Layout", s.Webcam.Layouts[0].Name);
-        Assert.Equal(s.Webcam.Layouts[0].Id, s.Webcam.ActiveLayoutId);
+        Assert.Empty(s.Webcam.Layouts.First(l => l.Kind == SceneKind.Custom).CameraPlacements); // placement for a missing layer dropped
+        Assert.Equal("Scene", s.Webcam.Layouts.First(l => l.Kind == SceneKind.Custom).Name);
+        Assert.Contains(s.Webcam.Layouts, l => l.Id == s.Webcam.ActiveLayoutId);
         Assert.Equal(s.Webcam.Layers[0].LayerId, s.Webcam.SelectedLayerId);
     }
 
@@ -228,7 +278,7 @@ public class SettingsSerializerTests
         Assert.Equal(0.1, look.BorderWidth);
         Assert.Equal(4, look.Framing.MaxZoom);
         Assert.Equal(1, look.Effects.Glow);
-        var p = s.Webcam.Layouts[0].CameraPlacements["a"];
+        var p = s.Webcam.Layouts.First(l => l.Name == "L").CameraPlacements["a"];
         Assert.True(p.Right <= 1 + 1e-9 && p.Bottom <= 1 + 1e-9);
         var preset = Assert.Single(s.CustomPresets); // the "built-in" impostor is dropped
         Assert.Equal("Custom", preset.Name);

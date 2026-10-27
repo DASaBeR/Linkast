@@ -105,6 +105,26 @@ public partial class MainWindow : Window
 
     private void OnOpenSettings(object sender, RoutedEventArgs e) => NavSettings.IsChecked = true;
 
+    // A right-click on a scene tile only opens its menu; selecting the tile would switch to the scene.
+    private void OnSceneTileRightButtonDown(object sender, MouseButtonEventArgs e) => e.Handled = true;
+
+    // "+" in the scene strip: a menu of ready-made scenes.
+    private void OnAddSceneMenu(object sender, RoutedEventArgs e)
+    {
+        var menu = new ContextMenu { PlacementTarget = (UIElement)sender, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
+        foreach (var kind in _vm.Webcam.SceneKinds)
+        {
+            menu.Items.Add(new MenuItem
+            {
+                Header = Converters.EnumLabel.Convert(kind, typeof(string), null, System.Globalization.CultureInfo.CurrentUICulture),
+                Command = _vm.Webcam.AddSceneCommand,
+                CommandParameter = kind,
+            });
+        }
+
+        menu.IsOpen = true;
+    }
+
     // Clicking an overlay's card selects it in the Output preview (the preview flashes it). The
     // event is not handled, so the card's text boxes and buttons still work as usual.
     private void OnOverlayCardPressed(object sender, MouseButtonEventArgs e)
@@ -126,11 +146,12 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnResetSystemVolume(object sender, RoutedEventArgs e) => _vm.SystemAudioVolume = 100;
-
-    private void OnResetMicrophoneVolume(object sender, RoutedEventArgs e) => _vm.MicrophoneVolume = 100;
-
-    private void OnLogToggled(object sender, RoutedEventArgs e) => LogToggle.Content = LogToggle.IsChecked == true ? "Hide log" : "Show log";
+    private void OnLogToggled(object sender, RoutedEventArgs e)
+    {
+        var open = LogToggle.IsChecked == true;
+        LogToggleText.Text = open ? "Hide log" : "Show log";
+        LogToggleGlyph.Text = open ? "" : ""; // chevron up / down
+    }
 
     protected override async void OnClosing(CancelEventArgs e)
     {

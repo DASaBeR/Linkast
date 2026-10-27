@@ -20,10 +20,57 @@ public enum BaseFit
     Fill,
 }
 
+/// <summary>What a scene is for: picks its icon, and what a new scene of that kind starts with.</summary>
+public enum SceneKind
+{
+    Custom,
+    StartingSoon,
+    Gaming,
+    JustChatting,
+    BeRightBack,
+    Ending,
+}
+
+public enum SceneMediaKind
+{
+    /// <summary>The Linkast card (navy background, logo) with the scene's title and message.</summary>
+    Card,
+
+    /// <summary>A picture file, covering the whole stream.</summary>
+    Picture,
+
+    /// <summary>A video file that plays on a loop, covering the whole stream; its sound has its own fader.</summary>
+    Video,
+}
+
+/// <summary>A scene's background: drawn over the whole canvas, above the game and below cameras and overlays.</summary>
+public sealed record SceneMedia
+{
+    public SceneMediaKind Kind { get; init; } = SceneMediaKind.Card;
+
+    /// <summary>The picture or video for <see cref="SceneMediaKind.Picture"/> and <see cref="SceneMediaKind.Video"/>.</summary>
+    public string? Path { get; init; }
+
+    /// <summary>The card's big line. Empty shows only the background.</summary>
+    public string Title { get; init; } = string.Empty;
+
+    public string? Subtitle { get; init; }
+
+    public SceneMedia Clamped() => this with
+    {
+        Kind = Enum.IsDefined(Kind) ? Kind : SceneMediaKind.Card,
+        Path = string.IsNullOrWhiteSpace(Path) ? null : Path.Trim(),
+        Title = (Title ?? string.Empty).Trim()[..Math.Min((Title ?? string.Empty).Trim().Length, 60)],
+        Subtitle = Subtitle is { } s ? s.Trim()[..Math.Min(s.Trim().Length, 100)] : null,
+    };
+}
+
 /// <summary>
-/// One arrangement of the stream: output orientation, where the gameplay goes, and where each camera
-/// goes. Camera placements are stored per layout, so switching between landscape and vertical never
-/// disturbs the other's arrangement. One layout drives one composition per stream.
+/// One scene (formerly a "layout"): output orientation, whether and where the game shows, where each
+/// camera goes, a background, which overlays are hidden and which sounds are muted. Every source is set
+/// up once and every scene only arranges them, so all of them are in the running stream and switching
+/// between scenes of the same orientation is instant. Camera placements are stored per scene, so a
+/// vertical scene never disturbs a landscape one.
 /// </summary>
 public sealed record SceneLayout
 {
@@ -31,7 +78,21 @@ public sealed record SceneLayout
 
     public string Name { get; init; } = "Layout";
 
+    public SceneKind Kind { get; init; } = SceneKind.Custom;
+
     public OutputOrientation Orientation { get; init; } = OutputOrientation.Landscape;
+
+    /// <summary>False hides the game or screen capture in this scene (it keeps running, ready to come back).</summary>
+    public bool ShowCapture { get; init; } = true;
+
+    /// <summary>A picture, video or card over the whole canvas, or null for none.</summary>
+    public SceneMedia? Media { get; init; }
+
+    /// <summary>Overlay layer IDs that are not shown in this scene.</summary>
+    public IReadOnlyList<string> HiddenOverlays { get; init; } = [];
+
+    /// <summary>Mixer channels (see <see cref="AudioChannels"/>) that are silent while this scene is on.</summary>
+    public IReadOnlyList<string> MutedChannels { get; init; } = [];
 
     /// <summary>Where the gameplay or screen capture goes, normalized to the canvas.</summary>
     public NormalizedRect BasePlacement { get; init; } = new(0, 0, 1, 1);
@@ -66,31 +127,50 @@ public sealed record SceneLayout
         return this with { CameraPlacements = map };
     }
 
-    /// <summary>True when switching from <paramref name="other"/> to this layout can be done live (only camera moves).</summary>
+    /// <summary>
+    /// True when switching from <paramref name="other"/> to this scene can be done live. Everything a
+    /// scene arranges is in the running stream, so only a change of orientation needs a restart.
+    /// </summary>
     public bool CanSwitchLiveFrom(SceneLayout other)
     {
         ArgumentNullException.ThrowIfNull(other);
-        return Orientation == other.Orientation && BasePlacement == other.BasePlacement && BaseFit == other.BaseFit && BaseCrop == other.BaseCrop;
+        return Orientation == other.Orientation;
     }
+
+    /// <summary>True when <paramref name="channel"/> is silent while this scene is on.</summary>
+    public bool Mutes(string channel) => MutedChannels.Contains(channel, StringComparer.Ordinal);
+
+    public bool Shows(string overlayId) => !HiddenOverlays.Contains(overlayId, StringComparer.Ordinal);
 
     /// <summary>Smallest part of the capture that can be kept on each axis.</summary>
     public const double MinCrop = 0.05;
 
     public SceneLayout Clamped() => this with
     {
-        Name = string.IsNullOrWhiteSpace(Name) ? "Layout" : Name.Trim(),
+        Name = string.IsNullOrWhiteSpace(Name) ? "Scene" : Name.Trim()[..Math.Min(Name.Trim().Length, 40)],
+        Kind = Enum.IsDefined(Kind) ? Kind : SceneKind.Custom,
         Orientation = Enum.IsDefined(Orientation) ? Orientation : OutputOrientation.Landscape,
         BaseFit = Enum.IsDefined(BaseFit) ? BaseFit : BaseFit.Fit,
         BasePlacement = BasePlacement.Width <= 0 || BasePlacement.Height <= 0 ? new NormalizedRect(0, 0, 1, 1) : BasePlacement.Clamped(),
         BaseCrop = BaseCrop.Width <= 0 || BaseCrop.Height <= 0 ? new NormalizedRect(0, 0, 1, 1) : BaseCrop.Clamped(MinCrop),
         CameraPlacements = (CameraPlacements ?? new Dictionary<string, NormalizedRect>())
             .ToDictionary(kv => kv.Key, kv => kv.Value.Clamped()),
+        Media = Media?.Clamped(),
+        HiddenOverlays = [.. (HiddenOverlays ?? []).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.Ordinal)],
+        MutedChannels = [.. (MutedChannels ?? []).Where(IsChannelName).Distinct(StringComparer.Ordinal)],
     };
+
+    private static bool IsChannelName(string? name) =>
+        name is { Length: > 0 and <= 40 } && name.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '_');
 
     public static readonly Guid LandscapeId = new("6f1c1a40-0b7e-4d61-9b70-1c0f3a9e0101");
     public static readonly Guid VerticalId = new("6f1c1a40-0b7e-4d61-9b70-1c0f3a9e0102");
+    public static readonly Guid StartingSoonId = new("6f1c1a40-0b7e-4d61-9b70-1c0f3a9e0103");
+    public static readonly Guid JustChattingId = new("6f1c1a40-0b7e-4d61-9b70-1c0f3a9e0104");
+    public static readonly Guid BeRightBackId = new("6f1c1a40-0b7e-4d61-9b70-1c0f3a9e0105");
+    public static readonly Guid EndingId = new("6f1c1a40-0b7e-4d61-9b70-1c0f3a9e0106");
 
-    /// <summary>Default landscape layout: gameplay fills the screen, first camera bottom-right.</summary>
+    /// <summary>The Gaming scene: gameplay fills the screen, first camera bottom-right.</summary>
     public static SceneLayout DefaultLandscape(string? firstLayerId, NormalizedRect? placement = null)
     {
         var map = new Dictionary<string, NormalizedRect>();
@@ -99,10 +179,10 @@ public sealed record SceneLayout
             map[firstLayerId] = placement ?? new NormalizedRect(0.695, 0.68, 0.28, 0.28);
         }
 
-        return new SceneLayout { Id = LandscapeId, Name = "Landscape (16:9)", CameraPlacements = map };
+        return new SceneLayout { Id = LandscapeId, Name = "Gaming", Kind = SceneKind.Gaming, CameraPlacements = map };
     }
 
-    /// <summary>Default vertical layout: gameplay fills the top 56 %, first camera underneath.</summary>
+    /// <summary>The vertical Gaming scene: gameplay fills the top 56 %, first camera underneath.</summary>
     public static SceneLayout DefaultVertical(string? firstLayerId)
     {
         var map = new Dictionary<string, NormalizedRect>();
@@ -114,11 +194,60 @@ public sealed record SceneLayout
         return new SceneLayout
         {
             Id = VerticalId,
-            Name = "Vertical (9:16): game on top, camera below",
+            Name = "Gaming (vertical)",
+            Kind = SceneKind.Gaming,
             Orientation = OutputOrientation.Vertical,
             BasePlacement = new NormalizedRect(0, 0, 1, 0.56),
             BaseFit = BaseFit.Fill,
             CameraPlacements = map,
         };
     }
+
+    /// <summary>
+    /// A new scene of <paramref name="kind"/>, ready to use: Starting soon, Be right back and Ending show
+    /// the Linkast card with fitting words and keep the game hidden and silent; Just chatting shows the
+    /// first camera large on the card's background.
+    /// </summary>
+    public static SceneLayout Create(SceneKind kind, string? firstLayerId, OutputOrientation orientation = OutputOrientation.Landscape, Guid? id = null)
+    {
+        var vertical = orientation == OutputOrientation.Vertical;
+        var scene = kind switch
+        {
+            SceneKind.Gaming => vertical ? DefaultVertical(firstLayerId) : DefaultLandscape(firstLayerId),
+            SceneKind.StartingSoon => Covering("Starting soon", "Starting soon", "The stream begins in a moment."),
+            SceneKind.BeRightBack => Covering("Be right back", "Be right back", "Stay tuned."),
+            SceneKind.Ending => Covering("Ending", "Thanks for watching", "See you next time."),
+            SceneKind.JustChatting => new SceneLayout
+            {
+                Name = "Just chatting",
+                ShowCapture = false,
+                Media = new SceneMedia { Kind = SceneMediaKind.Card },
+                MutedChannels = [AudioChannels.Game],
+                CameraPlacements = firstLayerId is null
+                    ? new Dictionary<string, NormalizedRect>()
+                    : new Dictionary<string, NormalizedRect> { [firstLayerId] = vertical ? new NormalizedRect(0.05, 0.25, 0.9, 0.5) : new NormalizedRect(0.2, 0.1, 0.6, 0.8) },
+            },
+            _ => new SceneLayout { Name = "New scene" },
+        };
+        return scene with { Id = id ?? Guid.NewGuid(), Kind = kind, Orientation = orientation };
+
+        static SceneLayout Covering(string name, string title, string subtitle) => new()
+        {
+            Name = name,
+            ShowCapture = false,
+            Media = new SceneMedia { Kind = SceneMediaKind.Card, Title = title, Subtitle = subtitle },
+            MutedChannels = [AudioChannels.Game],
+        };
+    }
+
+    /// <summary>The scenes a new setup starts with, in the order shown in the scene strip.</summary>
+    public static IReadOnlyList<SceneLayout> DefaultScenes(string? firstLayerId) =>
+    [
+        Create(SceneKind.StartingSoon, firstLayerId, id: StartingSoonId),
+        DefaultLandscape(firstLayerId),
+        Create(SceneKind.JustChatting, firstLayerId, id: JustChattingId),
+        Create(SceneKind.BeRightBack, firstLayerId, id: BeRightBackId),
+        Create(SceneKind.Ending, firstLayerId, id: EndingId),
+        DefaultVertical(firstLayerId),
+    ];
 }

@@ -1,0 +1,146 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+using System.Collections.ObjectModel;
+using System.Globalization;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+
+namespace Linkast.App.ViewModels;
+
+/// <summary>What a mixer channel is, for its icon and its words.</summary>
+public enum MixerChannelKind
+{
+    Desktop,
+    Microphone,
+    Game,
+    WebOverlay,
+    SceneVideo,
+}
+
+/// <summary>
+/// One fader of the mixer: a volume (0–200 %), a mute switch and a level meter, like a channel strip in
+/// OBS. A channel can also be silent because the active scene mutes it.
+/// </summary>
+public sealed partial class MixerChannelViewModel(string key, MixerChannelKind kind, string name) : ObservableObject
+{
+    /// <summary>The channel name used in the stream (see <see cref="Core.AudioChannels"/>).</summary>
+    public string Key { get; } = key;
+
+    public MixerChannelKind Kind { get; } = kind;
+
+    [ObservableProperty]
+    public partial string Name { get; set; } = name;
+
+    /// <summary>Fader position, 0 to 200 % (100 % = unchanged).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(VolumeText), nameof(IsSilent))]
+    public partial double Volume { get; set; } = 100;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSilent))]
+    public partial bool Muted { get; set; }
+
+    /// <summary>The active scene mutes this channel (shown on the strip; changed in the scene's settings).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSilent))]
+    public partial bool SceneMuted { get; set; }
+
+    /// <summary>Level 0 to 100 for the meter; scene videos have no meter (FFmpeg plays them).</summary>
+    [ObservableProperty]
+    public partial double Level { get; set; }
+
+    /// <summary>A short note under the strip, for example why it has no meter.</summary>
+    [ObservableProperty]
+    public partial string? Note { get; set; }
+
+    public bool HasMeter => Kind != MixerChannelKind.SceneVideo;
+
+    public bool IsSilent => Muted || SceneMuted || Volume <= 0;
+
+    public string VolumeText => Volume <= 0
+        ? "-∞ dB"
+        : string.Create(CultureInfo.InvariantCulture, $"{20 * Math.Log10(Volume / 100):+0.0;-0.0;0.0} dB");
+
+    /// <summary>The gain the stream uses: 0 while muted (here or by the scene).</summary>
+    public double Gain => Muted || SceneMuted ? 0 : Volume / 100;
+
+    public string Glyph => Kind switch
+    {
+        MixerChannelKind.Desktop => "", // speaker
+        MixerChannelKind.Microphone => "", // microphone
+        MixerChannelKind.Game => "", // game
+        MixerChannelKind.WebOverlay => "", // globe
+        _ => "", // video
+    };
+
+    /// <summary>Raised when the user moves the fader or mutes (not for scene mutes or meter updates).</summary>
+    public event EventHandler? Changed;
+
+    [RelayCommand]
+    private void ToggleMute() => Muted = !Muted;
+
+    [RelayCommand]
+    private void ResetVolume() => Volume = 100;
+
+    partial void OnVolumeChanged(double value) => Changed?.Invoke(this, EventArgs.Empty);
+
+    partial void OnMutedChanged(bool value) => Changed?.Invoke(this, EventArgs.Empty);
+}
+
+/// <summary>
+/// The audio mixer: one channel per sound that goes into the stream, in a fixed order (desktop, microphone,
+/// game, web overlays, scene videos). The main view model decides which channels exist and keeps the
+/// stream's gains in step with them.
+/// </summary>
+public sealed class AudioMixerViewModel
+{
+    public ObservableCollection<MixerChannelViewModel> Channels { get; } = [];
+
+    /// <summary>Raised when the user changes a channel's volume or mute.</summary>
+    public event EventHandler<MixerChannelViewModel>? ChannelChanged;
+
+    public MixerChannelViewModel? Get(string key) => Channels.FirstOrDefault(c => c.Key == key);
+
+    /// <summary>
+    /// Makes the channels exactly <paramref name="wanted"/>, in that order. Existing channels are kept (with
+    /// their fader); new ones start at the volume and mute <paramref name="restore"/> gives.
+    /// </summary>
+    public void Sync(IReadOnlyList<(string Key, MixerChannelKind Kind, string Name)> wanted, Func<string, (double Volume, bool Muted)> restore)
+    {
+        ArgumentNullException.ThrowIfNull(wanted);
+        ArgumentNullException.ThrowIfNull(restore);
+        foreach (var gone in Channels.Where(c => wanted.All(w => w.Key != c.Key)).ToList())
+        {
+            gone.Changed -= OnChannelChanged;
+            Channels.Remove(gone);
+        }
+
+        for (var i = 0; i < wanted.Count; i++)
+        {
+            var (key, kind, name) = wanted[i];
+            var channel = Get(key);
+            if (channel is null)
+            {
+                var (volume, muted) = restore(key);
+                channel = new MixerChannelViewModel(key, kind, name) { Volume = volume, Muted = muted };
+                channel.Changed += OnChannelChanged;
+                Channels.Insert(Math.Min(i, Channels.Count), channel);
+                continue;
+            }
+
+            channel.Name = name;
+            var at = Channels.IndexOf(channel);
+            if (at != i)
+            {
+                Channels.Move(at, Math.Min(i, Channels.Count - 1));
+            }
+        }
+    }
+
+    private void OnChannelChanged(object? sender, EventArgs e)
+    {
+        if (sender is MixerChannelViewModel channel)
+        {
+            ChannelChanged?.Invoke(this, channel);
+        }
+    }
+}

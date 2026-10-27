@@ -65,11 +65,17 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
     private ActiveComposition? _composition;
 
     // Live audio changes (mute, volume, noise removal) for the current session, re-applied on reconnect.
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<AudioChannel, double> _liveGain = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, double> _liveGain = new(StringComparer.Ordinal);
     private bool? _liveNoiseSuppression;
 
     // Live moves and hides of layers for the current session (null = hidden), re-applied on reconnect.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, NormalizedRect?> _livePlacement = new(StringComparer.Ordinal);
+
+    // The captured picture's last live placement (null placement = hidden), re-applied on reconnect.
+    private LiveBase? _liveBase;
+
+    // Whether a scene video has sound, by file; asked of FFmpeg once per file.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _hasAudio = new(StringComparer.OrdinalIgnoreCase);
     private int _reconnectCount;
     private long _sessionStart;
     private StreamError? _lastError;
@@ -150,6 +156,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
             _lastError = null;
             _liveGain.Clear();
             _livePlacement.Clear();
+            _liveBase = null;
             _liveNoiseSuppression = null;
             _sessionStart = _time.GetTimestamp();
             _runCts?.Dispose();
@@ -298,9 +305,34 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 jobAudio.Add(LiveAudioInput(spec, input));
             }
 
-            // Camera layers: rendered by Linkast, overlaid by FFmpeg, movable live through zmq.
             var jobLayers = new List<VideoLayerJobInput>();
             var layerIds = new List<string>();
+            var fixedLayers = new HashSet<int>();
+
+            // Scene pictures and videos, directly above the captured game: FFmpeg reads the files itself.
+            foreach (var media in session.Media)
+            {
+                if (!File.Exists(media.FilePath))
+                {
+                    LogMediaMissing(media.LayerId);
+                    continue; // a missing file only leaves that scene without its picture
+                }
+
+                var px = PlaceLayer(session, media.LayerId, new NormalizedRect(0, 0, 1, 1), media.StartHidden);
+                var sound = media.IsVideo && media.AudioChannel is not null && await HasAudioAsync(media.FilePath, ct).ConfigureAwait(false);
+                fixedLayers.Add(jobLayers.Count);
+                jobLayers.Add(new VideoLayerJobInput(string.Empty, session.Encoder.Width, session.Encoder.Height, 0, px)
+                {
+                    Kind = media.IsVideo ? LayerInputKind.LoopingVideo : LayerInputKind.Still,
+                    FilePath = media.FilePath,
+                    Cover = true,
+                    AudioName = sound ? media.AudioChannel : null,
+                    AudioGain = sound && media.AudioChannel is { } ch && _liveGain.TryGetValue(ch, out var g) ? g : media.AudioGain,
+                });
+                layerIds.Add(media.LayerId);
+            }
+
+            // Camera layers: rendered by Linkast, overlaid by FFmpeg, movable live through zmq.
             if (session.CameraLayers.Count > 0)
             {
                 if (_layerProvider is null)
@@ -313,7 +345,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 var layerFps = Math.Min(session.Encoder.Fps, MaxLayerFrameRate);
                 foreach (var binding in session.CameraLayers)
                 {
-                    var px = PlaceLayer(session, binding.Layer.LayerId, binding.Placement, startHidden: false);
+                    var px = PlaceLayer(session, binding.Layer.LayerId, binding.Placement, binding.StartHidden);
                     var input = _layerProvider.Open(binding.Layer, px.Width, px.Height, layerFps);
                     layerInputs.Add(input);
                     await input.StartAsync(ct).ConfigureAwait(false);
@@ -334,14 +366,6 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 foreach (var overlay in session.Overlays)
                 {
                     var px = PlaceLayer(session, overlay.LayerId, overlay.Placement, overlay.StartHidden);
-                    if (overlay.Source is AwayScreenSource { VideoPath: { Length: > 0 } video } && File.Exists(video))
-                    {
-                        // FFmpeg plays and loops the file itself; nothing to pipe. A missing file falls back to the picture or card.
-                        jobLayers.Add(new VideoLayerJobInput(string.Empty, px.Width, px.Height, 0, px) { FilePath = video });
-                        layerIds.Add(overlay.LayerId);
-                        continue;
-                    }
-
                     var input = _overlayProvider.Open(overlay, px.Width, px.Height, maxFps);
                     layerInputs.Add(input);
                     await input.StartAsync(ct).ConfigureAwait(false);
@@ -354,14 +378,18 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
             // Always open the command channel: layers move through it, and audio is muted and adjusted live.
             int? commandPort = FfmpegCommandChannel.FindFreePort();
 
+            // The captured picture starts where the viewer last saw it (after a reconnect), else as the session says.
+            var baseNow = Volatile.Read(ref _liveBase)
+                ?? new LiveBase(session.ShowCapture ? session.BasePlacement : null, session.BaseCrop, session.BaseFit);
             var args = FfmpegArgumentBuilder.Build(new FfmpegJob(session.Video, jobAudio, session.Encoder,
                 session.Broadcast ? lease.PublishUrl : null, session.Broadcast ? lease.TcUrl : null)
             {
                 RecordingPath = recordingPath,
                 Layers = jobLayers,
-                BasePlacement = session.BasePlacement,
-                BaseFit = session.BaseFit,
-                BaseCrop = session.BaseCrop,
+                ShowCapture = baseNow.Placement is not null,
+                BasePlacement = baseNow.Placement ?? session.BasePlacement,
+                BaseFit = baseNow.Fit,
+                BaseCrop = baseNow.Crop,
                 CommandPort = commandPort,
             });
             LogLaunching(_redactor.Redact(string.Join(' ', args.Select(QuoteForLog))));
@@ -403,7 +431,8 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
             Volatile.Write(ref _currentRecording, recordingPath);
             if (commandPort is { } port)
             {
-                Volatile.Write(ref _composition, new ActiveComposition(new FfmpegCommandChannel(port), layerIds, session.Encoder.Width, session.Encoder.Height));
+                Volatile.Write(ref _composition, new ActiveComposition(new FfmpegCommandChannel(port), layerIds, fixedLayers,
+                    FfmpegArgumentBuilder.HasCapture(session.Video), session.Encoder.Width, session.Encoder.Height));
             }
 
             return await SuperviseAsync(session, backoffs, lease,process, audioInputs, recent, () => Volatile.Read(ref latest), ct).ConfigureAwait(false);
@@ -605,7 +634,20 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
         var px = LayerGeometry.ToPixels(placement, composition.Width, composition.Height);
         try
         {
-            var ok = await composition.Commands.MoveLayerAsync(index, px, cancellationToken).ConfigureAwait(false);
+            bool ok;
+            if (composition.FixedLayers.Contains(index))
+            {
+                // Scene media keep their size (resizing ahead of their fixed crop would read outside the picture).
+                var inv = System.Globalization.CultureInfo.InvariantCulture;
+                var target = $"overlay@cam{index.ToString(inv)}";
+                ok = await composition.Commands.SendAsync(target, "x", px.X.ToString(inv), cancellationToken).ConfigureAwait(false);
+                ok &= await composition.Commands.SendAsync(target, "y", px.Y.ToString(inv), cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                ok = await composition.Commands.MoveLayerAsync(index, px, cancellationToken).ConfigureAwait(false);
+            }
+
             LogLayerMoved(layerId, px.X, px.Y, px.Width, px.Height, ok);
             return ok;
         }
@@ -614,6 +656,58 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
             return false; // the attempt ended while the command was in flight
         }
     }
+
+    public async Task<bool> SetBaseAsync(NormalizedRect? placement, NormalizedRect crop, BaseFit fit, CancellationToken cancellationToken = default)
+    {
+        var composition = Volatile.Read(ref _composition);
+        if (composition is null || !composition.HasCapture)
+        {
+            return false;
+        }
+
+        // Remembered even while reconnecting, so the next attempt starts where the viewer last saw it.
+        var previous = Volatile.Read(ref _liveBase);
+        var wanted = new LiveBase(placement, crop, fit);
+        Volatile.Write(ref _liveBase, wanted);
+        if (_state.Current != StreamState.Live)
+        {
+            return false;
+        }
+
+        // Hiding keeps the last shape and only moves the picture away.
+        var shape = placement ?? previous?.Placement ?? new NormalizedRect(0, 0, 1, 1);
+        var args = BaseLayerArgs.For(shape, crop, fit, composition.Width, composition.Height, hidden: placement is null);
+        try
+        {
+            var ok = true;
+            foreach (var (target, command, argument) in args.Commands())
+            {
+                ok &= await composition.Commands.SendAsync(target, command, argument, cancellationToken).ConfigureAwait(false);
+            }
+
+            LogBaseChanged(placement is not null, ok);
+            return ok;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>True when the video file has a sound track. FFmpeg is asked once per file; a failed probe means no sound.</summary>
+    private async Task<bool> HasAudioAsync(string path, CancellationToken ct)
+    {
+        if (_hasAudio.TryGetValue(path, out var known))
+        {
+            return known;
+        }
+
+        var found = await MediaProbe.HasAudioAsync(_ffmpeg.Path, path, ct).ConfigureAwait(false);
+        _hasAudio[path] = found;
+        return found;
+    }
+
+    private sealed record LiveBase(NormalizedRect? Placement, NormalizedRect Crop, BaseFit Fit);
 
     public async Task<bool> HideLayerAsync(string layerId, CancellationToken cancellationToken = default)
     {
@@ -660,12 +754,16 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
         return startHidden ? px with { X = w + 16 } : px;
     }
 
-    public Task<bool> SetGainAsync(AudioChannel channel, double gain, CancellationToken cancellationToken = default)
+    public Task<bool> SetGainAsync(string channel, double gain, CancellationToken cancellationToken = default)
     {
+        if (!FfmpegArgumentBuilder.IsValidChannelName(channel))
+        {
+            return Task.FromResult(false);
+        }
+
         gain = Math.Clamp(gain, 0, 4);
         _liveGain[channel] = gain;
-        var target = channel == AudioChannel.Microphone ? "volume@mic" : "volume@sys";
-        return SendLiveAsync(target, "volume", gain.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
+        return SendLiveAsync("volume@" + channel, "volume", gain.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
     }
 
     public Task<bool> SetNoiseSuppressionAsync(bool enabled, CancellationToken cancellationToken = default)
@@ -698,19 +796,27 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
     /// </summary>
     private PipeAudioJobInput LiveAudioInput(AudioSourceSpec spec, IAudioInput input)
     {
-        var channel = spec is MicrophoneSource ? AudioChannel.Microphone : AudioChannel.System;
+        var channel = spec.Channel ?? (spec is MicrophoneSource ? AudioChannels.Microphone : AudioChannels.System);
         var gain = _liveGain.TryGetValue(channel, out var live) ? live : spec.Gain;
         return new PipeAudioJobInput(input.PipePath, input.Format, gain)
         {
-            Name = channel == AudioChannel.Microphone ? "mic" : "sys",
-            NoiseSuppression = channel == AudioChannel.Microphone ? _liveNoiseSuppression ?? spec.NoiseSuppression : null,
+            Name = channel,
+            NoiseSuppression = spec is MicrophoneSource ? _liveNoiseSuppression ?? spec.NoiseSuppression : null,
         };
     }
 
-    private sealed record ActiveComposition(FfmpegCommandChannel Commands, List<string> LayerIds, int Width, int Height);
+    /// <param name="FixedLayers">Indices of layers that keep their size (scene media); they are only shown and hidden.</param>
+    /// <param name="HasCapture">Whether the graph has the captured picture (<c>overlay@base</c>).</param>
+    private sealed record ActiveComposition(FfmpegCommandChannel Commands, List<string> LayerIds, HashSet<int> FixedLayers, bool HasCapture, int Width, int Height);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Layer {LayerId} moved live to {X},{Y} {W}x{H} (ok: {Ok})")]
     private partial void LogLayerMoved(string layerId, int x, int y, int w, int h, bool ok);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Captured picture changed live (shown: {Shown}, ok: {Ok})")]
+    private partial void LogBaseChanged(bool shown, bool ok);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Scene picture or video for {LayerId} is missing; that scene shows without it")]
+    private partial void LogMediaMissing(string layerId);
 
     /// <summary>Completes (faulted) only when one of <paramref name="tasks"/> faults; normal completion is ignored.</summary>
     private static Task FirstFault(IEnumerable<Task> tasks)

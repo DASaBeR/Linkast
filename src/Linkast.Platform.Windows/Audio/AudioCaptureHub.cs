@@ -51,6 +51,8 @@ public sealed class AudioTap : IDisposable
 public sealed class AudioCaptureHub
 {
     private readonly Lock _gate = new();
+
+    // Keyed by device ID and loopback, or for a program's sound by "process:{id}:{include|exclude}".
     private readonly Dictionary<(string DeviceId, bool Loopback), Session> _sessions = [];
 
     /// <summary>Endpoints currently being captured. Diagnostics and tests.</summary>
@@ -79,6 +81,29 @@ public sealed class AudioCaptureHub
             {
                 session = Session.Open(this, id, loopback);
                 _sessions[(id, loopback)] = session;
+            }
+
+            var tap = new AudioTap(session, handler);
+            session.Add(tap);
+            return tap;
+        }
+    }
+
+    /// <summary>
+    /// Starts listening to the sound of one program and its child processes (<paramref name="include"/>),
+    /// or to everything that plays except that program and its children. Needs Windows 10 2004 or later.
+    /// Shared like devices: the stream and the mixer's meter use the same capture.
+    /// </summary>
+    public AudioTap SubscribeProcess(uint processId, bool include, AudioDataHandler handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        var key = ($"process:{processId.ToString(System.Globalization.CultureInfo.InvariantCulture)}:{(include ? "include" : "exclude")}", true);
+        lock (_gate)
+        {
+            if (!_sessions.TryGetValue(key, out var session))
+            {
+                session = Session.OpenProcess(this, key.Item1, processId, include);
+                _sessions[key] = session;
             }
 
             var tap = new AudioTap(session, handler);
@@ -120,18 +145,18 @@ public sealed class AudioCaptureHub
     internal sealed class Session
     {
         private readonly Lock _tapsGate = new();
-        private readonly MMDevice _device;
+        private readonly MMDevice? _device;
         private readonly WasapiRecorder _recorder;
         private AudioTap[] _taps = [];
 
-        private Session(AudioCaptureHub owner, string deviceId, bool loopback, MMDevice device, WasapiRecorder recorder)
+        private Session(AudioCaptureHub owner, string deviceId, bool loopback, MMDevice? device, string deviceName, WasapiRecorder recorder)
         {
             Owner = owner;
             DeviceId = deviceId;
             Loopback = loopback;
             _device = device;
             _recorder = recorder;
-            DeviceName = device.FriendlyName;
+            DeviceName = deviceName;
             Format = WasapiAudioInput.ToPcmFormat(recorder.WaveFormat);
         }
 
@@ -166,7 +191,7 @@ public sealed class AudioCaptureHub
                 }
 
                 var recorder = builder.Build();
-                var session = new Session(owner, deviceId, loopback, device, recorder);
+                var session = new Session(owner, deviceId, loopback, device, device.FriendlyName, recorder);
                 recorder.DataAvailable += session.OnData;
                 recorder.RecordingStopped += session.OnStopped;
                 recorder.StartRecording();
@@ -177,6 +202,33 @@ public sealed class AudioCaptureHub
                 device?.Dispose();
                 throw new StreamFailureException(new StreamError(
                     ErrorCategory.Audio, "audio.open", $"The audio device could not be opened. It may be unplugged or in use.", ex.Message), ex);
+            }
+        }
+
+        /// <summary>A program's sound (or everything but it), through Windows' process loopback.</summary>
+        public static Session OpenProcess(AudioCaptureHub owner, string key, uint processId, bool include)
+        {
+            try
+            {
+                // Process loopback has no mix format of its own, so the format must be given. Activation is
+                // asynchronous; it runs off the caller's thread so a UI caller can't deadlock on it.
+                var builder = new WasapiRecorderBuilder()
+                    .WithProcessLoopback(processId, include ? ProcessLoopbackMode.IncludeTargetProcessTree : ProcessLoopbackMode.ExcludeTargetProcessTree)
+                    .WithSharedMode()
+                    .WithEventSync()
+                    .WithBufferLength(20)
+                    .WithFormat(WaveFormat.CreateIeeeFloatWaveFormat(48000, 2));
+                var recorder = Task.Run(builder.BuildAsync).GetAwaiter().GetResult();
+                var session = new Session(owner, key, loopback: true, device: null, include ? "App audio" : "Desktop audio", recorder);
+                recorder.DataAvailable += session.OnData;
+                recorder.RecordingStopped += session.OnStopped;
+                recorder.StartRecording();
+                return session;
+            }
+            catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or ArgumentException or InvalidOperationException or NotSupportedException or PlatformNotSupportedException)
+            {
+                throw new StreamFailureException(new StreamError(
+                    ErrorCategory.Audio, "audio.process", "A program's sound could not be captured. This needs Windows 10 version 2004 or later.", ex.Message), ex);
             }
         }
 
@@ -212,7 +264,7 @@ public sealed class AudioCaptureHub
             }
 
             _recorder.Dispose();
-            _device.Dispose();
+            _device?.Dispose();
         }
 
         private void OnData(ReadOnlySpan<byte> buffer, AudioClientBufferFlags flags, long devicePosition, long qpcPosition)

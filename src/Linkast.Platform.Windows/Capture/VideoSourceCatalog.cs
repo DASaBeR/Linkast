@@ -12,7 +12,8 @@ public sealed record MonitorInfo(int Index, long Handle, string DeviceName, int 
     public DisplaySource ToSource(CaptureApi api) => new(Index, api, true, Handle);
 }
 
-public sealed record WindowInfo(long Handle, string Title, string? ProcessName)
+/// <param name="ProcessId">The program that owns the window, for capturing its own sound.</param>
+public sealed record WindowInfo(long Handle, string Title, string? ProcessName, uint ProcessId = 0)
 {
     public override string ToString() => ProcessName is null ? Title : $"{Title}  [{ProcessName}]";
 
@@ -109,7 +110,7 @@ public static partial class VideoSourceCatalog
                 // Access denied for some protected processes.
             }
 
-            result.Add(new WindowInfo(hwnd, title, processName));
+            result.Add(new WindowInfo(hwnd, title, processName, pid));
             return true;
         }
 

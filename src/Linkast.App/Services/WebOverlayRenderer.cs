@@ -30,7 +30,10 @@ public sealed class WebOverlayRenderer : IAsyncDisposable
     private const int MaxFramesPerSecond = 30;
 
     private static Window? s_host;
-    private static CoreWebView2Environment? s_environment;
+
+    // One environment (so one browser process) per overlay: each overlay's sound can then be captured
+    // on its own, from that process, for its own fader in the mixer.
+    private static readonly Dictionary<string, CoreWebView2Environment> s_environments = new(StringComparer.Ordinal);
 
     private readonly CoreWebView2CompositionController _controller;
     private readonly ID3D11Device _device;
@@ -68,25 +71,50 @@ public sealed class WebOverlayRenderer : IAsyncDisposable
     /// <summary>Set when the page could not be loaded (shown next to the overlay).</summary>
     public string? Problem { get; private set; }
 
-    /// <summary>Loads <paramref name="url"/> at <paramref name="width"/> × <paramref name="height"/> CSS pixels. UI thread only.</summary>
-    public static async Task<WebOverlayRenderer> CreateAsync(string url, int width, int height)
+    /// <summary>The overlay's own browser process (its sound is captured from it), or 0 if unknown.</summary>
+    public uint ProcessId
+    {
+        get
+        {
+            try
+            {
+                return _disposed ? 0 : _controller.CoreWebView2.BrowserProcessId;
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException)
+            {
+                return 0; // the browser process went away
+            }
+        }
+    }
+
+    /// <summary>
+    /// Loads <paramref name="url"/> at <paramref name="width"/> × <paramref name="height"/> CSS pixels in the
+    /// overlay's own browser (<paramref name="layerId"/>). UI thread only.
+    /// </summary>
+    public static async Task<WebOverlayRenderer> CreateAsync(string layerId, string url, int width, int height)
     {
         EnsureDispatcherQueue();
         s_host ??= new Window { Width = 1, Height = 1, ShowInTaskbar = false, WindowStyle = WindowStyle.None, ShowActivated = false };
         var hwnd = new WindowInteropHelper(s_host).EnsureHandle();
 
-        s_environment ??= await CoreWebView2Environment.CreateAsync(null, Path.Combine(App.DataDirectory, "WebView2"),
-            new CoreWebView2EnvironmentOptions(
-                // Alerts play their sound without a click, and a page that is never on screen keeps
-                // running at full speed (the same choices OBS makes for its browser source).
-                "--autoplay-policy=no-user-gesture-required --disable-background-timer-throttling " +
-                "--disable-renderer-backgrounding --disable-backgrounding-occluded-windows"));
+        if (!s_environments.TryGetValue(layerId, out var environment))
+        {
+            // A data folder of its own is what gives the overlay a browser process of its own.
+            var folder = Path.Combine(App.DataDirectory, "WebView2", string.Concat(layerId.Where(char.IsAsciiLetterOrDigit)));
+            environment = await CoreWebView2Environment.CreateAsync(null, folder,
+                new CoreWebView2EnvironmentOptions(
+                    // Alerts play their sound without a click, and a page that is never on screen keeps
+                    // running at full speed (the same choices OBS makes for its browser source).
+                    "--autoplay-policy=no-user-gesture-required --disable-background-timer-throttling " +
+                    "--disable-renderer-backgrounding --disable-backgrounding-occluded-windows"));
+            s_environments[layerId] = environment;
+        }
 
         var compositor = new Compositor();
         var root = compositor.CreateContainerVisual();
         root.Size = new Vector2(width, height);
 
-        var controller = await s_environment.CreateCoreWebView2CompositionControllerAsync(hwnd);
+        var controller = await environment.CreateCoreWebView2CompositionControllerAsync(hwnd);
         controller.RootVisualTarget = root;
         controller.ShouldDetectMonitorScaleChanges = false;
         controller.RasterizationScale = 1.0;

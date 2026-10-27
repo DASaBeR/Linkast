@@ -25,6 +25,9 @@ public sealed class WasapiAudioInput : IAudioInput
     private readonly AudioCaptureHub _hub;
     private readonly bool _loopback;
     private readonly string? _deviceId;
+
+    // A program's sound: its process ID, and whether that program is included (or everything but it).
+    private readonly (uint Id, bool Include)? _process;
     private readonly string _pipeName;
     private readonly CancellationTokenSource _cts = new();
     private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -45,13 +48,15 @@ public sealed class WasapiAudioInput : IAudioInput
     {
         Source = source ?? throw new ArgumentNullException(nameof(source));
         _hub = hub ?? new AudioCaptureHub();
-        (_loopback, _deviceId) = source switch
+        (_loopback, _deviceId, _process) = source switch
         {
-            SystemAudioSource s => (true, s.DeviceId),
-            MicrophoneSource m => (false, m.DeviceId),
+            SystemAudioSource { ExcludeProcessId: { } exclude } => (true, null, (exclude, false)),
+            SystemAudioSource s => (true, s.DeviceId, ((uint, bool)?)null),
+            MicrophoneSource m => (false, m.DeviceId, null),
+            ProcessAudioSource p => (true, null, (p.ProcessId, true)),
             _ => throw new ArgumentException($"Unsupported source {source.GetType().Name}.", nameof(source)),
         };
-        _pipeName = $"linkast-{(_loopback ? "sys" : "mic")}-{Guid.NewGuid():N}";
+        _pipeName = $"linkast-{(source is ProcessAudioSource ? "app" : _loopback ? "sys" : "mic")}-{Guid.NewGuid():N}";
     }
 
     public AudioSourceSpec Source { get; }
@@ -66,7 +71,7 @@ public sealed class WasapiAudioInput : IAudioInput
     {
         try
         {
-            _tap = _hub.Subscribe(_deviceId, _loopback, OnData);
+            _tap = _process is { } p ? _hub.SubscribeProcess(p.Id, p.Include, OnData) : _hub.Subscribe(_deviceId, _loopback, OnData);
         }
         catch (StreamFailureException ex)
         {
@@ -224,11 +229,12 @@ public sealed class WasapiAudioInput : IAudioInput
     {
         MicrophoneSource m => m.DisplayName,
         SystemAudioSource s => s.DisplayName,
+        ProcessAudioSource p => p.DisplayName,
         _ => "audio",
     };
 }
 
-/// <summary>Opens WASAPI-backed inputs for microphone and system-audio sources, sharing devices through the hub.</summary>
+/// <summary>Opens WASAPI-backed inputs for microphone, system-audio and program sources, sharing captures through the hub.</summary>
 public sealed class WasapiAudioInputProvider(AudioCaptureHub hub) : IAudioInputProvider
 {
     public WasapiAudioInputProvider()
@@ -236,7 +242,7 @@ public sealed class WasapiAudioInputProvider(AudioCaptureHub hub) : IAudioInputP
     {
     }
 
-    public bool CanOpen(AudioSourceSpec source) => source is MicrophoneSource or SystemAudioSource;
+    public bool CanOpen(AudioSourceSpec source) => source is MicrophoneSource or SystemAudioSource or ProcessAudioSource;
 
     public IAudioInput Open(AudioSourceSpec source) => new WasapiAudioInput(source, hub);
 }
@@ -249,14 +255,26 @@ public sealed class WasapiAudioInputProvider(AudioCaptureHub hub) : IAudioInputP
 public sealed class AudioLevelMonitor(AudioCaptureHub hub, AudioLevelBus bus, bool loopback = false) : IDisposable
 {
     private AudioTap? _tap;
-    private string? _deviceId;
+    private string? _source;
 
     public string? Problem { get; private set; }
 
     /// <summary>Starts (or switches) metering of <paramref name="deviceId"/> (null = the default device).</summary>
-    public void Start(string? deviceId)
+    public void Start(string? deviceId) =>
+        Open("device:" + deviceId, handler => hub.Subscribe(deviceId, loopback, handler),
+            loopback ? "System audio can't be metered: " : "Audio-reactive effects need a microphone: ");
+
+    /// <summary>
+    /// Starts (or switches) metering of a program's sound (<paramref name="include"/>), or of everything
+    /// except that program. Shares the capture with the stream when both use it.
+    /// </summary>
+    public void StartProcess(uint processId, bool include) =>
+        Open($"process:{processId.ToString(System.Globalization.CultureInfo.InvariantCulture)}:{include}",
+            handler => hub.SubscribeProcess(processId, include, handler), "This sound can't be metered: ");
+
+    private void Open(string source, Func<AudioDataHandler, AudioTap> subscribe, string problemPrefix)
     {
-        if (_tap is not null && _deviceId == deviceId)
+        if (_tap is not null && _source == source)
         {
             return;
         }
@@ -264,7 +282,7 @@ public sealed class AudioLevelMonitor(AudioCaptureHub hub, AudioLevelBus bus, bo
         Stop();
         try
         {
-            _tap = hub.Subscribe(deviceId, loopback, (data, silent) =>
+            _tap = subscribe((data, silent) =>
             {
                 if (silent)
                 {
@@ -275,13 +293,13 @@ public sealed class AudioLevelMonitor(AudioCaptureHub hub, AudioLevelBus bus, bo
                     bus.Meter.ProcessPcm(data, _tap?.Format ?? new PcmFormat(48000, 2, PcmSampleFormat.F32));
                 }
             });
-            _deviceId = deviceId;
+            _source = source;
             bus.Active = true;
             Problem = null;
         }
         catch (StreamFailureException ex)
         {
-            Problem = (loopback ? "System audio can't be metered: " : "Audio-reactive effects need a microphone: ") + ex.Error.UserMessage;
+            Problem = problemPrefix + ex.Error.UserMessage;
             bus.Active = false;
         }
     }
@@ -290,7 +308,7 @@ public sealed class AudioLevelMonitor(AudioCaptureHub hub, AudioLevelBus bus, bo
     {
         _tap?.Dispose();
         _tap = null;
-        _deviceId = null;
+        _source = null;
         bus.Active = false;
         bus.Meter.Reset();
     }

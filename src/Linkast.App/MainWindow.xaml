@@ -34,8 +34,8 @@
                 BorderThickness="0,0,0,1" Padding="20,0">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border Style="{StaticResource Linkast.StatusPill.Warning}" Margin="0,0,10,0" ToolTip="Viewers see the Be right back screen"
-                            Visibility="{Binding Overlays.IsAway, Converter={StaticResource BoolToVis}}">
+                    <Border Style="{StaticResource Linkast.StatusPill.Warning}" Margin="0,0,10,0" ToolTip="Viewers see the Be right back scene"
+                            Visibility="{Binding IsOnBreak, Converter={StaticResource BoolToVis}}">
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE769;" FontSize="11" Margin="0,0,6,0" />
                             <TextBlock Text="BE RIGHT BACK" />
@@ -127,6 +127,87 @@
                                         </Border>
                                     </StackPanel>
                                 </DockPanel>
+                                <!-- Scenes: click one to switch (instant while live), right-click for more, + to add. Ctrl+Alt+1-9 switch from a game. -->
+                                <DockPanel Margin="0,0,0,10" DataContext="{Binding Webcam}">
+                                    <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Secondary}" Width="44" MinHeight="64" Padding="0" Margin="6,0,0,0"
+                                            VerticalAlignment="Top" IsEnabled="{Binding CanAddScene}" Click="OnAddSceneMenu"
+                                            ToolTip="Add a scene: Gaming, Just chatting, Starting soon, Be right back, Ending or an empty one" AutomationProperties.Name="Add scene">
+                                        <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE710;" FontSize="16" />
+                                    </Button>
+                                    <ListBox ItemsSource="{Binding LayoutOptions}" SelectedItem="{Binding SelectedLayout}" Background="Transparent" BorderThickness="0"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                             AutomationProperties.Name="Scenes" Padding="0">
+                                        <ListBox.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel />
+                                            </ItemsPanelTemplate>
+                                        </ListBox.ItemsPanel>
+                                        <ListBox.ItemContainerStyle>
+                                            <Style TargetType="ListBoxItem">
+                                                <Setter Property="Margin" Value="0,0,6,6" />
+                                                <Setter Property="Padding" Value="0" />
+                                                <Setter Property="Cursor" Value="Hand" />
+                                                <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                                                <Setter Property="AutomationProperties.Name" Value="{Binding Name}" />
+                                                <Setter Property="ToolTip" Value="{Binding Name}" />
+                                                <Setter Property="ContextMenu">
+                                                    <Setter.Value>
+                                                        <ContextMenu>
+                                                            <MenuItem Header="Duplicate" Command="{Binding PlacementTarget.Tag.DuplicateSceneCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                                            <MenuItem Header="Move earlier" Command="{Binding PlacementTarget.Tag.MoveSceneEarlierCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" CommandParameter="{Binding}" />
+                                                            <MenuItem Header="Move later" Command="{Binding PlacementTarget.Tag.MoveSceneLaterCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" CommandParameter="{Binding}" />
+                                                            <Separator />
+                                                            <MenuItem Header="Delete" Command="{Binding PlacementTarget.Tag.DeleteSceneCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" CommandParameter="{Binding}" />
+                                                        </ContextMenu>
+                                                    </Setter.Value>
+                                                </Setter>
+                                                <Setter Property="Tag" Value="{Binding DataContext, RelativeSource={RelativeSource AncestorType=ListBox}}" />
+                                                <!-- Right-click opens the menu without switching to the scene (a switch is on air while live). -->
+                                                <EventSetter Event="PreviewMouseRightButtonDown" Handler="OnSceneTileRightButtonDown" />
+                                                <Setter Property="Template">
+                                                    <Setter.Value>
+                                                        <ControlTemplate TargetType="ListBoxItem">
+                                                            <Border x:Name="Tile" Width="112" Height="64" CornerRadius="8" BorderThickness="1" Padding="8,6"
+                                                                    Background="{DynamicResource Linkast.Surface2}" BorderBrush="{DynamicResource Linkast.BorderSubtle}">
+                                                                <Grid>
+                                                                    <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="{Binding Glyph}" FontSize="16" HorizontalAlignment="Left" VerticalAlignment="Top" />
+                                                                    <Border HorizontalAlignment="Right" VerticalAlignment="Top" CornerRadius="4" Padding="5,0" Background="{DynamicResource Linkast.Surface3}"
+                                                                            Visibility="{Binding HasNumber, Converter={StaticResource BoolToVis}}" ToolTip="Ctrl+Alt+number switches to this scene">
+                                                                        <TextBlock Text="{Binding Number}" FontSize="10" Foreground="{DynamicResource Linkast.TextSecondary}" />
+                                                                    </Border>
+                                                                    <TextBlock Text="{Binding Name}" VerticalAlignment="Bottom" FontWeight="SemiBold" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                                                    <Border x:Name="OnAir" HorizontalAlignment="Right" VerticalAlignment="Bottom" CornerRadius="3" Padding="4,0"
+                                                                            Background="{DynamicResource Linkast.Live}" Visibility="Collapsed">
+                                                                        <TextBlock Text="ON AIR" FontSize="8" FontWeight="Bold" Foreground="White" />
+                                                                    </Border>
+                                                                </Grid>
+                                                            </Border>
+                                                            <ControlTemplate.Triggers>
+                                                                <Trigger Property="IsMouseOver" Value="True">
+                                                                    <Setter TargetName="Tile" Property="BorderBrush" Value="{DynamicResource Linkast.BorderStrong}" />
+                                                                </Trigger>
+                                                                <DataTrigger Binding="{Binding IsActive}" Value="True">
+                                                                    <Setter TargetName="Tile" Property="Background" Value="{DynamicResource Linkast.AccentSoft}" />
+                                                                    <Setter TargetName="Tile" Property="BorderBrush" Value="{DynamicResource Linkast.Accent}" />
+                                                                    <Setter TargetName="Tile" Property="BorderThickness" Value="2" />
+                                                                    <Setter TargetName="Tile" Property="Padding" Value="7,5" />
+                                                                </DataTrigger>
+                                                                <MultiDataTrigger>
+                                                                    <MultiDataTrigger.Conditions>
+                                                                        <Condition Binding="{Binding IsActive}" Value="True" />
+                                                                        <Condition Binding="{Binding DataContext.IsBroadcasting, RelativeSource={RelativeSource AncestorType=Window}}" Value="True" />
+                                                                    </MultiDataTrigger.Conditions>
+                                                                    <Setter TargetName="OnAir" Property="Visibility" Value="Visible" />
+                                                                    <Setter TargetName="Tile" Property="BorderBrush" Value="{DynamicResource Linkast.Live}" />
+                                                                </MultiDataTrigger>
+                                                            </ControlTemplate.Triggers>
+                                                        </ControlTemplate>
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </Style>
+                                        </ListBox.ItemContainerStyle>
+                                    </ListBox>
+                                </DockPanel>
                                 <Border CornerRadius="{StaticResource Linkast.Radius.Preview}" BorderBrush="{DynamicResource Linkast.BorderStrong}"
                                         BorderThickness="1" Background="#FF05060E" Padding="1">
                                     <Grid DataContext="{Binding Webcam}">
@@ -137,7 +218,8 @@
                                                            ShowOverlayNames="{Binding IsSelected, ElementName=TabOverlays}"
                                                            Overlays="{Binding DataContext.Overlays.Items, RelativeSource={RelativeSource AncestorType=Window}}"
                                                            SelectedOverlay="{Binding DataContext.Overlays.Selected, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}"
-                                                           OverlayItems="{Binding DataContext.Overlays.PreviewItems, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                           SceneBackground="{Binding DataContext.ScenePreviewImage, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                           SceneVideo="{Binding DataContext.ScenePreviewVideo, RelativeSource={RelativeSource AncestorType=Window}}"
                                                            AutomationProperties.Name="Output preview" />
                                     </Grid>
                                 </Border>
@@ -168,14 +250,16 @@
                         <!-- Settings, one short tab each instead of one long page. -->
                         <ListBox x:Name="StreamTabs" Style="{StaticResource Linkast.Segmented}" HorizontalAlignment="Left" Margin="0,2,0,12"
                                  SelectedIndex="0" AutomationProperties.Name="Stream settings">
-                            <ListBoxItem x:Name="TabSource" Padding="14,6" Content="Source &amp; audio" />
+                            <ListBoxItem x:Name="TabSource" Padding="14,6" Content="Source" />
+                            <ListBoxItem x:Name="TabAudio" Padding="14,6" Content="Audio" />
+                            <ListBoxItem x:Name="TabScenes" Padding="14,6" Content="Scenes" />
                             <ListBoxItem x:Name="TabDestination" Padding="14,6" Content="Destination" />
                             <ListBoxItem x:Name="TabNetwork" Padding="14,6" Content="Network" />
                             <ListBoxItem x:Name="TabQuality" Padding="14,6" Content="Quality" />
                             <ListBoxItem x:Name="TabOverlays" Padding="14,6" Content="Overlays" />
                         </ListBox>
 
-                        <!-- ===== Source & audio ===== -->
+                        <!-- ===== Source ===== -->
                         <StackPanel Visibility="{Binding IsSelected, ElementName=TabSource, Converter={StaticResource BoolToVis}}">
                             <Border Style="{StaticResource Linkast.Card}" IsEnabled="{Binding CanEditSettings}">
                                 <StackPanel>
@@ -222,7 +306,10 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- Audio: devices are fixed while live; volume, mute and noise removal change the stream instantly. -->
+                        </StackPanel>
+
+                        <!-- ===== Audio: devices are fixed while live; faders, mutes and noise removal change the stream instantly. ===== -->
+                        <StackPanel Visibility="{Binding IsSelected, ElementName=TabAudio, Converter={StaticResource BoolToVis}}">
                             <Border Style="{StaticResource Linkast.Card}">
                                 <StackPanel>
                                     <DockPanel Margin="0,0,0,10">
@@ -242,16 +329,6 @@
                                             <StackPanel IsEnabled="{Binding SystemAudioEnabled}" Margin="0,8,0,0">
                                                 <ComboBox ItemsSource="{Binding OutputDevices}" SelectedItem="{Binding SelectedOutputDevice}"
                                                           IsEnabled="{Binding CanEditSettings}" AutomationProperties.Name="System audio device" />
-                                                <ProgressBar Height="6" Margin="0,8,0,0" Minimum="0" Maximum="100" Value="{Binding SystemAudioLevel, Mode=OneWay}"
-                                                             Foreground="{DynamicResource Linkast.Success}" AutomationProperties.Name="System audio level" />
-                                                <DockPanel Margin="0,10,0,0">
-                                                    <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Icon}" Content="&#xE72C;" Width="26" Height="26" FontSize="12"
-                                                            Click="OnResetSystemVolume" ToolTip="Reset to 100%" AutomationProperties.Name="Reset system audio volume" />
-                                                    <TextBlock DockPanel.Dock="Right" Text="{Binding SystemAudioVolume, StringFormat={}{0:0}%}" Width="44" TextAlignment="Right"
-                                                               VerticalAlignment="Center" FontWeight="SemiBold" Typography.NumeralAlignment="Tabular" />
-                                                    <Slider Minimum="0" Maximum="200" Value="{Binding SystemAudioVolume}" VerticalAlignment="Center"
-                                                            AutomationProperties.Name="System audio volume" ToolTip="Volume (100% = unchanged)" />
-                                                </DockPanel>
                                             </StackPanel>
                                         </StackPanel>
                                         <StackPanel Grid.Column="2">
@@ -269,23 +346,202 @@
                                             <StackPanel IsEnabled="{Binding MicrophoneEnabled}" Margin="0,8,0,0">
                                                 <ComboBox ItemsSource="{Binding InputDevices}" SelectedItem="{Binding SelectedInputDevice}"
                                                           IsEnabled="{Binding CanEditSettings}" AutomationProperties.Name="Microphone device" />
-                                                <ProgressBar Height="6" Margin="0,8,0,0" Minimum="0" Maximum="100" Value="{Binding MicrophoneLevel, Mode=OneWay}"
-                                                             Foreground="{DynamicResource Linkast.Success}" AutomationProperties.Name="Microphone level" />
-                                                <DockPanel Margin="0,10,0,0">
-                                                    <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Icon}" Content="&#xE72C;" Width="26" Height="26" FontSize="12"
-                                                            Click="OnResetMicrophoneVolume" ToolTip="Reset to 100%" AutomationProperties.Name="Reset microphone volume" />
-                                                    <TextBlock DockPanel.Dock="Right" Text="{Binding MicrophoneVolume, StringFormat={}{0:0}%}" Width="44" TextAlignment="Right"
-                                                               VerticalAlignment="Center" FontWeight="SemiBold" Typography.NumeralAlignment="Tabular" />
-                                                    <Slider Minimum="0" Maximum="200" Value="{Binding MicrophoneVolume}" VerticalAlignment="Center"
-                                                            AutomationProperties.Name="Microphone volume" ToolTip="Volume (100% = unchanged)" />
-                                                </DockPanel>
                                                 <CheckBox Content="Remove background _noise (fans, hum)" IsChecked="{Binding MicrophoneNoiseSuppression}" Margin="0,8,0,0"
                                                           ToolTip="Filters steady noise out of your microphone on this PC. Can be switched while live." />
                                             </StackPanel>
                                         </StackPanel>
                                     </Grid>
+                                    <!-- The mixer: one fader per sound in the stream, like OBS. Everything here works while live. -->
+                                    <DockPanel Margin="0,16,0,8">
+                                        <CheckBox DockPanel.Dock="Right" Content="Game sound on its own fader" IsChecked="{Binding SeparateGameAudio}" MinWidth="0"
+                                                  IsEnabled="{Binding CanEditSettings}" VerticalAlignment="Center"
+                                                  ToolTip="When you capture a window, its program gets a fader of its own. Its sound is also in Desktop audio, so turn one of them down." />
+                                        <TextBlock Text="Mixer" Style="{StaticResource Linkast.Text.FieldLabel}" Margin="0" VerticalAlignment="Center" />
+                                    </DockPanel>
+                                    <TextBlock Style="{StaticResource Linkast.Text.Body}" Foreground="{DynamicResource Linkast.TextSecondary}" Margin="0,0,0,8"
+                                               Visibility="{Binding Mixer.Channels.Count, Converter={x:Static vm:Converters.ZeroToVisibility}}"
+                                               Text="Turn on Desktop audio or the microphone to hear them in your stream." />
+                                    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                                        <ItemsControl ItemsSource="{Binding Mixer.Channels}" Focusable="False">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <StackPanel Orientation="Horizontal" />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate DataType="{x:Type vm:MixerChannelViewModel}">
+                                                    <Border Width="104" Margin="0,0,8,6" Padding="8" CornerRadius="{StaticResource Linkast.Radius.Action}" BorderThickness="1"
+                                                            Background="{DynamicResource Linkast.Surface2}" BorderBrush="{DynamicResource Linkast.BorderSubtle}"
+                                                            AutomationProperties.Name="{Binding Name}">
+                                                        <StackPanel>
+                                                            <DockPanel>
+                                                                <TextBlock DockPanel.Dock="Left" Style="{StaticResource Linkast.Text.Glyph}" Text="{Binding Glyph}" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                                                <TextBlock Text="{Binding Name}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
+                                                            </DockPanel>
+                                                            <Grid Height="132" Margin="0,8,0,4" HorizontalAlignment="Center">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                    <ColumnDefinition Width="10" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <ProgressBar Orientation="Vertical" Width="8" Minimum="0" Maximum="100" Value="{Binding Level, Mode=OneWay}"
+                                                                             Foreground="{DynamicResource Linkast.Success}" Visibility="{Binding HasMeter, Converter={StaticResource BoolToVis}}"
+                                                                             AutomationProperties.Name="Level" />
+                                                                <Slider Grid.Column="2" Orientation="Vertical" Minimum="0" Maximum="200" Value="{Binding Volume}"
+                                                                        SmallChange="1" LargeChange="10" IsMoveToPointEnabled="True"
+                                                                        ToolTip="Volume (100% = unchanged, up to 200%)" AutomationProperties.Name="Volume" />
+                                                            </Grid>
+                                                            <TextBlock HorizontalAlignment="Center" FontSize="11" Typography.NumeralAlignment="Tabular"
+                                                                       Foreground="{DynamicResource Linkast.TextSecondary}">
+                                                                <Run Text="{Binding Volume, StringFormat={}{0:0}%, Mode=OneWay}" FontWeight="SemiBold" Foreground="{DynamicResource Linkast.TextPrimary}" />
+                                                                <Run Text="{Binding VolumeText, Mode=OneWay}" />
+                                                            </TextBlock>
+                                                            <UniformGrid Columns="2" Margin="0,6,0,0">
+                                                                <ToggleButton Style="{StaticResource Linkast.ToggleButton.Secondary}" MinHeight="26" Padding="0" Margin="0,0,3,0"
+                                                                              IsChecked="{Binding Muted}" ToolTip="Mute (works while live)" AutomationProperties.Name="Mute">
+                                                                    <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE74F;" FontSize="12" />
+                                                                </ToggleButton>
+                                                                <Button Style="{StaticResource Linkast.Button.Subtle}" MinHeight="26" Padding="0" Margin="3,0,0,0"
+                                                                        Command="{Binding ResetVolumeCommand}" ToolTip="Back to 100%" AutomationProperties.Name="Reset volume">
+                                                                    <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE72C;" FontSize="12" />
+                                                                </Button>
+                                                            </UniformGrid>
+                                                            <TextBlock Text="Silent in this scene" FontSize="10" Margin="0,6,0,0" TextWrapping="Wrap" TextAlignment="Center"
+                                                                       Foreground="{DynamicResource Linkast.Warning}" Visibility="{Binding SceneMuted, Converter={StaticResource BoolToVis}}" />
+                                                            <TextBlock Text="{Binding Note}" FontSize="10" Margin="0,4,0,0" TextWrapping="Wrap" TextAlignment="Center"
+                                                                       Foreground="{DynamicResource Linkast.TextTertiary}" Visibility="{Binding Note, Converter={x:Static vm:Converters.NotNullToVisibility}}" />
+                                                        </StackPanel>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                    <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,6,0,0"
+                                               Text="Every alert or web overlay has its own fader, so Desktop audio no longer carries them (with your default output device). The microphone also drives voice-reactive camera effects. Faders and meters work while live; a scene can silence any of them (Scenes tab)." />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- ===== Scenes: the one that is on, and going live and ending ===== -->
+                        <StackPanel Visibility="{Binding IsSelected, ElementName=TabScenes, Converter={StaticResource BoolToVis}}">
+                            <Border Style="{StaticResource Linkast.Card}">
+                                <StackPanel>
+                                    <DockPanel Margin="0,0,0,6">
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                            <Button Style="{StaticResource Linkast.Button.Subtle}" Command="{Binding Webcam.MoveSceneEarlierCommand}" Padding="8,4" MinHeight="30"
+                                                    ToolTip="Move this scene earlier in the strip" AutomationProperties.Name="Move scene earlier">
+                                                <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE76B;" FontSize="12" />
+                                            </Button>
+                                            <Button Style="{StaticResource Linkast.Button.Subtle}" Command="{Binding Webcam.MoveSceneLaterCommand}" Padding="8,4" MinHeight="30"
+                                                    ToolTip="Move this scene later in the strip" AutomationProperties.Name="Move scene later">
+                                                <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE76C;" FontSize="12" />
+                                            </Button>
+                                            <Button Style="{StaticResource Linkast.Button.Subtle}" Command="{Binding Webcam.DuplicateSceneCommand}" Padding="10,4" MinHeight="30" Margin="6,0,0,0"
+                                                    Content="Duplicate" ToolTip="Make a copy of this scene" />
+                                            <Button Style="{StaticResource Linkast.Button.Subtle}" Command="{Binding Webcam.DeleteSceneCommand}" Padding="10,4" MinHeight="30"
+                                                    IsEnabled="{Binding Webcam.CanDeleteScene}" Foreground="{DynamicResource Linkast.Live}" Content="Delete" ToolTip="Delete this scene" />
+                                        </StackPanel>
+                                        <TextBlock Text="This scene" Style="{StaticResource Linkast.Card.Title}" Margin="0" VerticalAlignment="Center" />
+                                    </DockPanel>
+                                    <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,0,0,12"
+                                               Text="Pick a scene in the strip above the preview to set it up. Sources are set up once (Source, Audio, Webcam, Overlays); a scene only says what shows, where and how loud, so switching is instant while live." />
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="20" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="Name" Style="{StaticResource Linkast.Text.FieldLabel}" />
+                                            <TextBox Text="{Binding SceneName, UpdateSourceTrigger=LostFocus}" MaxLength="40" AutomationProperties.Name="Scene name" />
+                                            <CheckBox Content="Show the game or screen" IsChecked="{Binding Webcam.ShowCapture}" Margin="0,12,0,0"
+                                                      ToolTip="Hide it for a Just chatting, Starting soon or Ending scene. It keeps running, so switching back is instant." />
+                                            <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="26,2,0,0"
+                                                       Text="Move, resize and Alt-trim it in the preview. Cameras go where you drag them (Webcam page for more)." />
+
+                                            <TextBlock Text="Background" Style="{StaticResource Linkast.Text.FieldLabel}" Margin="0,14,0,5" />
+                                            <ListBox Style="{StaticResource Linkast.Segmented}" ItemsSource="{Binding SceneBackgrounds}" SelectedItem="{Binding SceneBackground}"
+                                                     HorizontalAlignment="Left" AutomationProperties.Name="Scene background">
+                                                <ListBox.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding Converter={x:Static vm:Converters.EnumLabel}}" />
+                                                    </DataTemplate>
+                                                </ListBox.ItemTemplate>
+                                            </ListBox>
+                                            <StackPanel Visibility="{Binding SceneHasCard, Converter={StaticResource BoolToVis}}" Margin="0,10,0,0">
+                                                <TextBlock Text="Title" Style="{StaticResource Linkast.Text.FieldLabel}" />
+                                                <TextBox Text="{Binding SceneTitle, UpdateSourceTrigger=PropertyChanged, Delay=400}" MaxLength="60" AutomationProperties.Name="Card title"
+                                                         ToolTip="Leave empty for the background only, for example behind a large camera" />
+                                                <TextBlock Text="Message" Style="{StaticResource Linkast.Text.FieldLabel}" Margin="0,10,0,5" />
+                                                <TextBox Text="{Binding SceneSubtitle, UpdateSourceTrigger=PropertyChanged, Delay=400}" MaxLength="100" AutomationProperties.Name="Card message" />
+                                            </StackPanel>
+                                            <DockPanel Visibility="{Binding SceneHasFile, Converter={StaticResource BoolToVis}}" Margin="0,10,0,0">
+                                                <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Subtle}" Content="Change…" Command="{Binding ChooseSceneFileCommand}"
+                                                        MinHeight="30" Padding="10,4" />
+                                                <TextBlock Text="{Binding SceneMediaName}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding SceneMediaName}" />
+                                            </DockPanel>
+                                            <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,8,0,0"
+                                                       Text="The background covers the game and sits below cameras and overlays. A video loops and has its own fader. A new or changed background shows on stream the next time you go live." />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2">
+                                            <TextBlock Text="Silent in this scene" Style="{StaticResource Linkast.Text.FieldLabel}" />
+                                            <TextBlock Style="{StaticResource Linkast.Text.Body}" Foreground="{DynamicResource Linkast.TextSecondary}"
+                                                       Visibility="{Binding Mixer.Channels.Count, Converter={x:Static vm:Converters.ZeroToVisibility}}"
+                                                       Text="No sounds yet (Audio tab)." />
+                                            <ItemsControl ItemsSource="{Binding Mixer.Channels}" Focusable="False">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate DataType="{x:Type vm:MixerChannelViewModel}">
+                                                        <CheckBox Content="{Binding Name}" IsChecked="{Binding SceneMuted}" Margin="0,0,0,6"
+                                                                  ToolTip="Silence this sound while the scene is on (the fader keeps its place)" />
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+
+                                            <TextBlock Text="Overlays in this scene" Style="{StaticResource Linkast.Text.FieldLabel}" Margin="0,12,0,5" />
+                                            <TextBlock Style="{StaticResource Linkast.Text.Body}" Foreground="{DynamicResource Linkast.TextSecondary}"
+                                                       Visibility="{Binding Overlays.HasItems, Converter={x:Static vm:Converters.InverseBoolToVisibility}}"
+                                                       Text="No overlays yet (Overlays tab)." />
+                                            <ItemsControl ItemsSource="{Binding Overlays.Items}" Focusable="False">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate DataType="{x:Type vm:OverlayItemViewModel}">
+                                                        <CheckBox Content="{Binding Name}" IsChecked="{Binding Visible}" Margin="0,0,0,6" />
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource Linkast.Card}">
+                                <StackPanel>
+                                    <TextBlock Text="Going live and ending" Style="{StaticResource Linkast.Card.Title}" />
+                                    <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,0,0,12"
+                                               Text="Start every stream on a Starting soon scene, and end it with a goodbye: End stream shows the end scene first and then ends by itself." />
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="20" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="14" />
+                                            <ColumnDefinition Width="110" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="Go live starts on" Style="{StaticResource Linkast.Text.FieldLabel}" />
+                                            <ComboBox ItemsSource="{Binding SceneChoices}" SelectedItem="{Binding StartSceneChoice}" AutomationProperties.Name="Go live starts on" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2">
+                                            <TextBlock Text="End stream first shows" Style="{StaticResource Linkast.Text.FieldLabel}" />
+                                            <ComboBox ItemsSource="{Binding SceneChoices}" SelectedItem="{Binding EndSceneChoice}" AutomationProperties.Name="End stream first shows" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="4">
+                                            <TextBlock Text="For (seconds)" Style="{StaticResource Linkast.Text.FieldLabel}" />
+                                            <TextBox Text="{Binding EndSceneSeconds, UpdateSourceTrigger=LostFocus}" AutomationProperties.Name="End scene seconds"
+                                                     ToolTip="3 to 120 seconds. Press End stream again to end sooner." />
+                                        </StackPanel>
+                                    </Grid>
                                     <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,10,0,0"
-                                               Text="The microphone also drives voice-reactive camera effects. It is only measured while it is switched on." />
+                                               Text="Hotkeys: Ctrl+Alt+1 to 9 switch to that scene, Ctrl+Alt+Left and Right go through them, Ctrl+Alt+B is Be right back (change them in Settings)." />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -587,7 +843,8 @@
                                                                     <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Subtle}" Content="Change picture" MinHeight="30" Padding="10,4"
                                                                             Visibility="{Binding IsImage, Converter={StaticResource BoolToVis}}"
                                                                             Command="{Binding DataContext.ChangeImageCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}" />
-                                                                    <CheckBox DockPanel.Dock="Right" Content="Show" IsChecked="{Binding Visible}" Margin="0,0,10,0" MinWidth="0" VerticalAlignment="Center" />
+                                                                    <CheckBox DockPanel.Dock="Right" Content="In this scene" IsChecked="{Binding Visible}" Margin="0,0,10,0" MinWidth="0" VerticalAlignment="Center"
+                                                                              ToolTip="Show this overlay in the scene that is on now. Each scene remembers which overlays it shows." />
                                                                     <TextBox Text="{Binding Name, UpdateSourceTrigger=LostFocus}" MaxLength="40" Margin="0,0,10,0" AutomationProperties.Name="Overlay name" />
                                                                 </DockPanel>
 
@@ -668,62 +925,10 @@
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>
                                         <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,4,0,0" Visibility="{Binding HasWebItems, Converter={StaticResource BoolToVis}}"
-                                                   Text="Alert sounds reach your stream through System audio (Source &amp; audio tab), like in OBS." />
+                                                   Text="Alert sounds reach your stream through System audio (Audio tab), like in OBS." />
                                     </StackPanel>
                                 </Border>
 
-                                <Border Style="{StaticResource Linkast.Card}">
-                                    <StackPanel>
-                                        <DockPanel Margin="0,0,0,6">
-                                            <ToggleButton DockPanel.Dock="Right" Style="{StaticResource Linkast.ToggleButton.Secondary}" IsChecked="{Binding IsAway}"
-                                                          ToolTip="Cover the stream now (works while live)" AutomationProperties.Name="Show Be right back screen">
-                                                <StackPanel Orientation="Horizontal">
-                                                    <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE769;" FontSize="12" Margin="0,0,8,0" />
-                                                    <TextBlock Text="{Binding IsAway, Converter={x:Static vm:Converters.AwayLabel}}" />
-                                                </StackPanel>
-                                            </ToggleButton>
-                                            <TextBlock Text="Be right back screen" Style="{StaticResource Linkast.Card.Title}" Margin="0" />
-                                        </DockPanel>
-                                        <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,0,0,12"
-                                                   Text="Covers the game, cameras and overlays without stopping the stream. Use it for breaks, or as a Starting soon or Thanks for watching screen: switch it on before you go live or before you end, and a video loops until you switch it off." />
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="200" />
-                                                <ColumnDefinition Width="16" />
-                                                <ColumnDefinition Width="*" />
-                                            </Grid.ColumnDefinitions>
-                                            <Border CornerRadius="8" ClipToBounds="True" VerticalAlignment="Top" BorderBrush="{DynamicResource Linkast.BorderStrong}" BorderThickness="1">
-                                                <Image Source="{Binding AwayThumbnail}" Stretch="Uniform" AutomationProperties.Name="Be right back screen preview" />
-                                            </Border>
-                                            <StackPanel Grid.Column="2">
-                                                <TextBlock Text="Title" Style="{StaticResource Linkast.Text.FieldLabel}" />
-                                                <TextBox Text="{Binding AwayTitle, UpdateSourceTrigger=PropertyChanged, Delay=300}" MaxLength="60" AutomationProperties.Name="Be right back title" />
-                                                <TextBlock Text="Message" Style="{StaticResource Linkast.Text.FieldLabel}" Margin="0,10,0,5" />
-                                                <TextBox Text="{Binding AwaySubtitle, UpdateSourceTrigger=PropertyChanged, Delay=300}" MaxLength="100" AutomationProperties.Name="Be right back message" />
-                                                <WrapPanel Margin="0,10,0,0">
-                                                    <Button Style="{StaticResource Linkast.Button.Secondary}" Command="{Binding ChooseAwayImageCommand}" Margin="0,0,8,6">
-                                                        <StackPanel Orientation="Horizontal">
-                                                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xEB9F;" FontSize="13" Margin="0,0,8,0" />
-                                                            <TextBlock Text="Use my own picture…" />
-                                                        </StackPanel>
-                                                    </Button>
-                                                    <Button Style="{StaticResource Linkast.Button.Secondary}" Command="{Binding ChooseAwayVideoCommand}" Margin="0,0,8,6"
-                                                            ToolTip="A clip that plays on a loop while the screen is on. Its sound is not streamed.">
-                                                        <StackPanel Orientation="Horizontal">
-                                                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE714;" FontSize="13" Margin="0,0,8,0" />
-                                                            <TextBlock Text="Use my own video…" />
-                                                        </StackPanel>
-                                                    </Button>
-                                                    <Button Style="{StaticResource Linkast.Button.Subtle}" Content="Use the Linkast card" Command="{Binding UseAwayCardCommand}" Margin="0,0,8,6"
-                                                            Visibility="{Binding HasAwayCustom, Converter={StaticResource BoolToVis}}" />
-                                                </WrapPanel>
-                                                <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,2,0,0" Visibility="{Binding HasAwayVideo, Converter={StaticResource BoolToVis}}"
-                                                           Text="{Binding AwayVideoName, StringFormat=Plays {0} on a loop. Its sound is not streamed; the preview shows the card instead of the video.}" />
-                                                <CheckBox Content="Also mute game and PC sound while away (your microphone stays on)" IsChecked="{Binding AwayMuteSystemAudio}" Margin="0,4,0,0" />
-                                            </StackPanel>
-                                        </Grid>
-                                    </StackPanel>
-                                </Border>
                             </StackPanel>
                         </StackPanel>
                     </StackPanel>
@@ -754,14 +959,18 @@
                                         <AccessText Text="_Go live" />
                                     </StackPanel>
                                 </Button>
-                                <Button Style="{StaticResource Linkast.Button.Destructive}" Command="{Binding StopCommand}" MinHeight="48"
+                                <Button Style="{StaticResource Linkast.Button.Destructive}" Command="{Binding EndStreamCommand}" MinHeight="48"
                                         FontSize="{StaticResource Linkast.FontSize.Action}" FontFamily="{DynamicResource Linkast.Font.Display}" FontWeight="Bold"
-                                        Visibility="{Binding IsBroadcasting, Converter={StaticResource BoolToVis}}" ToolTip="Stop streaming">
+                                        Visibility="{Binding IsBroadcasting, Converter={StaticResource BoolToVis}}"
+                                        ToolTip="Stop streaming. With an end scene chosen (Scenes tab), it shows first; press again to end at once.">
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE71A;" FontSize="16" Margin="0,0,10,0" />
                                         <AccessText Text="_End stream" />
                                     </StackPanel>
                                 </Button>
+                                <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,8,0,0" Foreground="{DynamicResource Linkast.Warning}"
+                                           Visibility="{Binding IsEnding, Converter={StaticResource BoolToVis}}" AutomationProperties.LiveSetting="Polite"
+                                           Text="{Binding EndingSecondsLeft, StringFormat=The stream ends in {0} s. Press End stream again to end now.}" />
                                 <!-- Record to a file without going live (Go live records too when "Also record" is on). -->
                                 <Button Style="{StaticResource Linkast.Button.Secondary}" Command="{Binding ToggleRecordingCommand}" Margin="0,8,0,0"
                                         Visibility="{Binding IsBroadcasting, Converter={x:Static vm:Converters.InverseBoolToVisibility}}"
@@ -785,8 +994,9 @@
                                             <TextBlock Text="{Binding MicrophoneMuted, Converter={x:Static vm:Converters.MuteLabel}}" />
                                         </StackPanel>
                                     </ToggleButton>
-                                    <ToggleButton Style="{StaticResource Linkast.ToggleButton.Secondary}" Margin="0,0,8,0" IsChecked="{Binding Overlays.IsAway}"
-                                                  ToolTip="Cover the stream with the Be right back screen without stopping it" AutomationProperties.Name="Be right back">
+                                    <ToggleButton Style="{StaticResource Linkast.ToggleButton.Secondary}" Margin="0,0,8,0" IsChecked="{Binding IsOnBreak, Mode=OneWay}"
+                                                  Command="{Binding ToggleBeRightBackCommand}"
+                                                  ToolTip="Switch to the Be right back scene, and back to where you were" AutomationProperties.Name="Be right back">
                                         <StackPanel Orientation="Horizontal">
                                             <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE769;" FontSize="12" Margin="0,0,6,0" />
                                             <TextBlock Text="Be right back" />
@@ -905,8 +1115,13 @@
                             <StackPanel>
                                 <DockPanel>
                                     <ToggleButton x:Name="LogToggle" DockPanel.Dock="Right" Style="{StaticResource Linkast.ToggleButton.Subtle}" Checked="OnLogToggled"
-                                                  Unchecked="OnLogToggled" Content="Show log" AutomationProperties.Name="Show activity log" />
-                                    <TextBlock Text="Activity" Style="{StaticResource Linkast.Card.Title}" Margin="0" />
+                                                  Unchecked="OnLogToggled" Padding="10,4" MinHeight="30" VerticalAlignment="Center" AutomationProperties.Name="Show activity log">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock x:Name="LogToggleText" Text="Show log" VerticalAlignment="Center" />
+                                            <TextBlock x:Name="LogToggleGlyph" Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE70D;" FontSize="10" Margin="8,0,0,0" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </ToggleButton>
+                                    <TextBlock Text="Activity" Style="{StaticResource Linkast.Card.Title}" Margin="0" VerticalAlignment="Center" />
                                 </DockPanel>
                                 <ListBox x:Name="LogList" ItemsSource="{Binding LogLines}" FontFamily="{DynamicResource Linkast.Font.Mono}" FontSize="11"
                                          MaxHeight="260" Margin="0,8,0,0" Background="Transparent" BorderThickness="0"
@@ -927,21 +1142,29 @@
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
                                 </ListBox>
-                                <WrapPanel Margin="0,10,0,0">
-                                    <Button Style="{StaticResource Linkast.Button.Secondary}" Command="{Binding CopyDiagnosticsCommand}" Margin="0,0,8,0"
-                                            ToolTip="Copies a report without your stream key, for bug reports">
+                                <!-- Two equal buttons side by side: the status column is narrow, so the labels are short and the tooltips say more. -->
+                                <Grid Margin="0,12,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="8" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button Style="{StaticResource Linkast.Button.Secondary}" Command="{Binding CopyDiagnosticsCommand}" HorizontalAlignment="Stretch"
+                                            Padding="8,6" ToolTip="Copy a diagnostics report for bug reports. Your stream key is never included."
+                                            AutomationProperties.Name="Copy diagnostics">
                                         <StackPanel Orientation="Horizontal">
-                                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE8C8;" FontSize="13" Margin="0,0,8,0" />
-                                            <TextBlock Text="Copy diagnostics" />
+                                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE8C8;" FontSize="13" Margin="0,0,8,0" VerticalAlignment="Center" />
+                                            <TextBlock Text="Copy report" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                                         </StackPanel>
                                     </Button>
-                                    <Button Style="{StaticResource Linkast.Button.Secondary}" Command="{Binding OpenLogFolderCommand}">
+                                    <Button Grid.Column="2" Style="{StaticResource Linkast.Button.Secondary}" Command="{Binding OpenLogFolderCommand}" HorizontalAlignment="Stretch"
+                                            Padding="8,6" ToolTip="Open the folder with Linkast's log files" AutomationProperties.Name="Open logs">
                                         <StackPanel Orientation="Horizontal">
-                                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE8B7;" FontSize="13" Margin="0,0,8,0" />
-                                            <TextBlock Text="Open logs" />
+                                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE8B7;" FontSize="13" Margin="0,0,8,0" VerticalAlignment="Center" />
+                                            <TextBlock Text="Open logs" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                                         </StackPanel>
                                     </Button>
-                                </WrapPanel>
+                                </Grid>
                             </StackPanel>
                         </Border>
 

@@ -72,7 +72,8 @@ public sealed class LiveCameraLayer
 
 /// <summary>Places a camera layer on the output canvas for one stream.</summary>
 /// <param name="Placement">Normalized to the output canvas.</param>
-public sealed record CameraLayerBinding(LiveCameraLayer Layer, NormalizedRect Placement);
+/// <param name="StartHidden">Starts off the canvas: the camera is in another scene, ready to be shown by a switch.</param>
+public sealed record CameraLayerBinding(LiveCameraLayer Layer, NormalizedRect Placement, bool StartHidden = false);
 
 /// <summary>A rendered layer that FFmpeg reads from a local named pipe as raw BGRA video.</summary>
 public interface IVideoLayerInput : IAsyncDisposable
@@ -115,4 +116,10 @@ public interface ILiveSceneControl
     /// can reappear instantly (for example when switching back to a layout that shows it).
     /// </summary>
     Task<bool> HideLayerAsync(string layerId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Moves, refits, trims, shows or hides the captured game or screen in the running stream
+    /// (null placement hides it). False when nothing is live or the stream has no captured picture.
+    /// </summary>
+    Task<bool> SetBaseAsync(NormalizedRect? placement, NormalizedRect crop, BaseFit fit, CancellationToken cancellationToken = default);
 }

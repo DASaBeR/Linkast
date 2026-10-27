@@ -46,7 +46,8 @@ public static class Converters
 
     public static IValueConverter MuteLabel { get; } = new Lambda(v => v is true ? "Muted" : "Mute");
 
-    public static IValueConverter AwayLabel { get; } = new Lambda(v => v is true ? "Back to the stream" : "Show now");
+    /// <summary>Visible when a count is 0, for "nothing here yet" hints.</summary>
+    public static IValueConverter ZeroToVisibility { get; } = new Lambda(v => v is 0 ? Visibility.Visible : Visibility.Collapsed);
 
     public static IValueConverter InverseBool { get; } = new Lambda(v => v is not true);
 
@@ -102,6 +103,16 @@ public static class Converters
         Core.Camera.OverlayPosition.BottomCenter => "Bottom center",
         Core.Camera.OverlayPosition.BottomRight => "Bottom right",
         Core.Camera.OverlayPosition.Custom => "Custom (dragged in the preview)",
+        Core.Camera.SceneKind.Gaming => "Gaming: game with camera",
+        Core.Camera.SceneKind.JustChatting => "Just chatting: large camera",
+        Core.Camera.SceneKind.StartingSoon => "Starting soon",
+        Core.Camera.SceneKind.BeRightBack => "Be right back",
+        Core.Camera.SceneKind.Ending => "Ending: thanks for watching",
+        Core.Camera.SceneKind.Custom => "Empty scene",
+        SceneBackgroundChoice.None => "None",
+        SceneBackgroundChoice.Card => "Linkast card",
+        SceneBackgroundChoice.Picture => "Picture",
+        SceneBackgroundChoice.Video => "Video (loops)",
         _ => v?.ToString(),
     });
 

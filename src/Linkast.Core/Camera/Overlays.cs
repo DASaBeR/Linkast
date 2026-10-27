@@ -20,6 +20,14 @@ public sealed record WebOverlaySource(Secret Url, int PageWidth, int PageHeight)
 /// <param name="VideoPath">A video file FFmpeg plays on a loop (its sound is not streamed). Wins over the picture.</param>
 public sealed record AwayScreenSource(string Title, string? Subtitle, string? ImagePath, string? VideoPath = null) : OverlaySource;
 
+/// <summary>
+/// A scene's picture or video for one stream. FFmpeg reads the file itself: a picture once, a video on a
+/// loop. It covers the whole canvas and is shown or hidden live as scenes change.
+/// </summary>
+/// <param name="AudioChannel">For a video: the mixer channel its sound plays on (see <see cref="AudioChannels"/>).</param>
+/// <param name="AudioGain">The starting gain of that sound (0 while the scene is not on).</param>
+public sealed record MediaLayerBinding(string LayerId, string FilePath, bool IsVideo, bool StartHidden, string? AudioChannel = null, double AudioGain = 0);
+
 /// <summary>Places an overlay on the output canvas for one stream.</summary>
 /// <param name="Placement">Normalized to the output canvas.</param>
 /// <param name="StartHidden">Starts off the canvas; shown later without a restart (the away screen).</param>

@@ -35,11 +35,11 @@ public sealed class SceneEditor : UserControl
     private const double SnapDistance = 18;
     private const double MinSize = 80;
 
-    // Stacking: the gameplay area, cameras, overlays, the away screen, then the snap guides.
+    // Stacking, as the stream draws it: the game, the scene's background, cameras, overlays, then the snap guides.
     private const int ZBase = 0;
-    private const int ZCameras = 1;
-    private const int ZOverlays = 3;
-    private const int ZDecorations = 5;
+    private const int ZMedia = 1;
+    private const int ZCameras = 2;
+    private const int ZOverlays = 4;
     private const int ZGuides = 6;
 
     private static readonly Brush Accent = new SolidColorBrush(Color.FromRgb(0x91, 0x46, 0xFF));
@@ -91,9 +91,13 @@ public sealed class SceneEditor : UserControl
     public static readonly DependencyProperty SnapProperty = DependencyProperty.Register(
         nameof(Snap), typeof(bool), typeof(SceneEditor), new PropertyMetadata(true));
 
-    /// <summary>Pictures drawn above everything, read-only (the away screen while it is on).</summary>
-    public static readonly DependencyProperty OverlayItemsProperty = DependencyProperty.Register(
-        nameof(OverlayItems), typeof(IEnumerable), typeof(SceneEditor), new PropertyMetadata(null, (d, _) => ((SceneEditor)d).RefreshDecorations()));
+    /// <summary>The scene's background picture (a card or a picture), covering the canvas above the game; read-only.</summary>
+    public static readonly DependencyProperty SceneBackgroundProperty = DependencyProperty.Register(
+        nameof(SceneBackground), typeof(ImageSource), typeof(SceneEditor), new PropertyMetadata(null, (d, _) => ((SceneEditor)d).RefreshSceneMedia()));
+
+    /// <summary>The scene's background video, played muted on a loop in its place; read-only.</summary>
+    public static readonly DependencyProperty SceneVideoProperty = DependencyProperty.Register(
+        nameof(SceneVideo), typeof(string), typeof(SceneEditor), new PropertyMetadata(null, (d, _) => ((SceneEditor)d).RefreshSceneMedia()));
 
     /// <summary>Draws the scene as the stream will: no outlines, labels or placeholders except on the selected or hovered item.</summary>
     public static readonly DependencyProperty IsPreviewOnlyProperty = DependencyProperty.Register(
@@ -102,7 +106,10 @@ public sealed class SceneEditor : UserControl
     private readonly Canvas _canvas = new() { ClipToBounds = true, Background = new SolidColorBrush(Color.FromRgb(24, 24, 28)) };
     private readonly Line _vGuide = Guide();
     private readonly Line _hGuide = Guide();
-    private readonly List<Image> _decorations = [];
+    private readonly Image _sceneImage = new() { Stretch = Stretch.UniformToFill, IsHitTestVisible = false };
+    private readonly MediaElement _sceneVideo = new() { Stretch = Stretch.UniformToFill, IsMuted = true, IsHitTestVisible = false, LoadedBehavior = MediaState.Manual, UnloadedBehavior = MediaState.Close };
+    private readonly Border _sceneMedia = new() { ClipToBounds = true, IsHitTestVisible = false };
+    private string? _playing;
     private readonly List<LayerVisual> _cameras = [];
     private readonly List<LayerVisual> _overlays = [];
     private readonly BaseVisual _base;
@@ -118,9 +125,23 @@ public sealed class SceneEditor : UserControl
     {
         _base = new BaseVisual(this);
         _canvas.Children.Add(_base.Root);
+        var media = new Grid();
+        media.Children.Add(_sceneImage);
+        media.Children.Add(_sceneVideo);
+        _sceneMedia.Child = media;
+        _sceneVideo.MediaEnded += (_, _) =>
+        {
+            // Loops like the stream's copy does.
+            _sceneVideo.Position = TimeSpan.Zero;
+            _sceneVideo.Play();
+        };
+        _canvas.Children.Add(_sceneMedia);
         _canvas.Children.Add(_vGuide);
         _canvas.Children.Add(_hGuide);
         Panel.SetZIndex(_base.Root, ZBase);
+        Panel.SetZIndex(_sceneMedia, ZMedia);
+        Unloaded += (_, _) => StopVideo();
+        Loaded += (_, _) => RefreshSceneMedia();
         Panel.SetZIndex(_vGuide, ZGuides);
         Panel.SetZIndex(_hGuide, ZGuides);
         _viewbox = new Viewbox { Stretch = Stretch.Uniform, Child = _canvas };
@@ -201,10 +222,16 @@ public sealed class SceneEditor : UserControl
         set => SetValue(IsPreviewOnlyProperty, value);
     }
 
-    public IEnumerable? OverlayItems
+    public ImageSource? SceneBackground
     {
-        get => (IEnumerable?)GetValue(OverlayItemsProperty);
-        set => SetValue(OverlayItemsProperty, value);
+        get => (ImageSource?)GetValue(SceneBackgroundProperty);
+        set => SetValue(SceneBackgroundProperty, value);
+    }
+
+    public string? SceneVideo
+    {
+        get => (string?)GetValue(SceneVideoProperty);
+        set => SetValue(SceneVideoProperty, value);
     }
 
     public bool ShowOverlayNames
@@ -334,40 +361,40 @@ public sealed class SceneEditor : UserControl
             v.Refresh();
         }
 
-        RefreshDecorations();
+        RefreshSceneMedia();
     }
 
-    /// <summary>Redraws the read-only pictures (the away screen) above every camera and overlay and below the snap guides.</summary>
-    private void RefreshDecorations()
+    /// <summary>
+    /// The scene's background over the whole canvas, cropped to fill it as the stream does: a picture, or
+    /// a video playing muted on a loop (only while the editor is on screen).
+    /// </summary>
+    private void RefreshSceneMedia()
     {
-        foreach (var image in _decorations)
-        {
-            _canvas.Children.Remove(image);
-        }
+        _sceneMedia.Width = CanvasWidth;
+        _sceneMedia.Height = CanvasHeight;
+        _sceneImage.Source = SceneVideo is null ? SceneBackground : null;
+        _sceneMedia.Visibility = SceneVideo is not null || SceneBackground is not null ? Visibility.Visible : Visibility.Collapsed;
 
-        _decorations.Clear();
-        if (OverlayItems is null)
+        var wanted = IsLoaded ? SceneVideo : null;
+        if (wanted == _playing)
         {
             return;
         }
 
-        foreach (var item in OverlayItems.OfType<OverlayPreview>())
+        StopVideo();
+        if (wanted is not null && Uri.TryCreate(wanted, UriKind.Absolute, out var uri))
         {
-            var r = item.Placement;
-            var image = new Image
-            {
-                Source = item.Image,
-                Stretch = Stretch.Uniform,
-                Width = r.Width * CanvasWidth,
-                Height = r.Height * CanvasHeight,
-                IsHitTestVisible = false,
-            };
-            Canvas.SetLeft(image, r.X * CanvasWidth);
-            Canvas.SetTop(image, r.Y * CanvasHeight);
-            Panel.SetZIndex(image, ZDecorations);
-            _decorations.Add(image);
-            _canvas.Children.Add(image);
+            _sceneVideo.Source = uri;
+            _sceneVideo.Play();
+            _playing = wanted;
         }
+    }
+
+    private void StopVideo()
+    {
+        _sceneVideo.Stop();
+        _sceneVideo.Source = null;
+        _playing = null;
     }
 
     internal void Select(ISceneItem item)

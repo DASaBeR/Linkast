@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using System.Collections.ObjectModel;
+using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Linkast.Core.Settings;
@@ -39,6 +40,9 @@ public sealed partial class HotkeysViewModel : ObservableObject
             new(HotkeyAction.ToggleCameras, "Cameras off / on"),
             new(HotkeyAction.BeRightBack, "Be right back on / off"),
             new(HotkeyAction.Record, "Start / stop recording"),
+            new(HotkeyAction.NextScene, "Next scene"),
+            new(HotkeyAction.PreviousScene, "Previous scene"),
+            .. Enumerable.Range(1, 9).Select(n => new HotkeyRowViewModel(HotkeyAction.Scene1 + (n - 1), string.Create(CultureInfo.InvariantCulture, $"Scene {n}"))),
         ];
         Load(new HotkeySettings());
     }
