@@ -15,9 +15,10 @@ public sealed record WebOverlaySource(Secret Url, int PageWidth, int PageHeight)
 
 /// <summary>
 /// The "Be right back" screen: covers the whole stream so the game is hidden without stopping the
-/// stream. Either a picture, or a card with the Linkast look and the given text.
+/// stream. A video that loops, a picture, or a card with the Linkast look and the given text.
 /// </summary>
-public sealed record AwayScreenSource(string Title, string? Subtitle, string? ImagePath) : OverlaySource;
+/// <param name="VideoPath">A video file FFmpeg plays on a loop (its sound is not streamed). Wins over the picture.</param>
+public sealed record AwayScreenSource(string Title, string? Subtitle, string? ImagePath, string? VideoPath = null) : OverlaySource;
 
 /// <summary>Places an overlay on the output canvas for one stream.</summary>
 /// <param name="Placement">Normalized to the output canvas.</param>

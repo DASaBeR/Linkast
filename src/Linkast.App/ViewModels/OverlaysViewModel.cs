@@ -404,8 +404,13 @@ public sealed partial class OverlaysViewModel : ObservableObject
     public partial string? AwaySubtitle { get; set; } = "Stay tuned.";
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HasAwayImage))]
+    [NotifyPropertyChangedFor(nameof(HasAwayImage), nameof(HasAwayCustom))]
     public partial string? AwayImagePath { get; set; }
+
+    /// <summary>A video that loops while the screen is on (a "Starting soon" or "Thanks for watching" clip). Wins over the picture.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasAwayVideo), nameof(HasAwayCustom), nameof(AwayVideoName))]
+    public partial string? AwayVideoPath { get; set; }
 
     [ObservableProperty]
     public partial bool AwayMuteSystemAudio { get; set; } = true;
@@ -416,6 +421,13 @@ public sealed partial class OverlaysViewModel : ObservableObject
 
     public bool HasAwayImage => !string.IsNullOrWhiteSpace(AwayImagePath);
 
+    public bool HasAwayVideo => !string.IsNullOrWhiteSpace(AwayVideoPath);
+
+    /// <summary>A picture or a video replaces the built-in card.</summary>
+    public bool HasAwayCustom => HasAwayImage || HasAwayVideo;
+
+    public string? AwayVideoName => HasAwayVideo ? Path.GetFileName(AwayVideoPath) : null;
+
     [RelayCommand]
     private void ToggleAway() => IsAway = !IsAway;
 
@@ -424,12 +436,31 @@ public sealed partial class OverlaysViewModel : ObservableObject
     {
         if (PickImage() is { } path)
         {
+            AwayVideoPath = null;
             AwayImagePath = path;
         }
     }
 
     [RelayCommand]
-    private void UseAwayCard() => AwayImagePath = null;
+    private void ChooseAwayVideo()
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Choose a video to loop",
+            Filter = "Videos (*.mp4;*.mkv;*.mov;*.webm;*.avi)|*.mp4;*.mkv;*.mov;*.webm;*.avi",
+        };
+        if (dialog.ShowDialog() == true)
+        {
+            AwayVideoPath = dialog.FileName;
+        }
+    }
+
+    [RelayCommand]
+    private void UseAwayCard()
+    {
+        AwayVideoPath = null;
+        AwayImagePath = null;
+    }
 
     partial void OnIsAwayChanged(bool value)
     {
@@ -442,6 +473,8 @@ public sealed partial class OverlaysViewModel : ObservableObject
     partial void OnAwaySubtitleChanged(string? value) => AwayLooksChanged();
 
     partial void OnAwayImagePathChanged(string? value) => AwayLooksChanged();
+
+    partial void OnAwayVideoPathChanged(string? value) => AwayLooksChanged();
 
     partial void OnAwayMuteSystemAudioChanged(bool value) => Changed(null, liveRelevant: false);
 
@@ -489,7 +522,7 @@ public sealed partial class OverlaysViewModel : ObservableObject
 
         list.Add(new OverlayLayerBinding(
             AwayLayerId,
-            new AwayScreenSource(AwayTitle, AwaySubtitle, AwayImagePath),
+            new AwayScreenSource(AwayTitle, AwaySubtitle, AwayImagePath, AwayVideoPath),
             new NormalizedRect(0, 0, 1, 1),
             StartHidden: !IsAway));
         return list;
@@ -528,6 +561,7 @@ public sealed partial class OverlaysViewModel : ObservableObject
             AwayTitle = settings.Away.Title;
             AwaySubtitle = settings.Away.Subtitle;
             AwayImagePath = settings.Away.ImagePath;
+            AwayVideoPath = settings.Away.VideoPath;
             AwayMuteSystemAudio = settings.Away.MuteSystemAudio;
         }
         finally
@@ -565,6 +599,7 @@ public sealed partial class OverlaysViewModel : ObservableObject
                 Title = AwayTitle,
                 Subtitle = AwaySubtitle,
                 ImagePath = AwayImagePath,
+                VideoPath = AwayVideoPath,
                 MuteSystemAudio = AwayMuteSystemAudio,
             },
         };
@@ -615,6 +650,12 @@ public sealed partial class OverlaysViewModel : ObservableObject
 
     private BitmapSource RenderAway(int width, int height)
     {
+        if (HasAwayVideo)
+        {
+            // The video plays in the stream; the preview and thumbnail only say which one.
+            return OverlayRenderer.RenderAwayCard(width, height, AwayTitle, $"Video: {AwayVideoName}");
+        }
+
         if (OverlayRenderer.LoadImage(AwayImagePath) is { } picture)
         {
             var frame = OverlayRenderer.ToLayerFrame(picture, width, height, cover: true);

@@ -27,7 +27,14 @@ public sealed record PipeAudioJobInput(string PipePath, PcmFormat Format, double
 public sealed record ToneAudioJobInput(double Gain) : AudioJobInput(Gain);
 
 /// <summary>A rendered BGRA layer (camera) read from a named pipe and overlaid at <paramref name="Placement"/>.</summary>
-public sealed record VideoLayerJobInput(string PipePath, int Width, int Height, int FrameRate, Linkast.Core.Camera.PixelRect Placement);
+public sealed record VideoLayerJobInput(string PipePath, int Width, int Height, int FrameRate, Linkast.Core.Camera.PixelRect Placement)
+{
+    /// <summary>
+    /// When set, the layer is this video file instead of a pipe: FFmpeg decodes it, loops it for ever
+    /// and paces it to real time (the away screen's video). The pipe fields are then unused.
+    /// </summary>
+    public string? FilePath { get; init; }
+}
 
 /// <summary>Fully resolved input to <see cref="FfmpegArgumentBuilder"/>.</summary>
 /// <param name="PublishUrl">Complete RTMP URL including the stream key, or null to only record. Treated as a secret.</param>

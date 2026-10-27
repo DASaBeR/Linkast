@@ -334,6 +334,14 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 foreach (var overlay in session.Overlays)
                 {
                     var px = PlaceLayer(session, overlay.LayerId, overlay.Placement, overlay.StartHidden);
+                    if (overlay.Source is AwayScreenSource { VideoPath: { Length: > 0 } video } && File.Exists(video))
+                    {
+                        // FFmpeg plays and loops the file itself; nothing to pipe. A missing file falls back to the picture or card.
+                        jobLayers.Add(new VideoLayerJobInput(string.Empty, px.Width, px.Height, 0, px) { FilePath = video });
+                        layerIds.Add(overlay.LayerId);
+                        continue;
+                    }
+
                     var input = _overlayProvider.Open(overlay, px.Width, px.Height, maxFps);
                     layerInputs.Add(input);
                     await input.StartAsync(ct).ConfigureAwait(false);

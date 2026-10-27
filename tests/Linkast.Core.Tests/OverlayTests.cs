@@ -98,10 +98,15 @@ public class OverlayTests
 
         var (back, _) = SettingsSerializer.Deserialize(SettingsSerializer.Serialize(new LinkastSettings
         {
-            Overlays = new OverlaySettings { Items = [new OverlayConfig { LayerId = "logo", Kind = OverlayKind.Image, ImagePath = @"C:\logo.png", Position = OverlayPosition.BottomRight }] },
+            Overlays = new OverlaySettings
+            {
+                Items = [new OverlayConfig { LayerId = "logo", Kind = OverlayKind.Image, ImagePath = @"C:\logo.png", Position = OverlayPosition.BottomRight }],
+                Away = new AwayScreenSettings { VideoPath = @"C:\clips\ending.mp4" },
+            },
         }));
         Assert.Equal(OverlayPosition.BottomRight, back.Overlays.Items[0].Position);
         Assert.Equal(@"C:\logo.png", back.Overlays.Items[0].ImagePath);
+        Assert.Equal(@"C:\clips\ending.mp4", back.Overlays.Away.VideoPath);
         Assert.True(back.Overlays.Away.MuteSystemAudio);
     }
 }

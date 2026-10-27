@@ -149,6 +149,23 @@ public class ArgumentBuilderTests
     }
 
     [Fact]
+    public void A_video_file_layer_is_looped_and_paced_by_ffmpeg()
+    {
+        var file = new VideoLayerJobInput(string.Empty, 1920, 1080, 0, new Linkast.Core.Camera.PixelRect(0, 0, 1920, 1080)) { FilePath = @"C:\Videos\ending.mp4" };
+        var job = Job() with { Layers = [file], CommandPort = 5555 };
+        var args = FfmpegArgumentBuilder.Build(job);
+        var at = args.ToList().IndexOf(@"C:\Videos\ending.mp4");
+        Assert.Equal(["-stream_loop", "-1", "-re", "-i"], args.Skip(at - 4).Take(4).ToArray());
+
+        // Same place in the graph as a piped layer, and the audio index moves past it.
+        var graph = ValueAfter(args, "-filter_complex");
+        Assert.Contains("[1:v]scale@cam0=w=1920:h=1080", graph, StringComparison.Ordinal);
+        Assert.Contains("[2:a]", graph, StringComparison.Ordinal);
+
+        Assert.Throws<StreamFailureException>(() => FfmpegArgumentBuilder.Build(job with { Layers = [file with { FilePath = "ending.mp4" }] }));
+    }
+
+    [Fact]
     public void Trimmed_edges_crop_the_capture_before_it_is_scaled()
     {
         var job = Job() with { BaseCrop = new Linkast.Core.Camera.NormalizedRect(0.1, 0.05, 0.8, 0.9) };

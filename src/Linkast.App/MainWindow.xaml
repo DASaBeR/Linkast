@@ -643,7 +643,7 @@
                                             <TextBlock Text="Be right back screen" Style="{StaticResource Linkast.Card.Title}" Margin="0" />
                                         </DockPanel>
                                         <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,0,0,12"
-                                                   Text="Covers the game, cameras and overlays without stopping the stream. Use it for breaks, or before you start as a Starting soon screen." />
+                                                   Text="Covers the game, cameras and overlays without stopping the stream. Use it for breaks, or as a Starting soon or Thanks for watching screen: switch it on before you go live or before you end, and a video loops until you switch it off." />
                                         <Grid>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="200" />
@@ -665,9 +665,18 @@
                                                             <TextBlock Text="Use my own picture…" />
                                                         </StackPanel>
                                                     </Button>
+                                                    <Button Style="{StaticResource Linkast.Button.Secondary}" Command="{Binding ChooseAwayVideoCommand}" Margin="0,0,8,6"
+                                                            ToolTip="A clip that plays on a loop while the screen is on. Its sound is not streamed.">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE714;" FontSize="13" Margin="0,0,8,0" />
+                                                            <TextBlock Text="Use my own video…" />
+                                                        </StackPanel>
+                                                    </Button>
                                                     <Button Style="{StaticResource Linkast.Button.Subtle}" Content="Use the Linkast card" Command="{Binding UseAwayCardCommand}" Margin="0,0,8,6"
-                                                            Visibility="{Binding HasAwayImage, Converter={StaticResource BoolToVis}}" />
+                                                            Visibility="{Binding HasAwayCustom, Converter={StaticResource BoolToVis}}" />
                                                 </WrapPanel>
+                                                <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,2,0,0" Visibility="{Binding HasAwayVideo, Converter={StaticResource BoolToVis}}"
+                                                           Text="{Binding AwayVideoName, StringFormat=Plays {0} on a loop. Its sound is not streamed; the preview shows the card instead of the video.}" />
                                                 <CheckBox Content="Also mute game and PC sound while away (your microphone stays on)" IsChecked="{Binding AwayMuteSystemAudio}" Margin="0,4,0,0" />
                                             </StackPanel>
                                         </Grid>

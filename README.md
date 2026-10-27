@@ -15,7 +15,7 @@ Linkast is deliberately small. It is not a production studio like OBS. There are
 ## Streamer essentials
 
 - **Alerts and overlays** from Reymit, Streamlabs, StreamElements or any alert service: paste the same link you would give OBS as a Browser Source. Pictures such as your logo too. Show, hide and resize them live.
-- **Be right back** screen in one click (also works as "Starting soon").
+- **Be right back** screen in one click: the Linkast card, your own picture, or a video that loops (also works as "Starting soon" and "Thanks for watching").
 - **Record** to a file, alone or alongside every stream, with one encode for both. MKV is crash-safe; an MP4 copy is optional.
 - **Microphone mute and noise removal** that work live, without restarting the stream.
 - **Global hotkeys** that work in games: go live, mute, cameras, Be right back, record.

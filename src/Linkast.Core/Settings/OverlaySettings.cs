@@ -50,6 +50,9 @@ public sealed record AwayScreenSettings
     /// <summary>Optional picture instead of the built-in card.</summary>
     public string? ImagePath { get; init; }
 
+    /// <summary>Optional video that loops (a "Starting soon" or "Thanks for watching" clip); wins over the picture.</summary>
+    public string? VideoPath { get; init; }
+
     /// <summary>Also silence game and PC sound while away (the microphone is not affected).</summary>
     public bool MuteSystemAudio { get; init; } = true;
 }

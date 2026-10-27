@@ -66,6 +66,13 @@ public static class FfmpegArgumentBuilder
 
         foreach (var layer in job.Layers)
         {
+            if (layer.FilePath is { } file)
+            {
+                ValidateVideoFilePath(file);
+                args.AddRange(["-stream_loop", "-1", "-re", "-i", file]);
+                continue;
+            }
+
             ValidatePipePath(layer.PipePath);
 
             // Wall-clock timestamps put the camera on the same clock as the live capture. With
@@ -421,6 +428,14 @@ public static class FfmpegArgumentBuilder
             || url.Any(c => char.IsWhiteSpace(c) || char.IsControl(c)) || url.StartsWith('-'))
         {
             throw new StreamFailureException(new StreamError(ErrorCategory.Configuration, "destination.url", "The output URL is not a valid RTMP URL."));
+        }
+    }
+
+    private static void ValidateVideoFilePath(string path)
+    {
+        if (!Path.IsPathFullyQualified(path) || path.Any(char.IsControl) || path.StartsWith('-'))
+        {
+            throw new StreamFailureException(new StreamError(ErrorCategory.Configuration, "overlay.video", "The away screen's video file name is not valid."));
         }
     }
 
