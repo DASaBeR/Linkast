@@ -130,10 +130,11 @@
                                 <Border CornerRadius="{StaticResource Linkast.Radius.Preview}" BorderBrush="{DynamicResource Linkast.BorderStrong}"
                                         BorderThickness="1" Background="#FF05060E" Padding="1">
                                     <Grid DataContext="{Binding Webcam}">
-                                        <views:SceneEditor Layers="{Binding Layers}" SelectedLayer="{Binding Selected, Mode=TwoWay}"
+                                        <views:SceneEditor x:Name="OutputPreview" Layers="{Binding Layers}" SelectedLayer="{Binding Selected, Mode=TwoWay}"
                                                            CanvasWidth="{Binding CanvasWidth}" CanvasHeight="{Binding CanvasHeight}"
                                                            BasePlacement="{Binding BasePlacement, Mode=TwoWay}" BaseFit="{Binding BaseFit}" BaseCrop="{Binding BaseCrop, Mode=TwoWay}"
                                                            BackgroundSource="{Binding EditorBackground}" MaxHeight="340" IsPreviewOnly="True"
+                                                           ShowOverlayNames="{Binding IsSelected, ElementName=TabOverlays}"
                                                            Overlays="{Binding DataContext.Overlays.Items, RelativeSource={RelativeSource AncestorType=Window}}"
                                                            SelectedOverlay="{Binding DataContext.Overlays.Selected, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}"
                                                            OverlayItems="{Binding DataContext.Overlays.PreviewItems, RelativeSource={RelativeSource AncestorType=Window}}"
@@ -532,7 +533,7 @@
                                             <TextBlock Text="Overlays" Style="{StaticResource Linkast.Card.Title}" Margin="0" />
                                         </DockPanel>
                                         <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,0,0,12"
-                                                   Text="Alerts, a chat box or a logo on top of your stream. Drag an overlay in the Output preview to put it anywhere and drag its corner to resize it. Showing, hiding, moving and resizing work while live." />
+                                                   Text="Alerts, a chat box or a logo on top of your stream. While this tab is open the Output preview outlines every overlay with its name. Click an overlay here to select it there, then drag it anywhere and drag its corner to resize it. Showing, hiding, moving and resizing work while live." />
 
                                         <Border Background="{DynamicResource Linkast.Surface2}" CornerRadius="{StaticResource Linkast.Radius.Action}" Padding="16,14"
                                                 Visibility="{Binding HasItems, Converter={x:Static vm:Converters.InverseBoolToVisibility}}">
@@ -543,8 +544,25 @@
                                         <ItemsControl ItemsSource="{Binding Items}" Focusable="False">
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate DataType="{x:Type vm:OverlayItemViewModel}">
-                                                    <Border Background="{DynamicResource Linkast.Surface2}" BorderBrush="{DynamicResource Linkast.BorderSubtle}" BorderThickness="1"
-                                                            CornerRadius="{StaticResource Linkast.Radius.Action}" Padding="12" Margin="0,0,0,8">
+                                                    <!-- Clicking anywhere on the card selects the overlay in the Output preview; the selected card is highlighted. -->
+                                                    <Border CornerRadius="{StaticResource Linkast.Radius.Action}" Margin="0,0,0,8" PreviewMouseLeftButtonDown="OnOverlayCardPressed"
+                                                            AutomationProperties.Name="{Binding Name}">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border">
+                                                                <Setter Property="Background" Value="{DynamicResource Linkast.Surface2}" />
+                                                                <Setter Property="BorderBrush" Value="{DynamicResource Linkast.BorderSubtle}" />
+                                                                <Setter Property="BorderThickness" Value="1" />
+                                                                <Setter Property="Padding" Value="12" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                                        <Setter Property="Background" Value="{DynamicResource Linkast.AccentSoft}" />
+                                                                        <Setter Property="BorderBrush" Value="{DynamicResource Linkast.Accent}" />
+                                                                        <Setter Property="BorderThickness" Value="2" />
+                                                                        <Setter Property="Padding" Value="11" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
                                                         <Grid>
                                                             <Grid.ColumnDefinitions>
                                                                 <ColumnDefinition Width="96" />
@@ -564,6 +582,8 @@
                                                                     <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Icon}" Content="&#xE74D;" Foreground="{DynamicResource Linkast.Live}"
                                                                             Command="{Binding DataContext.RemoveCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}"
                                                                             ToolTip="Remove this overlay" AutomationProperties.Name="Remove overlay" />
+                                                                    <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Icon}" Content="&#xE707;" Click="OnLocateOverlay"
+                                                                            ToolTip="Show me where it is in the Output preview" AutomationProperties.Name="Show in preview" />
                                                                     <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Subtle}" Content="Change picture" MinHeight="30" Padding="10,4"
                                                                             Visibility="{Binding IsImage, Converter={StaticResource BoolToVis}}"
                                                                             Command="{Binding DataContext.ChangeImageCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}" />
@@ -619,6 +639,28 @@
                                                                     <views:ValueSlider Grid.Column="2" Label="Size" Value="{Binding Size}" Minimum="0.05" Maximum="1" Format="{}{0:0%}"
                                                                                        IsEnabled="{Binding IsSizeAdjustable}" Margin="0,-6,0,0" ToolTip="Width compared with the stream" />
                                                                 </Grid>
+
+                                                                <!-- Page size, as OBS's browser source Width and Height. Fixed while live: the running stream reads the page at its size. -->
+                                                                <Grid Margin="0,8,0,0" Visibility="{Binding IsWeb, Converter={StaticResource BoolToVis}}"
+                                                                      IsEnabled="{Binding DataContext.CanEditSettings, RelativeSource={RelativeSource AncestorType=Window}}">
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="*" />
+                                                                        <ColumnDefinition Width="14" />
+                                                                        <ColumnDefinition Width="*" />
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <StackPanel>
+                                                                        <TextBlock Text="Page width" Style="{StaticResource Linkast.Text.FieldLabel}" />
+                                                                        <TextBox Text="{Binding PageWidth, UpdateSourceTrigger=LostFocus}" AutomationProperties.Name="Page width"
+                                                                                 ToolTip="Width the page is drawn at, like Width in an OBS browser source (100 to 3840). Use what your alert service says." />
+                                                                    </StackPanel>
+                                                                    <StackPanel Grid.Column="2">
+                                                                        <TextBlock Text="Page height" Style="{StaticResource Linkast.Text.FieldLabel}" />
+                                                                        <TextBox Text="{Binding PageHeight, UpdateSourceTrigger=LostFocus}" AutomationProperties.Name="Page height"
+                                                                                 ToolTip="Height the page is drawn at, like Height in an OBS browser source (100 to 3840)." />
+                                                                    </StackPanel>
+                                                                </Grid>
+                                                                <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,8,0,0" TextWrapping="Wrap"
+                                                                           Text="{Binding PlacementSummary, StringFormat=On stream: {0}}" />
                                                             </StackPanel>
                                                         </Grid>
                                                     </Border>

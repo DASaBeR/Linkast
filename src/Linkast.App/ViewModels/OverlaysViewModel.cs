@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.IO;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -189,10 +190,22 @@ public sealed partial class OverlayItemViewModel : ObservableObject, ISceneItem
             ? custom.Clamped()
             : OverlayGeometry.Place(Position, Size, Aspect, canvasWidth, canvasHeight);
 
+    /// <summary>Its size and place on the stream in output pixels, for example "480 × 270 at 1400, 40 on the 1920 × 1080 stream".</summary>
+    public string PlacementSummary
+    {
+        get
+        {
+            var p = Placement;
+            return string.Create(CultureInfo.InvariantCulture,
+                $"{p.Width * CanvasWidth:0} × {p.Height * CanvasHeight:0} at {p.X * CanvasWidth:0}, {p.Y * CanvasHeight:0} on the {CanvasWidth:0} × {CanvasHeight:0} stream");
+        }
+    }
+
     public void SetCanvas(double width, double height)
     {
         (CanvasWidth, CanvasHeight) = (width, height);
         OnPropertyChanged(nameof(Placement));
+        OnPropertyChanged(nameof(PlacementSummary));
     }
 
     /// <summary>Something that moves or reshapes the overlay changed: the editor redraws, and it is saved and applied live.</summary>
@@ -204,14 +217,65 @@ public sealed partial class OverlayItemViewModel : ObservableObject, ISceneItem
         }
 
         OnPropertyChanged(nameof(Placement));
+        OnPropertyChanged(nameof(PlacementSummary));
         Changed?.Invoke(this, EventArgs.Empty);
     }
+
+    /// <summary>
+    /// A new page size. Like OBS, a dragged overlay keeps its scale, so it grows or shrinks on that side;
+    /// one at a fixed spot keeps its spot and takes the new shape.
+    /// </summary>
+    private void PageSizeChanged(int oldValue, int newValue, bool width)
+    {
+        if (oldValue is >= MinPageSize and <= MaxPageSize && Position == OverlayPosition.Custom && CustomPlacement is { } c)
+        {
+            var ratio = (double)newValue / oldValue;
+            _placing = true;
+            try
+            {
+                CustomPlacement = (width ? c with { Width = c.Width * ratio } : c with { Height = c.Height * ratio }).Clamped();
+            }
+            finally
+            {
+                _placing = false;
+            }
+        }
+
+        PlacementChanged();
+    }
+
+    public const int MinPageSize = 100;
+
+    public const int MaxPageSize = 3840;
 
     partial void OnImagePathChanged(string? value) => Bitmap = OverlayRenderer.LoadImage(value);
 
     partial void OnNameChanged(string value) => Changed?.Invoke(this, EventArgs.Empty);
 
-    partial void OnPositionChanged(OverlayPosition value) => PlacementChanged();
+    /// <summary>Size an overlay gets when it moves from full screen to one of the nine spots.</summary>
+    public const double SpotSize = 0.3;
+
+    partial void OnPositionChanged(OverlayPosition oldValue, OverlayPosition newValue)
+    {
+        // Leaving full screen (or a drag) for a spot with the size still at about 100 % would keep the
+        // overlay covering the whole stream, so the chosen spot would make no difference.
+        if (oldValue is OverlayPosition.FullScreen or OverlayPosition.Custom
+            && newValue is not (OverlayPosition.FullScreen or OverlayPosition.Custom)
+            && Size >= 0.9)
+        {
+            _placing = true;
+            try
+            {
+                Size = SpotSize;
+            }
+            finally
+            {
+                _placing = false;
+            }
+        }
+
+        PlacementChanged();
+    }
 
     partial void OnSizeChanged(double value) => PlacementChanged();
 
@@ -229,9 +293,27 @@ public sealed partial class OverlayItemViewModel : ObservableObject, ISceneItem
 
     partial void OnUrlChanged(string? value) => Changed?.Invoke(this, EventArgs.Empty);
 
-    partial void OnPageWidthChanged(int value) => PlacementChanged();
+    partial void OnPageWidthChanged(int oldValue, int newValue)
+    {
+        if (newValue is < MinPageSize or > MaxPageSize)
+        {
+            PageWidth = Math.Clamp(newValue, MinPageSize, MaxPageSize);
+            return;
+        }
 
-    partial void OnPageHeightChanged(int value) => PlacementChanged();
+        PageSizeChanged(oldValue, newValue, width: true);
+    }
+
+    partial void OnPageHeightChanged(int oldValue, int newValue)
+    {
+        if (newValue is < MinPageSize or > MaxPageSize)
+        {
+            PageHeight = Math.Clamp(newValue, MinPageSize, MaxPageSize);
+            return;
+        }
+
+        PageSizeChanged(oldValue, newValue, width: false);
+    }
 
     public OverlayConfig ToConfig() => new()
     {
@@ -342,17 +424,23 @@ public sealed partial class OverlaysViewModel : ObservableObject
         Changed(item, liveRelevant: true); // while live, this is where a restart is offered
     }
 
-    /// <summary>Alerts, a chat box or any web page with a transparent background, full screen by default.</summary>
+    /// <summary>
+    /// Alerts, a chat box or any web page with a transparent background. Starts like a new OBS browser
+    /// source: an 800 × 600 page at its own size, here centred, so it is easy to see and then place.
+    /// </summary>
     [RelayCommand(CanExecute = nameof(CanAdd))]
     private void AddWeb()
     {
+        const int pageWidth = 800, pageHeight = 600;
         var item = new OverlayItemViewModel(new OverlayConfig
         {
             LayerId = NewId(),
             Name = "Alerts",
             Kind = OverlayKind.Web,
-            Position = OverlayPosition.FullScreen,
-            Size = 1,
+            PageWidth = pageWidth,
+            PageHeight = pageHeight,
+            Position = OverlayPosition.Center,
+            Size = Math.Round(Math.Clamp(pageWidth / Math.Max(1, _canvasWidth), 0.05, 1), 2),
         });
         Attach(item);
         Items.Add(item);

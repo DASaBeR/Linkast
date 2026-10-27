@@ -8,6 +8,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using Linkast.App.ViewModels;
@@ -23,7 +24,10 @@ namespace Linkast.App.Views;
 /// grid, the edges and the centre with visible guides. The gameplay area also has edge handles: a plain
 /// drag resizes that side, an Alt-drag trims the captured picture on that side (a crop, as in OBS).
 /// Cameras are drawn in stream order (later ones on top), overlays above them, the away screen on top.
-/// In preview mode (the Stream page) only the selected or hovered item shows an outline and handles.
+/// In preview mode (the Stream page) only the selected or hovered item shows an outline and handles,
+/// unless <see cref="ShowOverlayNames"/> asks for every overlay's outline and name. The selected item is
+/// tinted and labelled with its name and size in output pixels; an overlay selected from outside (its
+/// card in the list) briefly flashes so it can be found among the others.
 /// </summary>
 public sealed class SceneEditor : UserControl
 {
@@ -40,6 +44,13 @@ public sealed class SceneEditor : UserControl
 
     private static readonly Brush Accent = new SolidColorBrush(Color.FromRgb(0x91, 0x46, 0xFF));
     private static readonly Brush Faint = new SolidColorBrush(Color.FromArgb(200, 0xFF, 0xFF, 0xFF));
+
+    /// <summary>Fills the selected item so even a transparent alert box shows where it is.</summary>
+    private static readonly Brush Tint = new SolidColorBrush(Color.FromArgb(0x48, 0x91, 0x46, 0xFF));
+
+    /// <summary>Shows every overlay's outline and name in preview mode (while the Overlays tab is open).</summary>
+    public static readonly DependencyProperty ShowOverlayNamesProperty = DependencyProperty.Register(
+        nameof(ShowOverlayNames), typeof(bool), typeof(SceneEditor), new PropertyMetadata(false, (d, _) => ((SceneEditor)d).RefreshAll()));
 
     public static readonly DependencyProperty LayersProperty = DependencyProperty.Register(
         nameof(Layers), typeof(IEnumerable), typeof(SceneEditor), new PropertyMetadata(null, (d, e) => ((SceneEditor)d).OnLayersChanged(e.NewValue as IEnumerable)));
@@ -99,6 +110,9 @@ public sealed class SceneEditor : UserControl
     private INotifyCollectionChanged? _observedLayers;
     private INotifyCollectionChanged? _observedOverlays;
     private bool _baseSelected;
+
+    // True while a click on the canvas selects an overlay, so it does not flash under the pointer.
+    private bool _selectingOnCanvas;
 
     public SceneEditor()
     {
@@ -193,6 +207,15 @@ public sealed class SceneEditor : UserControl
         set => SetValue(OverlayItemsProperty, value);
     }
 
+    public bool ShowOverlayNames
+    {
+        get => (bool)GetValue(ShowOverlayNamesProperty);
+        set => SetValue(ShowOverlayNamesProperty, value);
+    }
+
+    /// <summary>Flashes <paramref name="item"/> so it stands out among the others, for example after picking it in a list.</summary>
+    public void Locate(ISceneItem item) => _overlays.Concat(_cameras).FirstOrDefault(v => v.Is(item))?.Flash();
+
     private double GridStep => Math.Max(CanvasWidth, CanvasHeight) / 48;
 
     /// <summary>True while the gameplay area is the selected thing (its handles show, cameras hide theirs).</summary>
@@ -269,6 +292,10 @@ public sealed class SceneEditor : UserControl
         }
 
         RefreshAll();
+        if (value is ISceneItem item && !_selectingOnCanvas)
+        {
+            Locate(item);
+        }
     }
 
     /// <summary>Recreates one group of visuals (cameras or overlays) in the collection's order, which is the stacking order.</summary>
@@ -359,7 +386,15 @@ public sealed class SceneEditor : UserControl
             case OverlayItemViewModel overlay:
                 if (!ReferenceEquals(SelectedOverlay, overlay))
                 {
-                    SelectedOverlay = overlay;
+                    _selectingOnCanvas = true;
+                    try
+                    {
+                        SelectedOverlay = overlay;
+                    }
+                    finally
+                    {
+                        _selectingOnCanvas = false;
+                    }
                 }
 
                 break;
@@ -543,6 +578,7 @@ public sealed class SceneEditor : UserControl
         private readonly Image _image = new() { Stretch = Stretch.Fill };
         private readonly Border _placeholder = new() { Background = new SolidColorBrush(Color.FromArgb(160, 0x91, 0x46, 0xFF)) };
         private readonly TextBlock _placeholderText = new() { Foreground = Brushes.White, FontSize = 56, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center };
+        private readonly Rectangle _tint = new() { Fill = Tint, IsHitTestVisible = false };
         private readonly Rectangle _outline = Outline();
         private readonly Border _label = new() { Background = new SolidColorBrush(Color.FromArgb(200, 0, 0, 0)), Padding = new Thickness(14, 4, 14, 4), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false };
         private readonly TextBlock _labelText = new() { Foreground = Brushes.White, FontSize = 36 };
@@ -564,6 +600,7 @@ public sealed class SceneEditor : UserControl
             body.DragCompleted += (_, _) => _owner.ShowGuides(null, null);
             Root.Children.Add(_placeholder);
             Root.Children.Add(_image);
+            Root.Children.Add(_tint);
             Root.Children.Add(_outline);
             Root.Children.Add(_label);
             Root.Children.Add(body);
@@ -594,6 +631,27 @@ public sealed class SceneEditor : UserControl
 
         public void Detach() => _item.PropertyChanged -= OnItemChanged;
 
+        public bool Is(ISceneItem item) => ReferenceEquals(_item, item);
+
+        /// <summary>Three quick pulses of the tint, then it settles. The item is brought to the front of its group first.</summary>
+        public void Flash()
+        {
+            if (Root.Visibility != Visibility.Visible)
+            {
+                return;
+            }
+
+            _tint.Visibility = Visibility.Visible;
+            var pulse = new DoubleAnimation(0.1, 1, TimeSpan.FromMilliseconds(220))
+            {
+                AutoReverse = true,
+                RepeatBehavior = new RepeatBehavior(3),
+                FillBehavior = FillBehavior.Stop,
+            };
+            pulse.Completed += (_, _) => Refresh();
+            _tint.BeginAnimation(UIElement.OpacityProperty, pulse);
+        }
+
         private void SetHover(bool value)
         {
             _hover = value;
@@ -612,15 +670,21 @@ public sealed class SceneEditor : UserControl
         public void Refresh()
         {
             var clean = _owner.IsPreviewOnly;
-            var selected = _item.IsSelected && (_item is OverlayItemViewModel || _owner.CameraHandlesAllowed);
+            var overlay = _item is OverlayItemViewModel;
+            var selected = _item.IsSelected && (overlay || _owner.CameraHandlesAllowed);
+            var named = overlay && _owner.ShowOverlayNames;
             var preview = _item.Preview;
-            Root.Visibility = _item.IsShown && (!clean || preview is not null || selected) ? Visibility.Visible : Visibility.Collapsed;
+            Root.Visibility = _item.IsShown && (!clean || preview is not null || selected || named) ? Visibility.Visible : Visibility.Collapsed;
             _image.Source = preview;
-            _placeholder.Visibility = preview is null && (!clean || selected) ? Visibility.Visible : Visibility.Collapsed;
+
+            // An overlay without a picture yet (a page still loading) is marked by its tint and name tag;
+            // the solid placeholder would hide everything under a full-screen alert box.
+            _placeholder.Visibility = preview is null && !overlay && (!clean || selected) ? Visibility.Visible : Visibility.Collapsed;
             _placeholderText.Text = _item.Name;
-            _labelText.Text = _item.Name;
-            _label.Visibility = preview is null || clean ? Visibility.Collapsed : Visibility.Visible;
-            _outline.Visibility = !clean || selected || _hover ? Visibility.Visible : Visibility.Collapsed;
+            _tint.Visibility = selected || (named && clean) || (overlay && preview is null) ? Visibility.Visible : Visibility.Collapsed;
+            _tint.Opacity = selected ? 1 : 0.35;
+            _label.Visibility = (clean ? selected || _hover || named : preview is not null || selected || overlay) ? Visibility.Visible : Visibility.Collapsed;
+            _outline.Visibility = !clean || selected || _hover || named ? Visibility.Visible : Visibility.Collapsed;
             _outline.Stroke = selected ? Accent : Faint;
             _outline.StrokeThickness = selected ? 6 : 3;
             foreach (var c in _corners)
@@ -635,6 +699,16 @@ public sealed class SceneEditor : UserControl
             Canvas.SetTop(Root, r.Y);
             Root.Width = r.Width;
             Root.Height = r.Height;
+            UpdateLabel();
+        }
+
+        /// <summary>The name, and while selected the size it has on the stream in output pixels.</summary>
+        private void UpdateLabel()
+        {
+            var r = CurrentRect();
+            _labelText.Text = _item.IsSelected
+                ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{_item.Name}  ·  {r.Width:0} × {r.Height:0}")
+                : _item.Name;
         }
 
         private Rect CurrentRect()

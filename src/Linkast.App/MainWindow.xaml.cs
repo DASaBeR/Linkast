@@ -3,6 +3,7 @@ using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using Linkast.App.ViewModels;
 using Linkast.Core;
 
@@ -103,6 +104,27 @@ public partial class MainWindow : Window
     }
 
     private void OnOpenSettings(object sender, RoutedEventArgs e) => NavSettings.IsChecked = true;
+
+    // Clicking an overlay's card selects it in the Output preview (the preview flashes it). The
+    // event is not handled, so the card's text boxes and buttons still work as usual.
+    private void OnOverlayCardPressed(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: OverlayItemViewModel item })
+        {
+            _vm.Overlays.Selected = item;
+        }
+    }
+
+    // Scrolls the Output preview into view and flashes the overlay there, even if it was already selected.
+    private void OnLocateOverlay(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: OverlayItemViewModel item })
+        {
+            _vm.Overlays.Selected = item;
+            OutputPreview.BringIntoView();
+            OutputPreview.Locate(item);
+        }
+    }
 
     private void OnResetSystemVolume(object sender, RoutedEventArgs e) => _vm.SystemAudioVolume = 100;
 
