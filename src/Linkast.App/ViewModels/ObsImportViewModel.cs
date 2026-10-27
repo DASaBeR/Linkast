@@ -21,6 +21,7 @@ public enum ObsImportPart
     Overlays,
     Audio,
     Recording,
+    Network,
 }
 
 /// <summary>One line of the import checklist.</summary>
@@ -67,7 +68,7 @@ public sealed partial class ObsImportViewModel : ObservableObject
     {
         var dialog = new Microsoft.Win32.OpenFolderDialog
         {
-            Title = "OBS settings folder (the folder that contains 'basic')",
+            Title = "OBS settings folder (the folder that contains 'basic', or a profile folder with basic.ini)",
             InitialDirectory = Directory.Exists(ObsImporter.DefaultFolder) ? ObsImporter.DefaultFolder : null,
         };
         if (dialog.ShowDialog() == true)
@@ -149,6 +150,16 @@ public sealed partial class ObsImportViewModel : ObservableObject
                 "libx264" => ", x264 (CPU) encoder",
                 _ => string.Empty,
             };
+            if (i.EncoderId is not null && i.EncoderPreset is { } preset)
+            {
+                quality += $" ({preset})";
+            }
+
+            if (i.KeyframeIntervalSeconds is { } keyint)
+            {
+                quality += string.Create(CultureInfo.InvariantCulture, $", keyframe every {keyint} s");
+            }
+
             yield return new(ObsImportPart.Quality, "Quality", quality);
         }
 
@@ -182,7 +193,17 @@ public sealed partial class ObsImportViewModel : ObservableObject
 
         if (i.RecordingFolder is { } folder)
         {
-            yield return new(ObsImportPart.Recording, "Recordings folder", folder);
+            yield return new(ObsImportPart.Recording, "Recordings", folder + i.RecordAsMp4 switch
+            {
+                true => ", saved as MP4",
+                false => ", saved as MKV",
+                null => string.Empty,
+            });
+        }
+
+        if (i.BindIp is { } ip)
+        {
+            yield return new(ObsImportPart.Network, "Network adapter", $"The adapter with the address {ip}");
         }
     }
 

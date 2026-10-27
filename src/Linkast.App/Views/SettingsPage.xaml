@@ -149,7 +149,7 @@
                         <StackPanel>
                             <TextBlock Text="Import from OBS" Style="{StaticResource Linkast.Card.Title}" />
                             <TextBlock Style="{StaticResource Linkast.Text.Body}" Margin="0,0,0,10"
-                                       Text="Bring over your stream server and key, quality, what you capture, cameras, alerts and pictures from OBS Studio. OBS itself is not changed." />
+                                       Text="Bring over your stream server and key, quality (including encoder preset and keyframes), what you capture, cameras, alerts and pictures, audio, recordings and network adapter from OBS Studio. An exported profile folder works too. OBS itself is not changed." />
                             <WrapPanel>
                                 <Button Style="{StaticResource Linkast.Button.Primary}" Command="{Binding FindCommand}" Margin="0,0,8,0" AutomationProperties.Name="Find OBS settings">
                                     <StackPanel Orientation="Horizontal">

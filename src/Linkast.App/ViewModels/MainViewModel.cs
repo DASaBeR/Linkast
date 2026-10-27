@@ -187,6 +187,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 FrameRate = video.Fps >= 45 ? 60 : 30,
                 VideoBitrateKbps = import.VideoBitrateKbps ?? stream.VideoBitrateKbps,
                 AudioBitrateKbps = import.AudioBitrateKbps ?? stream.AudioBitrateKbps,
+                KeyframeIntervalSeconds = import.KeyframeIntervalSeconds ?? stream.KeyframeIntervalSeconds,
+                EncoderPreset = import.EncoderPreset ?? stream.EncoderPreset,
             };
             if (resolution.Width != video.Width || resolution.Height != video.Height)
             {
@@ -223,7 +225,20 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         if (parts.Contains(ObsImportPart.Recording) && import.RecordingFolder is { } folder)
         {
-            stream = stream with { RecordingFolder = folder };
+            stream = stream with { RecordingFolder = folder, RemuxRecordingsToMp4 = import.RecordAsMp4 ?? stream.RemuxRecordingsToMp4 };
+        }
+
+        if (parts.Contains(ObsImportPart.Network) && import.BindIp is { } bindIp)
+        {
+            var adapter = System.Net.IPAddress.TryParse(bindIp, out var ip) ? Linkast.Networking.NetworkAdapterCatalog.FindByAddress(ip) : null;
+            if (adapter is null)
+            {
+                notes.Add($"No network adapter on this PC has the address {bindIp} that OBS used, so Linkast keeps the automatic choice.");
+            }
+            else
+            {
+                stream = stream with { NetworkInterfaceId = adapter.Id, NetworkInterfaceName = adapter.Name };
+            }
         }
 
         if (parts.Contains(ObsImportPart.Cameras) && import.Cameras.Count > 0)
@@ -252,6 +267,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         if (parts.Contains(ObsImportPart.Quality) && import.EncoderId is { } wanted && SelectedEncoder?.Id != wanted)
         {
+            // The preset belongs to that encoder; it would be nonsense (or rejected) for another one.
+            EncoderPreset = current.Stream.EncoderPreset;
             notes.Add("The encoder OBS used doesn't work on this PC, so Linkast keeps its own choice.");
         }
 

@@ -20,7 +20,7 @@ Linkast is deliberately small. It is not a production studio like OBS. There are
 - **Microphone mute and noise removal** that work live, without restarting the stream.
 - **Global hotkeys** that work in games: go live, mute, cameras, Be right back, record.
 - **Platform presets** for Twitch, YouTube, Kick and Facebook, or any RTMP/RTMPS server.
-- **Import from OBS:** server and key, quality, capture, cameras, alerts, pictures and audio, chosen item by item.
+- **Import from OBS:** server and key, quality (encoder, preset, keyframes), capture, cameras, alerts, pictures, audio, recordings and network adapter, chosen item by item. An exported profile folder works as well as the OBS settings folder.
 - **Find the best settings:** tests your encoders and your upload, then suggests resolution, frame rate and bitrate.
 
 ## Webcam Studio

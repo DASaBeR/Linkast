@@ -69,7 +69,7 @@ public sealed class ObsImporterTests : IDisposable
         Assert.Equal(4500, import.VideoBitrateKbps);
         Assert.Equal(128, import.AudioBitrateKbps);
         Assert.Equal("h264_nvenc", import.EncoderId);
-        Assert.Equal("C:/Users/me/Videos", import.RecordingFolder);
+        Assert.Equal(@"C:\Users\me\Videos", import.RecordingFolder); // normalized to a Windows path
 
         Assert.Equal("rtmp://live.twitch.tv/app", import.Stream!.ServerUrl);
         Assert.Equal("live_123_abc", import.Stream.Key.Reveal());
@@ -110,10 +110,71 @@ public sealed class ObsImporterTests : IDisposable
         Assert.Equal(8000, import.VideoBitrateKbps);
         Assert.Equal(192, import.AudioBitrateKbps);
         Assert.Equal("libx264", import.EncoderId);
-        Assert.Equal("D:/Recordings", import.RecordingFolder);
+        Assert.Equal(@"D:\Recordings", import.RecordingFolder);
         Assert.Equal("rtmps://live.example.com:443/app", import.Stream!.ServerUrl);
         Assert.Null(import.Stream.ServiceName);
     }
+
+    /// <summary>An exported profile folder: just basic.ini, service.json and streamEncoder.json, as OBS's Profile › Export writes them.</summary>
+    [Fact]
+    public void A_profile_folder_on_its_own_imports_the_profile()
+    {
+        // OBS escapes backslashes in paths; streams audio track 2; binds to one address.
+        Write("basic.ini", (char)0xFEFF + "[General]\nName=Untitled\n\n[AdvOut]\nEncoder=obs_nvenc_h264_tex\nTrackIndex=2\nRecFilePath=C:\\\\Users\\\\MadFury\\\\Videos\nRecFormat2=hybrid_mp4\nTrack1Bitrate=160\nTrack2Bitrate=320\n\n[Output]\nMode=Advanced\nBindIP=172.20.10.10\n\n[Video]\nBaseCX=1920\nBaseCY=1080\nOutputCX=1280\nOutputCY=720\nFPSType=0\nFPSCommon=30\n");
+        Write("service.json", """{"type":"rtmp_custom","settings":{"server":"rtmp://de-live2.example.com/live","use_auth":true,"bwtest":false,"key":"k-2"}}""");
+        Write("streamEncoder.json", """{"rate_control":"CBR","bitrate":5000,"keyint_sec":2,"preset":"p6","multipass":"disabled"}""");
+        var import = ObsImporter.Read(_root)!;
+
+        Assert.Equal("Untitled", import.ProfileName);
+        Assert.Equal(new ObsVideo(1280, 720, 30), import.Video);
+        Assert.Equal(5000, import.VideoBitrateKbps);
+        Assert.Equal(320, import.AudioBitrateKbps);
+        Assert.Equal("h264_nvenc", import.EncoderId);
+        Assert.Equal("p6", import.EncoderPreset);
+        Assert.Equal(2, import.KeyframeIntervalSeconds);
+        Assert.Equal(@"C:\Users\MadFury\Videos", import.RecordingFolder);
+        Assert.True(import.RecordAsMp4);
+        Assert.Equal("172.20.10.10", import.BindIp);
+        Assert.Equal("rtmp://de-live2.example.com/live", import.Stream!.ServerUrl);
+        Assert.Contains(import.Skipped, s => s.Contains("user name and password", StringComparison.Ordinal));
+        Assert.Null(import.SceneName);
+        Assert.Null(import.Capture);
+    }
+
+    [Fact]
+    public void A_profile_folder_inside_an_install_still_finds_the_scene()
+    {
+        WriteObs(SimpleIni, """{ "type": "rtmp_common", "settings": { "service": "Twitch", "server": "auto", "key": "live_123_abc" } }""");
+        var import = ObsImporter.Read(Path.Combine(_root, "basic", "profiles", "My_Stream") + Path.DirectorySeparatorChar)!;
+        Assert.Equal("My Stream", import.ProfileName);
+        Assert.Equal("Gaming", import.SceneName);
+        Assert.NotNull(import.Capture);
+    }
+
+    [Fact]
+    public void Simple_mode_takes_the_encoders_own_preset_and_recording_format()
+    {
+        WriteObs(SimpleIni + "NVENCPreset2=p4\nRecFormat2=mkv\n", """{ "type": "rtmp_custom", "settings": { "server": "rtmp://x.example.com/live", "key": "k" } }""");
+        var import = ObsImporter.Read(_root)!;
+        Assert.Equal("p4", import.EncoderPreset);
+        Assert.Null(import.KeyframeIntervalSeconds); // simple mode leaves it automatic
+        Assert.False(import.RecordAsMp4);
+        Assert.Null(import.BindIp);
+        Assert.Equal(@"C:\Users\me\Videos", import.RecordingFolder);
+    }
+
+    [Theory]
+    [InlineData("h264_nvenc", "p6", "p6")]
+    [InlineData("h264_nvenc", "P1", "p1")]
+    [InlineData("h264_nvenc", "hq", null)]
+    [InlineData("libx264", "veryfast", "veryfast")]
+    [InlineData("libx264", "placebo", null)]
+    [InlineData("h264_qsv", "balanced", "medium")]
+    [InlineData("h264_qsv", "7", "veryfast")]
+    [InlineData("h264_amf", "quality", "quality")]
+    [InlineData("h264_amf", "p5", null)]
+    [InlineData(null, "p5", null)]
+    public void Maps_obs_presets(string? encoder, string obs, string? linkast) => Assert.Equal(linkast, ObsImporter.MapPreset(encoder, obs));
 
     [Fact]
     public void Non_rtmp_services_are_listed_as_not_imported()

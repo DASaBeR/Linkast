@@ -46,6 +46,12 @@ public sealed record ObsImport
     /// <summary>Linkast encoder id matching the OBS encoder ("h264_nvenc", "libx264", …), or null.</summary>
     public string? EncoderId { get; init; }
 
+    /// <summary>The encoder's preset in Linkast's (FFmpeg's) words, for example "p6" or "veryfast", when OBS set one that maps.</summary>
+    public string? EncoderPreset { get; init; }
+
+    /// <summary>Seconds between keyframes, when OBS set it explicitly (advanced output).</summary>
+    public int? KeyframeIntervalSeconds { get; init; }
+
     public ObsStreamTarget? Stream { get; init; }
 
     public ObsCapture? Capture { get; init; }
@@ -60,13 +66,20 @@ public sealed record ObsImport
 
     public string? RecordingFolder { get; init; }
 
+    /// <summary>True when OBS recorded to MP4 (or MOV), false for MKV and the rest, null when unknown.</summary>
+    public bool? RecordAsMp4 { get; init; }
+
+    /// <summary>The local IP address OBS bound its stream to, when it wasn't the default.</summary>
+    public string? BindIp { get; init; }
+
     /// <summary>Sources Linkast does not take over, each with the reason (for example "Clock (text): text sources aren't supported").</summary>
     public IReadOnlyList<string> Skipped { get; init; } = [];
 }
 
 /// <summary>
 /// Reads an OBS Studio settings folder (normally %APPDATA%\obs-studio). Only reads; never changes OBS.
-/// Takes the current profile and the current scene of the current scene collection.
+/// Takes the current profile and the current scene of the current scene collection. A single profile
+/// folder (one with basic.ini in it: an export, or basic\profiles\X of an install) is accepted too.
 /// </summary>
 public static class ObsImporter
 {
@@ -78,40 +91,67 @@ public static class ObsImporter
     {
         ArgumentException.ThrowIfNullOrEmpty(obsFolder);
 
-        // OBS 31 keeps the current profile in user.ini; older versions in global.ini.
-        var global = IniFile.Load(Path.Combine(obsFolder, "user.ini")) is { } user && user.Get("Basic", "ProfileDir") is not null
-            ? user
-            : IniFile.Load(Path.Combine(obsFolder, "global.ini"));
-        var profilesRoot = Path.Combine(obsFolder, "basic", "profiles");
-        var profileDir = global?.Get("Basic", "ProfileDir") ?? global?.Get("Basic", "Profile");
-        if (profileDir is null || !File.Exists(Path.Combine(profilesRoot, profileDir, "basic.ini")))
+        string? profileDir, profilePath, obsRoot;
+        IniFile? global;
+        if (File.Exists(Path.Combine(obsFolder, "basic.ini")))
         {
-            // Fall back to the only (or first) profile.
-            profileDir = Directory.Exists(profilesRoot)
-                ? Directory.GetDirectories(profilesRoot).Select(Path.GetFileName).Order(StringComparer.OrdinalIgnoreCase)
-                    .FirstOrDefault(d => File.Exists(Path.Combine(profilesRoot, d!, "basic.ini")))
+            // A profile folder. When it sits inside an install (basic\profiles\X), the scenes are found from there.
+            profilePath = Path.TrimEndingDirectorySeparator(obsFolder);
+            profileDir = Path.GetFileName(profilePath);
+            var parent = Path.GetDirectoryName(Path.GetDirectoryName(profilePath));
+            obsRoot = parent is not null && string.Equals(Path.GetFileName(parent), "basic", StringComparison.OrdinalIgnoreCase)
+                ? Path.GetDirectoryName(parent)
                 : null;
+            global = obsRoot is null ? null : LoadGlobal(obsRoot);
         }
-
-        if (profileDir is null)
+        else
         {
-            return null;
+            obsRoot = obsFolder;
+            global = LoadGlobal(obsFolder);
+            var profilesRoot = Path.Combine(obsFolder, "basic", "profiles");
+            profileDir = global?.Get("Basic", "ProfileDir") ?? global?.Get("Basic", "Profile");
+            if (profileDir is null || !File.Exists(Path.Combine(profilesRoot, profileDir, "basic.ini")))
+            {
+                // Fall back to the only (or first) profile.
+                profileDir = Directory.Exists(profilesRoot)
+                    ? Directory.GetDirectories(profilesRoot).Select(Path.GetFileName).Order(StringComparer.OrdinalIgnoreCase)
+                        .FirstOrDefault(d => File.Exists(Path.Combine(profilesRoot, d!, "basic.ini")))
+                    : null;
+            }
+
+            if (profileDir is null)
+            {
+                return null;
+            }
+
+            profilePath = Path.Combine(profilesRoot, profileDir);
         }
 
-        var profilePath = Path.Combine(profilesRoot, profileDir);
         var basic = IniFile.Load(Path.Combine(profilePath, "basic.ini"))!;
         var skipped = new List<string>();
 
         var advanced = string.Equals(basic.Get("Output", "Mode"), "Advanced", StringComparison.OrdinalIgnoreCase);
-        var streamEncoder = ReadJson(Path.Combine(profilePath, "streamEncoder.json"));
-        int? videoKbps = advanced
-            ? (streamEncoder is { } se && se.RootElement.TryGetProperty("bitrate", out var b) && b.TryGetInt32(out var kbps) ? kbps : 2500)
-            : basic.GetInt("SimpleOutput", "VBitrate") ?? 2500;
-        int? audioKbps = advanced ? basic.GetInt("AdvOut", "Track1Bitrate") ?? 160 : basic.GetInt("SimpleOutput", "ABitrate") ?? 160;
-        var encoder = MapEncoder(advanced ? basic.Get("AdvOut", "Encoder") : basic.Get("SimpleOutput", "StreamEncoder"));
-        var recording = advanced
+        using var streamEncoder = ReadJson(Path.Combine(profilePath, "streamEncoder.json"));
+        var se = streamEncoder?.RootElement ?? default;
+        var obsEncoder = advanced ? basic.Get("AdvOut", "Encoder") : basic.Get("SimpleOutput", "StreamEncoder");
+        var encoder = MapEncoder(obsEncoder);
+        int? videoKbps = advanced ? Int(se, "bitrate") ?? 2500 : basic.GetInt("SimpleOutput", "VBitrate") ?? 2500;
+
+        // Advanced output streams one of six audio tracks, each with its own bitrate.
+        var track = Math.Clamp(basic.GetInt("AdvOut", "TrackIndex") ?? 1, 1, 6);
+        int? audioKbps = advanced
+            ? basic.GetInt("AdvOut", $"Track{track.ToString(CultureInfo.InvariantCulture)}Bitrate") ?? 160
+            : basic.GetInt("SimpleOutput", "ABitrate") ?? 160;
+        var preset = advanced ? AdvancedPreset(encoder, se) : SimplePreset(encoder, basic);
+        int? keyint = advanced && Int(se, "keyint_sec") is > 0 and var k ? k : null;
+
+        var recording = CleanPath(advanced
             ? basic.Get("AdvOut", "RecFilePath") ?? basic.Get("AdvOut", "FFFilePath")
-            : basic.Get("SimpleOutput", "FilePath");
+            : basic.Get("SimpleOutput", "FilePath"));
+        var recFormat = advanced
+            ? basic.Get("AdvOut", "RecFormat2") ?? basic.Get("AdvOut", "RecFormat")
+            : basic.Get("SimpleOutput", "RecFormat2") ?? basic.Get("SimpleOutput", "RecFormat");
+        var bindIp = basic.Get("Output", "BindIP");
 
         var baseW = basic.GetInt("Video", "BaseCX") ?? 1920;
         var baseH = basic.GetInt("Video", "BaseCY") ?? 1080;
@@ -125,15 +165,24 @@ public static class ObsImporter
             VideoBitrateKbps = videoKbps,
             AudioBitrateKbps = audioKbps,
             EncoderId = encoder,
+            EncoderPreset = preset,
+            KeyframeIntervalSeconds = keyint,
             Stream = ReadService(Path.Combine(profilePath, "service.json"), skipped),
-            RecordingFolder = recording is not null && Path.IsPathFullyQualified(recording) ? recording : null,
+            RecordingFolder = recording,
+            RecordAsMp4 = recFormat is null ? null : recFormat.Contains("mp4", StringComparison.OrdinalIgnoreCase) || recFormat.Contains("mov", StringComparison.OrdinalIgnoreCase),
+            BindIp = string.IsNullOrWhiteSpace(bindIp) || string.Equals(bindIp, "default", StringComparison.OrdinalIgnoreCase) ? null : bindIp.Trim(),
         };
 
+        if (obsRoot is null)
+        {
+            return import with { Skipped = skipped };
+        }
+
         var collectionFile = global?.Get("Basic", "SceneCollectionFile");
-        var scenesPath = collectionFile is null ? null : Path.Combine(obsFolder, "basic", "scenes", collectionFile + ".json");
+        var scenesPath = collectionFile is null ? null : Path.Combine(obsRoot, "basic", "scenes", collectionFile + ".json");
         if (scenesPath is null || !File.Exists(scenesPath))
         {
-            var scenesDir = Path.Combine(obsFolder, "basic", "scenes");
+            var scenesDir = Path.Combine(obsRoot, "basic", "scenes");
             scenesPath = Directory.Exists(scenesDir)
                 ? Directory.GetFiles(scenesDir, "*.json").Order(StringComparer.OrdinalIgnoreCase).FirstOrDefault()
                 : null;
@@ -149,6 +198,82 @@ public static class ObsImporter
         }
 
         return import with { Skipped = skipped };
+    }
+
+    /// <summary>OBS 31 keeps the current profile in user.ini; older versions in global.ini.</summary>
+    private static IniFile? LoadGlobal(string obsFolder) =>
+        IniFile.Load(Path.Combine(obsFolder, "user.ini")) is { } user && user.Get("Basic", "ProfileDir") is not null
+            ? user
+            : IniFile.Load(Path.Combine(obsFolder, "global.ini"));
+
+    /// <summary>OBS writes paths with doubled backslashes. A full, normalized path, or null.</summary>
+    internal static string? CleanPath(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        var path = raw.Trim().Replace(@"\\", @"\", StringComparison.Ordinal);
+        try
+        {
+            return Path.IsPathFullyQualified(path) && path.IndexOfAny(Path.GetInvalidPathChars()) < 0 ? Path.GetFullPath(path) : null;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The stream encoder's preset in simple output mode, where each encoder has its own key.</summary>
+    private static string? SimplePreset(string? encoder, IniFile basic) => encoder switch
+    {
+        "h264_nvenc" => MapPreset(encoder, basic.Get("SimpleOutput", "NVENCPreset2") ?? basic.Get("SimpleOutput", "NVENCPreset")),
+        "libx264" => MapPreset(encoder, basic.Get("SimpleOutput", "Preset")),
+        "h264_qsv" => MapPreset(encoder, basic.Get("SimpleOutput", "QSVPreset")),
+        "h264_amf" => MapPreset(encoder, basic.Get("SimpleOutput", "AMDPreset")),
+        _ => null,
+    };
+
+    /// <summary>The stream encoder's preset from streamEncoder.json (advanced output).</summary>
+    private static string? AdvancedPreset(string? encoder, JsonElement se) => encoder switch
+    {
+        "h264_nvenc" => MapPreset(encoder, Str(se, "preset2") ?? Str(se, "preset")),
+        "libx264" or "h264_amf" => MapPreset(encoder, Str(se, "preset")),
+        "h264_qsv" => MapPreset(encoder, Str(se, "target_usage") ?? (Int(se, "target_usage") is { } tu ? tu.ToString(CultureInfo.InvariantCulture) : null)),
+        _ => null,
+    };
+
+    private static readonly string[] X264Presets = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"];
+
+    /// <summary>
+    /// An OBS preset for the given Linkast encoder in FFmpeg's words, or null when it has no equivalent
+    /// (Linkast then keeps its own default). NVENC p1–p7 and x264 names are the same in both; Intel's
+    /// quality/balanced/speed become QSV presets; AMD's are the same words.
+    /// </summary>
+    public static string? MapPreset(string? encoderId, string? obsPreset)
+    {
+        if (string.IsNullOrWhiteSpace(obsPreset))
+        {
+            return null;
+        }
+
+        var p = obsPreset.Trim().ToLowerInvariant();
+        return encoderId switch
+        {
+            "h264_nvenc" when p.Length == 2 && p[0] == 'p' && p[1] is >= '1' and <= '7' => p,
+            "libx264" when X264Presets.Contains(p) => p,
+            "h264_amf" when p is "quality" or "balanced" or "speed" => p,
+            "h264_qsv" => p switch
+            {
+                "quality" or "1" or "2" => "slower",
+                "balanced" or "3" or "4" => "medium",
+                "speed" or "5" or "6" or "7" => "veryfast",
+                _ when X264Presets.Contains(p) => p,
+                _ => null,
+            },
+            _ => null,
+        };
     }
 
     private static int ReadFps(IniFile basic)
@@ -206,6 +331,11 @@ public static class ObsImporter
         {
             skipped.Add($"Stream server ({server ?? "none"}): Linkast streams over RTMP or RTMPS only.");
             return null;
+        }
+
+        if (Bool(s, "use_auth") == true)
+        {
+            skipped.Add("The server's user name and password (RTMP authentication): Linkast signs in with the stream key only.");
         }
 
         return new ObsStreamTarget(server, new Secret(key), service);
