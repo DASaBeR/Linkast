@@ -59,10 +59,16 @@ public static class FfmpegArgumentBuilder
         // on it as a layer, so every part of a scene can be moved, refitted or hidden live.
         args.AddRange(["-thread_queue_size", "64", "-f", "lavfi", "-i", VideoSourceGraph(new BlankCanvasSource(), e.Fps, e.Width, e.Height)]);
 
-        // Input 1: the captured game or screen, if there is one.
-        if (HasCapture(job.Video))
+        // Inputs 1..C: the captured games, windows or displays (one per scene that has its own).
+        var captures = job.AllCaptures;
+        if (captures.Count > MaxCaptures)
         {
-            args.AddRange(["-thread_queue_size", "64", "-f", "lavfi", "-i", VideoSourceGraph(job.Video, e.Fps, e.Width, e.Height)]);
+            throw new StreamFailureException(new StreamError(ErrorCategory.Configuration, "captures.count", $"At most {MaxCaptures} different games, windows or displays can be in one stream. Let some scenes share one."));
+        }
+
+        foreach (var capture in captures)
+        {
+            args.AddRange(["-thread_queue_size", "64", "-f", "lavfi", "-i", VideoSourceGraph(capture.Source, e.Fps, e.Width, e.Height)]);
         }
 
         // Then the layers: scene media files, and rendered cameras and overlays (raw BGRA with alpha).
@@ -139,7 +145,7 @@ public static class FfmpegArgumentBuilder
             }
         }
 
-        args.AddRange(["-filter_complex", FilterGraph(job.Video, audio, e, job.Layers, job.CommandPort, job.BasePlacement, job.BaseFit, job.BaseCrop, job.ShowCapture)]);
+        args.AddRange(["-filter_complex", FilterGraph(captures, audio, e, job.Layers, job.CommandPort)]);
         args.AddRange(["-map", "[vout]", "-map", "[aout]"]);
         args.AddRange(VideoEncoderArgs(e));
         args.AddRange([
@@ -152,7 +158,10 @@ public static class FfmpegArgumentBuilder
         return args;
     }
 
-    public const int MaxLayers = 8;
+    public const int MaxLayers = 16;
+
+    /// <summary>Each capture runs all the time (a hidden one too), so their number is kept small.</summary>
+    public const int MaxCaptures = 4;
 
     /// <summary>
     /// The output: FLV to the relay, a Matroska file, or both through the <c>tee</c> muxer so the
@@ -224,7 +233,11 @@ public static class FfmpegArgumentBuilder
         {
             // Generated pictures are paced to real time; otherwise FFmpeg makes them as fast as it can and
             // sends a platform several times the bitrate (captures are paced by the screen already).
-            BlankCanvasSource => $"color=c=black:s={width.ToString(Inv)}x{height.ToString(Inv)}:r={f},realtime",
+            // The canvas is the clock every layer is synced to, so after a stall (FFmpeg waits several
+            // seconds for the server while opening the output) it must catch up, not restart its timer:
+            // a reset left it seconds behind the wall-clock camera and web pipes, and the overlay then
+            // held each camera frame back by that much (camera seconds late and at a few fps).
+            BlankCanvasSource => $"color=c=black:s={width.ToString(Inv)}x{height.ToString(Inv)}:r={f},realtime=limit={RealtimeCatchUpSeconds}",
             DisplaySource { Api: CaptureApi.DesktopDuplication } d =>
                 $"ddagrab=output_idx={d.MonitorIndex.ToString(Inv)}:framerate={f}:draw_mouse={Bool(d.CaptureCursor)}",
             DisplaySource d when d.MonitorHandle is { } h =>
@@ -233,10 +246,17 @@ public static class FfmpegArgumentBuilder
                 $"gfxcapture=monitor_idx={d.MonitorIndex.ToString(Inv)}:max_framerate={f}:capture_cursor={Bool(d.CaptureCursor)}",
             WindowSource w =>
                 $"gfxcapture=hwnd={w.WindowHandle.ToString(Inv)}:max_framerate={f}:capture_cursor={Bool(w.CaptureCursor)}:resize_mode=scale_aspect",
-            TestPatternSource => $"testsrc2=size=1280x720:rate={f},realtime",
+            TestPatternSource => $"testsrc2=size=1280x720:rate={f},realtime=limit={RealtimeCatchUpSeconds}",
             _ => throw new NotSupportedException($"Unsupported video source {video.GetType().Name}."),
         };
     }
+
+    /// <summary>
+    /// The realtime filter's discontinuity limit. FFmpeg's default (2 s) resets the timer after a longer
+    /// stall instead of catching up. A minute covers any startup wait; a longer stall ends the attempt
+    /// (stall timeout) long before it matters.
+    /// </summary>
+    private const int RealtimeCatchUpSeconds = 60;
 
     /// <summary>True when the video source has a captured picture; a blank canvas has none.</summary>
     public static bool HasCapture(VideoSourceSpec video) => video is not BlankCanvasSource;
@@ -260,6 +280,26 @@ public static class FfmpegArgumentBuilder
         Linkast.Core.Camera.NormalizedRect? baseCrop = null,
         bool showCapture = true)
     {
+        ArgumentNullException.ThrowIfNull(video);
+        IReadOnlyList<CaptureJobInput> captures = HasCapture(video)
+            ? [new CaptureJobInput(video, basePlacement ?? Linkast.Core.Camera.NormalizedRect.Full, baseCrop ?? Linkast.Core.Camera.NormalizedRect.Full, baseFit, !showCapture)]
+            : [];
+        return FilterGraph(captures, audio, e, layers, commandPort);
+    }
+
+    /// <summary>
+    /// The whole graph for any number of captures: input 0 is the canvas, inputs 1..C the captures, then
+    /// the layers, then the audio. Capture k is placed by <c>crop@base{k}</c>, <c>scale@base{k}</c> and
+    /// <c>overlay@base{k}</c> (k = 0 is plain <c>base</c>), so a scene switch moves one in and the others out.
+    /// </summary>
+    public static string FilterGraph(
+        IReadOnlyList<CaptureJobInput> captures,
+        IReadOnlyList<AudioJobInput> audio,
+        EncoderSettings e,
+        IReadOnlyList<VideoLayerJobInput> layers,
+        int? commandPort)
+    {
+        ArgumentNullException.ThrowIfNull(captures);
         ArgumentNullException.ThrowIfNull(audio);
         ArgumentNullException.ThrowIfNull(e);
         ArgumentNullException.ThrowIfNull(layers);
@@ -269,35 +309,38 @@ public static class FfmpegArgumentBuilder
         // a vertical layout) costs about three times the CPU and could not keep 1080 × 1920 at 60 fps.
         sb.Append("[0:v]format=yuv420p[canvas];");
         var below = "canvas";
-        var nextInput = 1;
-        if (HasCapture(video))
+        var probed = false;
+        for (var k = 0; k < captures.Count; k++)
         {
+            var capture = captures[k];
+            var n = BaseLayerArgs.Name(k);
+            var suffix = k == 0 ? string.Empty : k.ToString(Inv);
+
             // Capture sources produce D3D11 frames; download once, then make constant frame rate (WGC
-            // only emits frames on change). The black probe watches the whole picture, before the trim.
-            sb.Append("[1:v]");
-            if (video is not TestPatternSource)
+            // only emits frames on change). The black probe watches the first window, before the trim.
+            sb.Append(Inv, $"[{1 + k}:v]");
+            if (capture.Source is not TestPatternSource)
             {
                 sb.Append("hwdownload,format=bgra,");
             }
 
             sb.Append(Inv, $"fps={e.Fps},");
-            if (video is WindowSource)
+            if (capture.Source is WindowSource && !probed)
             {
                 sb.Append(BlackProbe.Graph).Append(";[cap]");
+                probed = true;
             }
 
-            var b = BaseLayerArgs.For(
-                basePlacement ?? new Linkast.Core.Camera.NormalizedRect(0, 0, 1, 1),
-                baseCrop ?? new Linkast.Core.Camera.NormalizedRect(0, 0, 1, 1),
-                baseFit, e.Width, e.Height, hidden: !showCapture);
+            var b = BaseLayerArgs.For(capture.Placement, capture.Crop, capture.Fit, e.Width, e.Height, hidden: capture.Hidden);
 
             // Quoted because the expressions contain commas (min(a,b)), which separate filters otherwise.
-            sb.Append(Inv, $"crop@base=w='{b.CropW}':h='{b.CropH}':x='{b.CropX}':y='{b.CropY}',");
-            sb.Append(Inv, $"scale@base=w='{b.ScaleW}':h='{b.ScaleH}':flags=bicubic,format=yuva420p[game];");
-            sb.Append(Inv, $"[canvas][game]overlay@base=x='{b.OverlayX}':y='{b.OverlayY}':eval=frame:format=yuv420[base];");
-            below = "base";
-            nextInput = 2;
+            sb.Append(Inv, $"crop@{n}=w='{b.CropW}':h='{b.CropH}':x='{b.CropX}':y='{b.CropY}',");
+            sb.Append(Inv, $"scale@{n}=w='{b.ScaleW}':h='{b.ScaleH}':flags=bicubic,format=yuva420p[game{suffix}];");
+            sb.Append(Inv, $"[{below}][game{suffix}]overlay@{n}=x='{b.OverlayX}':y='{b.OverlayY}':eval=frame:format=yuv420[{n}];");
+            below = n;
         }
+
+        var nextInput = 1 + captures.Count;
 
         // Each layer: scale@camI (resizable live) then overlay@camI (movable live). Names are what
         // FfmpegCommandChannel addresses through the zmq filter. Scene media cover the canvas at a
@@ -315,7 +358,10 @@ public static class FfmpegArgumentBuilder
             }
             else
             {
-                sb.Append(Inv, $"[{input}:v]scale@cam{i}=w={p.Width}:h={p.Height}:flags=bicubic,format=yuva420p[cam{i}];");
+                // The trim comes before the scale, so the scale's live size never makes it read outside the picture.
+                var c = LayerCrop(l.Crop);
+                sb.Append(Inv, $"[{input}:v]crop@cam{i}=w='{c.W}':h='{c.H}':x='{c.X}':y='{c.Y}',");
+                sb.Append(Inv, $"scale@cam{i}=w={p.Width}:h={p.Height}:flags=bicubic,format=yuva420p[cam{i}];");
             }
 
             var eof = l.Kind == LayerInputKind.Still ? "repeat" : "pass";
@@ -381,6 +427,17 @@ public static class FfmpegArgumentBuilder
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// <c>crop@camI</c>'s options for showing the part <paramref name="crop"/> of a layer, as expressions of
+    /// its own size, so the same values start the graph and are sent live.
+    /// </summary>
+    public static (string W, string H, string X, string Y) LayerCrop(Linkast.Core.Camera.NormalizedRect crop)
+    {
+        var c = crop.Clamped(Linkast.Core.Camera.SceneLayout.MinCrop);
+        static string F(double v) => v.ToString("0.######", Inv);
+        return ($"iw*{F(c.Width)}", $"ih*{F(c.Height)}", $"iw*{F(c.X)}", $"ih*{F(c.Y)}");
     }
 
     private static string Gain(double gain) => Math.Clamp(gain, 0, 4).ToString("0.###", Inv);

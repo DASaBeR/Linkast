@@ -48,6 +48,21 @@ public sealed partial class MixerChannelViewModel(string key, MixerChannelKind k
     [ObservableProperty]
     public partial double Level { get; set; }
 
+    /// <summary>False for a scene video's channel while another scene is on: the Audio tab shows only the active scene's sounds.</summary>
+    [ObservableProperty]
+    public partial bool InActiveScene { get; set; } = true;
+
+    /// <summary>A web overlay can play a test sound, so its level can be set before an alert comes in.</summary>
+    public bool CanTest => Kind == MixerChannelKind.WebOverlay;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(TestCommand))]
+    public partial bool IsTesting { get; set; }
+
+    /// <summary>How loud the last test sound was in the stream, for example "Test: −12 dB in the stream".</summary>
+    [ObservableProperty]
+    public partial string? TestResult { get; set; }
+
     /// <summary>A short note under the strip, for example why it has no meter.</summary>
     [ObservableProperty]
     public partial string? Note { get; set; }
@@ -75,6 +90,14 @@ public sealed partial class MixerChannelViewModel(string key, MixerChannelKind k
     /// <summary>Raised when the user moves the fader or mutes (not for scene mutes or meter updates).</summary>
     public event EventHandler? Changed;
 
+    /// <summary>Raised when the user asks for a test sound on this channel.</summary>
+    public event EventHandler? TestRequested;
+
+    [RelayCommand(CanExecute = nameof(CanRunTest))]
+    private void Test() => TestRequested?.Invoke(this, EventArgs.Empty);
+
+    private bool CanRunTest() => CanTest && !IsTesting;
+
     [RelayCommand]
     private void ToggleMute() => Muted = !Muted;
 
@@ -98,6 +121,9 @@ public sealed class AudioMixerViewModel
     /// <summary>Raised when the user changes a channel's volume or mute.</summary>
     public event EventHandler<MixerChannelViewModel>? ChannelChanged;
 
+    /// <summary>Raised when the user asks for a channel's test sound.</summary>
+    public event EventHandler<MixerChannelViewModel>? TestRequested;
+
     public MixerChannelViewModel? Get(string key) => Channels.FirstOrDefault(c => c.Key == key);
 
     /// <summary>
@@ -111,6 +137,7 @@ public sealed class AudioMixerViewModel
         foreach (var gone in Channels.Where(c => wanted.All(w => w.Key != c.Key)).ToList())
         {
             gone.Changed -= OnChannelChanged;
+            gone.TestRequested -= OnTestRequested;
             Channels.Remove(gone);
         }
 
@@ -123,6 +150,7 @@ public sealed class AudioMixerViewModel
                 var (volume, muted) = restore(key);
                 channel = new MixerChannelViewModel(key, kind, name) { Volume = volume, Muted = muted };
                 channel.Changed += OnChannelChanged;
+                channel.TestRequested += OnTestRequested;
                 Channels.Insert(Math.Min(i, Channels.Count), channel);
                 continue;
             }
@@ -133,6 +161,14 @@ public sealed class AudioMixerViewModel
             {
                 Channels.Move(at, Math.Min(i, Channels.Count - 1));
             }
+        }
+    }
+
+    private void OnTestRequested(object? sender, EventArgs e)
+    {
+        if (sender is MixerChannelViewModel channel)
+        {
+            TestRequested?.Invoke(this, channel);
         }
     }
 

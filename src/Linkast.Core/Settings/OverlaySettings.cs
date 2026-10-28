@@ -12,7 +12,8 @@ public enum OverlayKind
 /// <summary>One overlay. A web overlay's URL is not stored here: it holds account tokens, so it lives in the secret store.</summary>
 public sealed record OverlayConfig
 {
-    public const int MaxOverlays = 3;
+    /// <summary>Overlays in all scenes together. Each is in the stream all the time (hidden where a scene doesn't show it).</summary>
+    public const int MaxOverlays = 8;
 
     public string LayerId { get; init; } = "overlay-1";
 
@@ -38,6 +39,9 @@ public sealed record OverlayConfig
 
     /// <summary>Shown on the stream. A hidden overlay stays set up but is not drawn.</summary>
     public bool Visible { get; init; } = true;
+
+    /// <summary>The part of the overlay that is shown (fractions of it); the rest is trimmed away.</summary>
+    public NormalizedRect Crop { get; init; } = NormalizedRect.Full;
 }
 
 /// <summary>The "Be right back" screen that covers the stream without stopping it.</summary>
@@ -94,6 +98,7 @@ public sealed record OverlaySettings
                 Position = position == OverlayPosition.Custom && custom is null ? OverlayPosition.FullScreen : position,
                 Size = double.IsFinite(o.Size) ? Math.Clamp(o.Size, 0.05, 1) : 0.25,
                 CustomPlacement = custom,
+                Crop = o.Crop is { Width: > 0, Height: > 0 } crop ? crop.Clamped(SceneLayout.MinCrop) : NormalizedRect.Full,
             });
         }
 

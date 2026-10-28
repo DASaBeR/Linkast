@@ -483,6 +483,25 @@ public sealed partial class WebcamStudioViewModel : ObservableObject, IAsyncDisp
         Changed();
     }
 
+    /// <summary>
+    /// Stores a change to the active scene that the screen already shows (an overlay dragged, the capture
+    /// picked on the Capture card): saved, without re-applying the scene.
+    /// </summary>
+    public void UpdateActiveSceneQuietly(Func<SceneLayout, SceneLayout> change)
+    {
+        ArgumentNullException.ThrowIfNull(change);
+        var i = ActiveIndex();
+        var updated = change(_layouts[i]).Clamped() with { Id = _layouts[i].Id };
+        if (updated == _layouts[i])
+        {
+            return;
+        }
+
+        _layouts[i] = updated;
+        OnPropertyChanged(nameof(ActiveLayout));
+        Changed();
+    }
+
     /// <summary>Adds a ready-made scene of <paramref name="kind"/> after the active one, with the active scene's orientation, and switches to it.</summary>
     [RelayCommand]
     private void AddScene(SceneKind kind)

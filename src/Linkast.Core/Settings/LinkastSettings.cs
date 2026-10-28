@@ -14,7 +14,7 @@ public sealed record LinkastSettings
     /// right back screen is a scene, and the mixer has a fader per source. 2: multiple camera layers and
     /// layouts (Phase 4). 1: single webcam (Phase 1).
     /// </summary>
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 4;
 
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;
 
@@ -160,6 +160,9 @@ public sealed record CameraLayerConfig
     public CameraLayerSettings Look { get; init; } = CameraLayerSettings.Default;
 
     public Guid? PresetId { get; init; }
+
+    /// <summary>The part of the rendered camera that is shown (fractions of it), in every scene.</summary>
+    public NormalizedRect Crop { get; init; } = NormalizedRect.Full;
 }
 
 /// <summary>What the Linkast Camera shows. The camera itself is installed separately (one admin prompt).</summary>

@@ -442,6 +442,19 @@ public sealed partial class CameraLayerViewModel : ObservableObject, IAsyncDispo
     [NotifyPropertyChangedFor(nameof(PlacementSummary))]
     public partial NormalizedRect Placement { get; set; } = SceneLayout.DefaultLandscape("x").CameraPlacements["x"];
 
+    /// <summary>The part of the rendered camera that is shown, in every scene; Alt-drag on its edges trims it.</summary>
+    [ObservableProperty]
+    public partial NormalizedRect Crop { get; set; } = NormalizedRect.Full;
+
+    partial void OnCropChanged(NormalizedRect value)
+    {
+        if (!_applying)
+        {
+            PlacementChanged?.Invoke(this, Placement);
+            Changed();
+        }
+    }
+
     /// <summary>True when the active layout shows this camera.</summary>
     [ObservableProperty]
     public partial bool IsShown { get; set; } = true;
@@ -513,6 +526,7 @@ public sealed partial class CameraLayerViewModel : ObservableObject, IAsyncDispo
             _pendingDeviceId = c.DeviceId;
             _pendingFormat = c.Format;
             CameraOn = c.Enabled;
+            Crop = c.Crop is { Width: > 0, Height: > 0 } crop ? crop.Clamped(SceneLayout.MinCrop) : NormalizedRect.Full;
         }
         finally
         {
@@ -540,6 +554,7 @@ public sealed partial class CameraLayerViewModel : ObservableObject, IAsyncDispo
             Format = SelectedFormat.Request,
             Look = Layer.Settings,
             PresetId = SelectedPreset?.Id,
+            Crop = Crop,
         };
     }
 

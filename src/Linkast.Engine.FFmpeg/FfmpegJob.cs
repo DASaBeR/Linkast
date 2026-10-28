@@ -53,6 +53,9 @@ public sealed record VideoLayerJobInput(string PipePath, int Width, int Height, 
     /// </summary>
     public bool Cover { get; init; }
 
+    /// <summary>The part of the layer that is shown, as fractions of it (<c>crop@cam{i}</c>, changeable live). Not for <see cref="Cover"/> layers.</summary>
+    public Linkast.Core.Camera.NormalizedRect Crop { get; init; } = Linkast.Core.Camera.NormalizedRect.Full;
+
     /// <summary>For a video with sound: the channel its sound is mixed as (<c>volume@{name}</c>), and the starting gain.</summary>
     public string? AudioName { get; init; }
 
@@ -91,4 +94,23 @@ public sealed record FfmpegJob(
 
     /// <summary>The part of the base video that is shown, as fractions of it (default: all of it).</summary>
     public Linkast.Core.Camera.NormalizedRect BaseCrop { get; init; } = new(0, 0, 1, 1);
+
+    /// <summary>
+    /// Every captured game, window or display, bottom to top; capture k is <c>crop@base</c> (k = 0) or
+    /// <c>crop@base{k}</c>. Empty means just <see cref="FfmpegJob.Video"/> with the base fields above.
+    /// </summary>
+    public IReadOnlyList<CaptureJobInput> Captures { get; init; } = [];
+
+    /// <summary>The captures to put in the graph: <see cref="Captures"/>, or the single legacy one.</summary>
+    public IReadOnlyList<CaptureJobInput> AllCaptures => Captures.Count > 0 ? Captures
+        : FfmpegArgumentBuilder.HasCapture(Video) ? [new CaptureJobInput(Video, BasePlacement, BaseCrop, BaseFit, !ShowCapture)]
+        : [];
 }
+
+/// <summary>One capture input and where it starts on the canvas (hidden = just off its right edge).</summary>
+public sealed record CaptureJobInput(
+    VideoSourceSpec Source,
+    Linkast.Core.Camera.NormalizedRect Placement,
+    Linkast.Core.Camera.NormalizedRect Crop,
+    Linkast.Core.Camera.BaseFit Fit,
+    bool Hidden);

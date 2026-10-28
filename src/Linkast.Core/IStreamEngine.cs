@@ -19,6 +19,13 @@ public sealed record StreamSession(
     /// <summary>Scene pictures and videos: they cover the canvas above the captured game and below the cameras.</summary>
     public IReadOnlyList<Camera.MediaLayerBinding> Media { get; init; } = [];
 
+    /// <summary>
+    /// Every game, window or display in the stream, one per scene that has its own, each placed where the
+    /// starting scene wants it or hidden. A scene switch shows one and hides the others, without a restart.
+    /// Empty means just <see cref="Video"/>, placed by <see cref="BasePlacement"/> and the fields below.
+    /// </summary>
+    public IReadOnlyList<CaptureBinding> Captures { get; init; } = [];
+
     /// <summary>False starts with the captured game or screen hidden (it can be shown live).</summary>
     public bool ShowCapture { get; init; } = true;
 
@@ -36,6 +43,17 @@ public sealed record StreamSession(
     /// <summary>Also writes the stream to a local file, or null.</summary>
     public RecordingSpec? Recording { get; init; }
 }
+
+/// <summary>One captured game, window or display in a stream, and where it starts on the canvas.</summary>
+/// <param name="Key">Names the capture for live changes; the same source in two scenes is one capture.</param>
+/// <param name="StartHidden">Starts off the canvas: another scene shows it.</param>
+public sealed record CaptureBinding(
+    string Key,
+    VideoSourceSpec Source,
+    Camera.NormalizedRect Placement,
+    Camera.NormalizedRect Crop,
+    Camera.BaseFit Fit,
+    bool StartHidden);
 
 /// <summary>
 /// The boundary between the UI and the media pipeline. The UI only talks to this interface,

@@ -675,7 +675,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     [
         new(VideoSourceKind.Display, "Entire display"),
         new(VideoSourceKind.Window, "Single window or game"),
-        new(VideoSourceKind.CameraOnly, "Webcam only (no screen)"),
+        new(VideoSourceKind.CameraOnly, "No game (cameras and overlays only)"),
         new(VideoSourceKind.TestPattern, "Test pattern"),
     ];
 
@@ -898,7 +898,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsActive), nameof(CanEditSettings), nameof(StatusText), nameof(IsBroadcasting), nameof(IsRecording), nameof(IsRecordingOnly), nameof(RecordButtonText), nameof(PillText), nameof(StatusTitleText))]
-    [NotifyCanExecuteChangedFor(nameof(StartCommand), nameof(StopCommand), nameof(InstallUpdateCommand), nameof(ToggleRecordingCommand), nameof(FindBestSettingsCommand), nameof(ApplyRecommendationCommand))]
+    [NotifyCanExecuteChangedFor(nameof(StartCommand), nameof(StopCommand), nameof(EndStreamCommand), nameof(InstallUpdateCommand), nameof(ToggleRecordingCommand), nameof(FindBestSettingsCommand), nameof(ApplyRecommendationCommand))]
     public partial StreamState State { get; set; } = StreamState.Idle;
 
     /// <summary>The running session goes to a platform (not only to a file).</summary>
@@ -1142,6 +1142,23 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         if (e.PropertyName is nameof(SelectedSourceKind) or nameof(SelectedWindow) or nameof(IsStreamPageVisible) or nameof(State))
         {
             UpdateFullscreenWatch();
+        }
+
+        // The Capture card is the active scene's capture; while live the stream follows it.
+        if (e.PropertyName is nameof(SelectedSourceKind) or nameof(SelectedMonitor) or nameof(SelectedWindow)
+            or nameof(UseDesktopDuplication) or nameof(CaptureCursor))
+        {
+            OnCaptureCardChanged();
+        }
+
+        if (e.PropertyName is nameof(SeparateGameAudio))
+        {
+            ScheduleLiveSourceSwitch();
+        }
+
+        if (e.PropertyName is nameof(State))
+        {
+            UpdateWindowWatch();
         }
 
         // The constructor sets defaults before the studio exists.
@@ -1460,6 +1477,13 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     }
 
 
+    /// <summary>The last trim sent to the running stream for each layer.</summary>
+    private readonly Dictionary<string, NormalizedRect> _sentCrops = new(StringComparer.Ordinal);
+
+    private NormalizedRect? CropOf(string layerId) =>
+        Webcam.Layers.FirstOrDefault(l => l.LayerId == layerId)?.Crop
+        ?? Overlays.Items.FirstOrDefault(o => o.LayerId == layerId)?.Crop;
+
     private async Task SendPendingMovesAsync()
     {
         if (_moveInFlight || _engine is null)
@@ -1477,6 +1501,14 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 var ok = placement is { } p
                     ? await _engine.MoveLayerAsync(id, p)
                     : await _engine.HideLayerAsync(id);
+
+                // A trim travels with the move (an Alt-drag changes both); sent only when it changed.
+                if (ok && placement is not null && CropOf(id) is { } crop && (!_sentCrops.TryGetValue(id, out var sent) || sent != crop))
+                {
+                    ok = await _engine.SetLayerCropAsync(id, crop);
+                    _sentCrops[id] = crop;
+                }
+
                 if (!ok)
                 {
                     AppendLog("The change will apply the next time you go live.");
@@ -1672,6 +1704,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         _recordOnly = recordOnly;
         _recording = session.Recording is not null;
+        RememberLiveSources(session);
         try
         {
             await _engine.StartAsync(session);
@@ -1743,38 +1776,18 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private StreamSession? BuildSession(bool recordOnly, out StreamError? error)
     {
         error = null;
-        VideoSourceSpec video;
-        switch (SelectedSourceKind.Kind)
+
+        // Every scene's own game, window or display; the starting scene's must be there.
+        var starting = Webcam.ActiveLayout;
+        if (CaptureOf(starting) is { Kind: SceneCaptureKind.Window } wanted && Resolve(wanted) is null)
         {
-            case VideoSourceKind.Display when SelectedMonitor is { } m:
-                video = m.ToSource(UseDesktopDuplication ? CaptureApi.DesktopDuplication : CaptureApi.WindowsGraphicsCapture) with { CaptureCursor = CaptureCursor };
-                break;
-            case VideoSourceKind.Window when SelectedWindow is { } w:
-                if (!VideoSourceCatalog.WindowExists(w.Handle))
-                {
-                    error = new StreamError(ErrorCategory.Capture, "capture.window.gone", "The selected window has closed. Refresh the list and pick it again.");
-                    return null;
-                }
-
-                video = w.ToSource() with { CaptureCursor = CaptureCursor };
-                break;
-            case VideoSourceKind.TestPattern:
-                video = new TestPatternSource();
-                break;
-            case VideoSourceKind.CameraOnly:
-                if (!Webcam.Layers.Any(l => l.HasCamera && Webcam.Layouts.Any(s => s.CameraPlacements.ContainsKey(l.LayerId))))
-                {
-                    error = new StreamError(ErrorCategory.Capture, "camera.none", "Webcam only needs a camera that a scene shows. Select one on the Webcam tab.");
-                    return null;
-                }
-
-                video = new BlankCanvasSource();
-                break;
-            default:
-                error = new StreamError(ErrorCategory.Capture, "capture.none", "Choose what to capture.");
-                return null;
+            error = new StreamError(ErrorCategory.Capture, "capture.window.gone",
+                $"{wanted.WindowProcess ?? wanted.WindowTitle ?? "This scene's window"} isn't open. Start it and press Refresh on the Source tab, or pick another window.");
+            return null;
         }
 
+        var captures = BuildCaptures(starting);
+        var video = captures.Count > 0 ? captures[0].Source : new BlankCanvasSource();
         var audio = BuildAudioSources();
 
         var server = new Uri("rtmp://localhost/none");
@@ -1804,6 +1817,17 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         var media = BuildSceneMedia(scenes, layout, canvasWidth, canvasHeight);
         _liveLayerIds.Clear();
         _liveCameraIds.Clear();
+        _sentCrops.Clear();
+        foreach (var l in Webcam.Layers)
+        {
+            _sentCrops[l.LayerId] = l.Crop;
+        }
+
+        foreach (var o in Overlays.Items)
+        {
+            _sentCrops[o.LayerId] = o.Crop;
+        }
+
         _restartOffered.Clear();
         var overlays = Overlays.Bindings(canvasWidth, canvasHeight);
         _liveCameraIds.UnionWith(cameras.Select(c => c.Layer.LayerId));
@@ -1826,10 +1850,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             CameraLayers = cameras,
             Overlays = overlays,
             Media = media,
-            ShowCapture = layout.ShowCapture,
-            BasePlacement = layout.BasePlacement,
-            BaseFit = layout.BaseFit,
-            BaseCrop = layout.BaseCrop,
+            Captures = captures,
             Broadcast = !recordOnly,
             Recording = recordOnly || RecordWhenLive
                 ? new RecordingSpec(RecordingFolder) { RemuxToMp4 = RemuxRecordingsToMp4 }

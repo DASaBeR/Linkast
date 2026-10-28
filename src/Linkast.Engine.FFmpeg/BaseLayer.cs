@@ -26,17 +26,21 @@ public sealed record BaseLayerArgs(
 {
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
+    /// <summary>The filter name of capture <paramref name="index"/>: <c>base</c>, then <c>base1</c>, <c>base2</c>…</summary>
+    public static string Name(int index) => index == 0 ? "base" : "base" + index.ToString(Inv);
+
     /// <summary>The live commands, in the order they must be sent (crop, then scale, then position).</summary>
-    public IEnumerable<(string Target, string Command, string Argument)> Commands()
+    public IEnumerable<(string Target, string Command, string Argument)> Commands(int index = 0)
     {
-        yield return ("crop@base", "w", CropW);
-        yield return ("crop@base", "h", CropH);
-        yield return ("crop@base", "x", CropX);
-        yield return ("crop@base", "y", CropY);
-        yield return ("scale@base", "w", ScaleW);
-        yield return ("scale@base", "h", ScaleH);
-        yield return ("overlay@base", "x", OverlayX);
-        yield return ("overlay@base", "y", OverlayY);
+        var n = Name(index);
+        yield return ($"crop@{n}", "w", CropW);
+        yield return ($"crop@{n}", "h", CropH);
+        yield return ($"crop@{n}", "x", CropX);
+        yield return ($"crop@{n}", "y", CropY);
+        yield return ($"scale@{n}", "w", ScaleW);
+        yield return ($"scale@{n}", "h", ScaleH);
+        yield return ($"overlay@{n}", "x", OverlayX);
+        yield return ($"overlay@{n}", "y", OverlayY);
     }
 
     /// <summary>

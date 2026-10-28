@@ -102,7 +102,7 @@ public sealed partial class MainViewModel
 
     /// <summary>
     /// Switches from the game window to Desktop Duplication of the display it is on, after the user
-    /// confirms that everything on that display may appear on stream. A running stream restarts.
+    /// confirms that everything on that display may appear on stream. A running stream switches to it.
     /// </summary>
     [RelayCommand]
     private void CaptureDisplayInstead()
@@ -120,7 +120,7 @@ public sealed partial class MainViewModel
             Application.Current.MainWindow,
             $"Linkast will capture all of {monitor} instead of only the game window.\n\n"
             + "Everything on that display may appear on stream, including notifications, chat and other windows. Close or move anything private first."
-            + (live ? "\n\nThe stream restarts to apply this, which takes a few seconds." : string.Empty)
+            + (live ? "\n\nViewers see a short pause while the stream switches." : string.Empty)
             + "\n\nCapture this display?",
             "Capture this display instead",
             MessageBoxButton.YesNo,
@@ -131,18 +131,10 @@ public sealed partial class MainViewModel
             return;
         }
 
-        var recordOnly = IsRecordingOnly;
+        // A running stream switches to the display by itself (see MainViewModel.LiveSource).
         SelectedSourceKind = SourceKinds.First(k => k.Kind == VideoSourceKind.Display);
         SelectedMonitor = monitor;
         UseDesktopDuplication = true;
         AppendLog($"Capturing {monitor} with Desktop Duplication instead of the game window.");
-        if (live)
-        {
-            _ = _ui.BeginInvoke(async () =>
-            {
-                await StopAsync();
-                await StartSessionAsync(recordOnly);
-            }, DispatcherPriority.Background);
-        }
     }
 }

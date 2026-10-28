@@ -43,6 +43,69 @@ public enum SceneMediaKind
     Video,
 }
 
+/// <summary>What a scene captures.</summary>
+public enum SceneCaptureKind
+{
+    /// <summary>No game or screen: cameras, overlays and the background only.</summary>
+    None,
+
+    Display,
+
+    Window,
+
+    TestPattern,
+}
+
+/// <summary>
+/// A scene's own game, window or display. Windows are remembered by title and program, because a window
+/// handle changes every time the game starts.
+/// </summary>
+public sealed record SceneCapture
+{
+    public SceneCaptureKind Kind { get; init; } = SceneCaptureKind.None;
+
+    public string? MonitorDeviceName { get; init; }
+
+    public string? WindowTitle { get; init; }
+
+    public string? WindowProcess { get; init; }
+
+    public bool DesktopDuplication { get; init; }
+
+    public bool CaptureCursor { get; init; } = true;
+
+    public static SceneCapture Nothing { get; } = new();
+
+    public SceneCapture Clamped() => this with { Kind = Enum.IsDefined(Kind) ? Kind : SceneCaptureKind.None };
+}
+
+/// <summary>How one overlay is set up in one scene: where it sits, how big it is and what is trimmed.</summary>
+public sealed record SceneOverlay
+{
+    public OverlayPosition Position { get; init; } = OverlayPosition.FullScreen;
+
+    /// <summary>Width as a fraction of the stream's width, for the nine spots.</summary>
+    public double Size { get; init; } = 0.25;
+
+    /// <summary>Where it was dragged to, normalized to the canvas, when <see cref="Position"/> is Custom.</summary>
+    public NormalizedRect? CustomPlacement { get; init; }
+
+    public NormalizedRect Crop { get; init; } = NormalizedRect.Full;
+
+    public SceneOverlay Clamped()
+    {
+        var custom = CustomPlacement is { Width: > 0, Height: > 0 } c ? c.Clamped() : (NormalizedRect?)null;
+        var position = Enum.IsDefined(Position) ? Position : OverlayPosition.FullScreen;
+        return this with
+        {
+            Position = position == OverlayPosition.Custom && custom is null ? OverlayPosition.FullScreen : position,
+            Size = double.IsFinite(Size) ? Math.Clamp(Size, 0.05, 1) : 0.25,
+            CustomPlacement = custom,
+            Crop = Crop is { Width: > 0, Height: > 0 } crop ? crop.Clamped(SceneLayout.MinCrop) : NormalizedRect.Full,
+        };
+    }
+}
+
 /// <summary>A scene's background: drawn over the whole canvas, above the game and below cameras and overlays.</summary>
 public sealed record SceneMedia
 {
@@ -88,8 +151,17 @@ public sealed record SceneLayout
     /// <summary>A picture, video or card over the whole canvas, or null for none.</summary>
     public SceneMedia? Media { get; init; }
 
-    /// <summary>Overlay layer IDs that are not shown in this scene.</summary>
+    /// <summary>Overlay layer IDs that are not shown in this scene. Settings before scene overlays only (see <see cref="Overlays"/>).</summary>
     public IReadOnlyList<string> HiddenOverlays { get; init; } = [];
+
+    /// <summary>
+    /// The overlays this scene shows, each with its own place, size and trim, by overlay layer ID. The
+    /// overlay itself (its picture or page) is set up once and can be in several scenes.
+    /// </summary>
+    public IReadOnlyDictionary<string, SceneOverlay> Overlays { get; init; } = new Dictionary<string, SceneOverlay>();
+
+    /// <summary>The game, window or display this scene shows. Null only in settings from before scenes had their own.</summary>
+    public SceneCapture? Capture { get; init; }
 
     /// <summary>Mixer channels (see <see cref="AudioChannels"/>) that are silent while this scene is on.</summary>
     public IReadOnlyList<string> MutedChannels { get; init; } = [];
@@ -140,7 +212,20 @@ public sealed record SceneLayout
     /// <summary>True when <paramref name="channel"/> is silent while this scene is on.</summary>
     public bool Mutes(string channel) => MutedChannels.Contains(channel, StringComparer.Ordinal);
 
-    public bool Shows(string overlayId) => !HiddenOverlays.Contains(overlayId, StringComparer.Ordinal);
+    public bool Shows(string overlayId) => Overlays.ContainsKey(overlayId);
+
+    public SceneLayout WithOverlay(string overlayId, SceneOverlay setup)
+    {
+        var map = new Dictionary<string, SceneOverlay>(Overlays) { [overlayId] = setup.Clamped() };
+        return this with { Overlays = map };
+    }
+
+    public SceneLayout WithoutOverlay(string overlayId)
+    {
+        var map = new Dictionary<string, SceneOverlay>(Overlays);
+        map.Remove(overlayId);
+        return this with { Overlays = map };
+    }
 
     /// <summary>Smallest part of the capture that can be kept on each axis.</summary>
     public const double MinCrop = 0.05;
@@ -157,6 +242,10 @@ public sealed record SceneLayout
             .ToDictionary(kv => kv.Key, kv => kv.Value.Clamped()),
         Media = Media?.Clamped(),
         HiddenOverlays = [.. (HiddenOverlays ?? []).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.Ordinal)],
+        Overlays = (Overlays ?? new Dictionary<string, SceneOverlay>())
+            .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && kv.Value is not null)
+            .ToDictionary(kv => kv.Key, kv => kv.Value.Clamped(), StringComparer.Ordinal),
+        Capture = Capture?.Clamped(),
         MutedChannels = [.. (MutedChannels ?? []).Where(IsChannelName).Distinct(StringComparer.Ordinal)],
     };
 

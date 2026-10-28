@@ -31,7 +31,11 @@ public sealed record MediaLayerBinding(string LayerId, string FilePath, bool IsV
 /// <summary>Places an overlay on the output canvas for one stream.</summary>
 /// <param name="Placement">Normalized to the output canvas.</param>
 /// <param name="StartHidden">Starts off the canvas; shown later without a restart (the away screen).</param>
-public sealed record OverlayLayerBinding(string LayerId, OverlaySource Source, NormalizedRect Placement, bool StartHidden = false);
+public sealed record OverlayLayerBinding(string LayerId, OverlaySource Source, NormalizedRect Placement, bool StartHidden = false)
+{
+    /// <summary>The part of the overlay that is shown (fractions of it); the rest is trimmed away.</summary>
+    public NormalizedRect Crop { get; init; } = NormalizedRect.Full;
+}
 
 public interface IOverlayInputProvider
 {

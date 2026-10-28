@@ -48,6 +48,11 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
     /// <summary>Highest frame rate camera layers are rendered and piped at.</summary>
     public const int MaxLayerFrameRate = 30;
 
+    private const string SourceSwitchCode = "capture.switch";
+
+    /// <summary>A source switch only waits briefly for FFmpeg to flush; the next attempt starts right after.</summary>
+    private static readonly TimeSpan SourceSwitchStopTimeout = TimeSpan.FromSeconds(1);
+
     private readonly FfmpegInstallation _ffmpeg;
     private readonly IOutputTransport _transport;
     private readonly IAudioInputProvider? _audioProvider;
@@ -71,12 +76,19 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
     // Live moves and hides of layers for the current session (null = hidden), re-applied on reconnect.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, NormalizedRect?> _livePlacement = new(StringComparer.Ordinal);
 
-    // The captured picture's last live placement (null placement = hidden), re-applied on reconnect.
-    private LiveBase? _liveBase;
+    // Live trims of layers for the current session, re-applied on reconnect.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, NormalizedRect> _liveCrop = new(StringComparer.Ordinal);
+
+    // Each capture's last live placement (null placement = hidden), by capture key, re-applied on reconnect.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, LiveBase> _liveBases = new(StringComparer.Ordinal);
 
     // Whether a scene video has sound, by file; asked of FFmpeg once per file.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _hasAudio = new(StringComparer.OrdinalIgnoreCase);
     private int _reconnectCount;
+
+    // A new game or screen (and its sound) chosen while live; the running attempt is restarted with it.
+    private LiveSources? _pendingSources;
+    private TaskCompletionSource? _sourceSwitch;
     private long _sessionStart;
     private StreamError? _lastError;
     private string? _currentRecording;
@@ -156,8 +168,10 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
             _lastError = null;
             _liveGain.Clear();
             _livePlacement.Clear();
-            _liveBase = null;
+            _liveCrop.Clear();
+            _liveBases.Clear();
             _liveNoiseSuppression = null;
+            _pendingSources = null;
             _sessionStart = _time.GetTimestamp();
             _runCts?.Dispose();
             _runCts = new CancellationTokenSource();
@@ -192,6 +206,40 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
         _runCts?.Dispose();
     }
 
+    /// <summary>
+    /// Changes what is captured (another game, window or display) and the sounds that go with it while
+    /// the stream runs. FFmpeg's capture is fixed when it starts, so the pipeline restarts at once with
+    /// the new source: viewers see a pause of a second or two instead of the stream ending. Layers,
+    /// live moves and volumes are kept. False when nothing is running.
+    /// </summary>
+    public bool ReplaceSources(IReadOnlyList<CaptureBinding> captures, IReadOnlyList<AudioSourceSpec> audio)
+    {
+        ArgumentNullException.ThrowIfNull(captures);
+        ArgumentNullException.ThrowIfNull(audio);
+        lock (_gate)
+        {
+            if (!StreamStateMachine.IsActive(_state.Current) || _state.Current == StreamState.Stopping)
+            {
+                return false;
+            }
+
+            Volatile.Write(ref _pendingSources, new LiveSources(captures, audio));
+            Volatile.Read(ref _sourceSwitch)?.TrySetResult();
+        }
+
+        return true;
+    }
+
+    private sealed record LiveSources(IReadOnlyList<CaptureBinding> Captures, IReadOnlyList<AudioSourceSpec> Audio);
+
+    /// <summary>The session's captures: its list, or the single <see cref="StreamSession.Video"/> placed by its base fields.</summary>
+    private static IReadOnlyList<CaptureBinding> CapturesOf(StreamSession session) =>
+        session.Captures.Count > 0 ? session.Captures
+        : FfmpegArgumentBuilder.HasCapture(session.Video) ? [new CaptureBinding(SingleCaptureKey, session.Video, session.BasePlacement, session.BaseCrop, session.BaseFit, !session.ShowCapture)]
+        : [];
+
+    private const string SingleCaptureKey = "capture";
+
     private async Task RunSessionAsync(StreamSession session, CancellationToken ct)
     {
         var backoff = new ReconnectBackoff(session.Reconnect);
@@ -200,11 +248,28 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
         {
             while (true)
             {
+                if (Interlocked.Exchange(ref _pendingSources, null) is { } sources)
+                {
+                    session = session with
+                    {
+                        Captures = sources.Captures,
+                        Video = sources.Captures.Count > 0 ? sources.Captures[0].Source : new BlankCanvasSource(),
+                        Audio = sources.Audio,
+                    };
+                }
+
                 _state.TryTransition(StreamState.Connecting);
                 var error = await RunAttemptAsync(session, [backoff, captureRestarts], ct).ConfigureAwait(false);
                 if (error is null || ct.IsCancellationRequested)
                 {
                     break;
+                }
+
+                if (error.Code == SourceSwitchCode)
+                {
+                    // Not a failure: relaunch at once with the new source, without using the retry budget.
+                    _state.TryTransition(StreamState.Reconnecting);
+                    continue;
                 }
 
                 _lastError = error;
@@ -349,7 +414,10 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                     var input = _layerProvider.Open(binding.Layer, px.Width, px.Height, layerFps);
                     layerInputs.Add(input);
                     await input.StartAsync(ct).ConfigureAwait(false);
-                    jobLayers.Add(new VideoLayerJobInput(input.PipePath, px.Width, px.Height, layerFps, px));
+                    jobLayers.Add(new VideoLayerJobInput(input.PipePath, px.Width, px.Height, layerFps, px)
+                    {
+                        Crop = _liveCrop.TryGetValue(binding.Layer.LayerId, out var crop) ? crop : binding.Crop,
+                    });
                     layerIds.Add(binding.Layer.LayerId);
                 }
             }
@@ -370,7 +438,10 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                     layerInputs.Add(input);
                     await input.StartAsync(ct).ConfigureAwait(false);
                     // A web page renders at its own size; FFmpeg scales it into its place.
-                    jobLayers.Add(new VideoLayerJobInput(input.PipePath, input.Width, input.Height, input.FrameRate, px));
+                    jobLayers.Add(new VideoLayerJobInput(input.PipePath, input.Width, input.Height, input.FrameRate, px)
+                    {
+                        Crop = _liveCrop.TryGetValue(overlay.LayerId, out var crop) ? crop : overlay.Crop,
+                    });
                     layerIds.Add(overlay.LayerId);
                 }
             }
@@ -378,18 +449,19 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
             // Always open the command channel: layers move through it, and audio is muted and adjusted live.
             int? commandPort = FfmpegCommandChannel.FindFreePort();
 
-            // The captured picture starts where the viewer last saw it (after a reconnect), else as the session says.
-            var baseNow = Volatile.Read(ref _liveBase)
-                ?? new LiveBase(session.ShowCapture ? session.BasePlacement : null, session.BaseCrop, session.BaseFit);
+            // Each capture starts where the viewer last saw it (after a reconnect), else as the session says.
+            var captures = CapturesOf(session);
+            var jobCaptures = captures.Select(c =>
+            {
+                var now = _liveBases.TryGetValue(c.Key, out var live) ? live : new LiveBase(c.StartHidden ? null : c.Placement, c.Crop, c.Fit);
+                return new CaptureJobInput(c.Source, now.Placement ?? c.Placement, now.Crop, now.Fit, now.Placement is null);
+            }).ToList();
             var args = FfmpegArgumentBuilder.Build(new FfmpegJob(session.Video, jobAudio, session.Encoder,
                 session.Broadcast ? lease.PublishUrl : null, session.Broadcast ? lease.TcUrl : null)
             {
                 RecordingPath = recordingPath,
                 Layers = jobLayers,
-                ShowCapture = baseNow.Placement is not null,
-                BasePlacement = baseNow.Placement ?? session.BasePlacement,
-                BaseFit = baseNow.Fit,
-                BaseCrop = baseNow.Crop,
+                Captures = jobCaptures,
                 CommandPort = commandPort,
             });
             LogLaunching(_redactor.Redact(string.Join(' ', args.Select(QuoteForLog))));
@@ -432,7 +504,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
             if (commandPort is { } port)
             {
                 Volatile.Write(ref _composition, new ActiveComposition(new FfmpegCommandChannel(port), layerIds, fixedLayers,
-                    FfmpegArgumentBuilder.HasCapture(session.Video), session.Encoder.Width, session.Encoder.Height));
+                    [.. captures.Select(c => c.Key)], session.Encoder.Width, session.Encoder.Height));
             }
 
             return await SuperviseAsync(session, backoffs, lease,process, audioInputs, recent, () => Volatile.Read(ref latest), ct).ConfigureAwait(false);
@@ -492,16 +564,28 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
         var lastFrameAdvance = attemptStart;
         var lastBytesAdvance = attemptStart;
         var audioFault = FirstFault(audioInputs.Select(a => a.Completion));
+        var sourceSwitch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Volatile.Write(ref _sourceSwitch, sourceSwitch);
+        if (Volatile.Read(ref _pendingSources) is not null)
+        {
+            sourceSwitch.TrySetResult(); // chosen while this attempt was starting
+        }
 
         while (true)
         {
             var tick = Task.Delay(_options.TelemetryInterval, _time, ct);
-            var done = await Task.WhenAny(process.Exited, lease.Completion, audioFault, tick).ConfigureAwait(false);
+            var done = await Task.WhenAny(process.Exited, lease.Completion, audioFault, sourceSwitch.Task, tick).ConfigureAwait(false);
 
             if (ct.IsCancellationRequested)
             {
                 await process.StopAsync(_options.GracefulStopTimeout).ConfigureAwait(false);
                 return null;
+            }
+
+            if (done == sourceSwitch.Task)
+            {
+                await process.StopAsync(SourceSwitchStopTimeout).ConfigureAwait(false);
+                return new StreamError(ErrorCategory.Capture, SourceSwitchCode, "Switching to the new capture source.");
             }
 
             if (done == process.Exited)
@@ -657,18 +741,70 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
         }
     }
 
-    public async Task<bool> SetBaseAsync(NormalizedRect? placement, NormalizedRect crop, BaseFit fit, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Trims a camera or overlay in the running stream to the part <paramref name="crop"/> of it. Its place
+    /// and size are set separately (<see cref="MoveLayerAsync"/>). False when it is not live.
+    /// </summary>
+    public async Task<bool> SetLayerCropAsync(string layerId, NormalizedRect crop, CancellationToken cancellationToken = default)
     {
         var composition = Volatile.Read(ref _composition);
-        if (composition is null || !composition.HasCapture)
+        var index = composition is null ? -1 : composition.LayerIds.IndexOf(layerId);
+        if (composition is null || index < 0 || composition.FixedLayers.Contains(index))
+        {
+            return false;
+        }
+
+        _liveCrop[layerId] = crop;
+        if (_state.Current != StreamState.Live)
+        {
+            return false;
+        }
+
+        var target = "crop@cam" + index.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var (w, h, x, y) = FfmpegArgumentBuilder.LayerCrop(crop);
+        try
+        {
+            var ok = await composition.Commands.SendAsync(target, "w", w, cancellationToken).ConfigureAwait(false);
+            ok &= await composition.Commands.SendAsync(target, "h", h, cancellationToken).ConfigureAwait(false);
+            ok &= await composition.Commands.SendAsync(target, "x", x, cancellationToken).ConfigureAwait(false);
+            ok &= await composition.Commands.SendAsync(target, "y", y, cancellationToken).ConfigureAwait(false);
+            return ok;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+    }
+
+    public Task<bool> SetBaseAsync(NormalizedRect? placement, NormalizedRect crop, BaseFit fit, CancellationToken cancellationToken = default) =>
+        Volatile.Read(ref _composition) is { CaptureKeys: [var first, ..] }
+            ? SetCaptureAsync(first, placement, crop, fit, cancellationToken)
+            : Task.FromResult(false);
+
+    /// <summary>True when the running stream has the capture <paramref name="key"/>, so a scene can show it without a restart.</summary>
+    public bool HasCapture(string key) => Volatile.Read(ref _composition)?.CaptureKeys.Contains(key) == true;
+
+    /// <summary>
+    /// Moves, refits, trims, shows or hides one capture in the running stream (null placement hides it).
+    /// False when nothing is live or the stream does not have that capture.
+    /// </summary>
+    public async Task<bool> SetCaptureAsync(string key, NormalizedRect? placement, NormalizedRect crop, BaseFit fit, CancellationToken cancellationToken = default)
+    {
+        var composition = Volatile.Read(ref _composition);
+        var index = composition is null ? -1 : composition.CaptureKeys.IndexOf(key);
+        if (composition is null || index < 0)
         {
             return false;
         }
 
         // Remembered even while reconnecting, so the next attempt starts where the viewer last saw it.
-        var previous = Volatile.Read(ref _liveBase);
-        var wanted = new LiveBase(placement, crop, fit);
-        Volatile.Write(ref _liveBase, wanted);
+        _liveBases.TryGetValue(key, out var previous);
+        if (previous == new LiveBase(placement, crop, fit) && _state.Current == StreamState.Live)
+        {
+            return true; // nothing to send (a scene switch re-sends every capture)
+        }
+
+        _liveBases[key] = new LiveBase(placement, crop, fit);
         if (_state.Current != StreamState.Live)
         {
             return false;
@@ -680,7 +816,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
         try
         {
             var ok = true;
-            foreach (var (target, command, argument) in args.Commands())
+            foreach (var (target, command, argument) in args.Commands(index))
             {
                 ok &= await composition.Commands.SendAsync(target, command, argument, cancellationToken).ConfigureAwait(false);
             }
@@ -807,7 +943,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
 
     /// <param name="FixedLayers">Indices of layers that keep their size (scene media); they are only shown and hidden.</param>
     /// <param name="HasCapture">Whether the graph has the captured picture (<c>overlay@base</c>).</param>
-    private sealed record ActiveComposition(FfmpegCommandChannel Commands, List<string> LayerIds, HashSet<int> FixedLayers, bool HasCapture, int Width, int Height);
+    private sealed record ActiveComposition(FfmpegCommandChannel Commands, List<string> LayerIds, HashSet<int> FixedLayers, List<string> CaptureKeys, int Width, int Height);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Layer {LayerId} moved live to {X},{Y} {W}x{H} (ok: {Ok})")]
     private partial void LogLayerMoved(string layerId, int x, int y, int w, int h, bool ok);

@@ -55,6 +55,12 @@ public static class SettingsSerializer
                 settings = MigrateToScenes(settings);
                 migrated = true;
             }
+
+            if (version < 4)
+            {
+                settings = MigrateToSceneSources(settings);
+                migrated = true;
+            }
             var outcome = version > LinkastSettings.CurrentSchemaVersion ? SettingsLoadOutcome.NewerVersion
                 : migrated ? SettingsLoadOutcome.Migrated
                 : SettingsLoadOutcome.Loaded;
@@ -190,6 +196,47 @@ public static class SettingsSerializer
             Webcam = webcam with { Layouts = [.. scenes.Select(l => l with { HiddenOverlays = [.. l.HiddenOverlays.Union(hidden)] })] },
             Overlays = overlays with { Items = [.. (overlays.Items ?? []).Where(o => o is not null).Select(o => o with { Visible = true })] },
             Hotkeys = (s.Hotkeys ?? new HotkeySettings()).WithNewDefaults(), // the scene hotkeys
+        };
+    }
+
+    /// <summary>
+    /// Version 3 had one capture for every scene and overlays that every scene placed alike. Version 4
+    /// gives each scene its own: the old capture (none where the scene hid it), and the overlays it
+    /// showed, each with the place, size and trim it had.
+    /// </summary>
+    internal static LinkastSettings MigrateToSceneSources(LinkastSettings s)
+    {
+        var stream = s.Stream ?? new StreamSettings();
+        var capture = new SceneCapture
+        {
+            Kind = stream.SourceKind switch
+            {
+                "Window" => SceneCaptureKind.Window,
+                "TestPattern" => SceneCaptureKind.TestPattern,
+                "CameraOnly" => SceneCaptureKind.None,
+                _ => SceneCaptureKind.Display,
+            },
+            MonitorDeviceName = stream.MonitorDeviceName,
+            WindowTitle = stream.WindowTitle,
+            WindowProcess = stream.WindowProcess,
+            DesktopDuplication = stream.UseDesktopDuplication,
+            CaptureCursor = stream.CaptureCursor,
+        };
+        var overlays = (s.Overlays?.Items ?? []).Where(o => o is not null).ToList();
+        var webcam = s.Webcam ?? new WebcamSettings();
+        return s with
+        {
+            Webcam = webcam with
+            {
+                Layouts = [.. (webcam.Layouts ?? []).Where(l => l is not null).Select(l => l with
+                {
+                    Capture = l.Capture ?? (l.ShowCapture ? capture : SceneCapture.Nothing),
+                    Overlays = overlays
+                        .Where(o => !(l.HiddenOverlays ?? []).Contains(o.LayerId, StringComparer.Ordinal))
+                        .ToDictionary(o => o.LayerId, o => new SceneOverlay { Position = o.Position, Size = o.Size, CustomPlacement = o.CustomPlacement, Crop = o.Crop }, StringComparer.Ordinal),
+                    HiddenOverlays = [],
+                })],
+            },
         };
     }
 

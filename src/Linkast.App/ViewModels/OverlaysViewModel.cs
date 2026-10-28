@@ -16,6 +16,19 @@ namespace Linkast.App.ViewModels;
 /// <summary>A change to show on a running stream: a new placement, or null to hide.</summary>
 public sealed record OverlayLiveChange(string LayerId, NormalizedRect? Placement);
 
+/// <summary>
+/// An overlay another scene shows, offered for copying into the active scene with that scene's setup, or
+/// one that no scene shows any more (<see cref="Scene"/> null), with the setup it last had.
+/// </summary>
+public sealed record OverlayFromScene(OverlayItemViewModel Item, SceneLayout? Scene)
+{
+    public string Label => Scene is null ? $"{Item.Name}  (not in any scene)" : $"{Item.Name}  (from {Scene.Name})";
+
+    public SceneOverlay Setup => Scene?.Overlays.GetValueOrDefault(Item.LayerId) ?? Item.ToSceneOverlay();
+
+    public override string ToString() => Label;
+}
+
 /// <summary>One picture or web overlay. The editor moves it through <see cref="ISceneItem"/>.</summary>
 public sealed partial class OverlayItemViewModel : ObservableObject, ISceneItem
 {
@@ -31,6 +44,7 @@ public sealed partial class OverlayItemViewModel : ObservableObject, ISceneItem
         ImagePath = config.ImagePath;
         PageWidth = config.PageWidth;
         PageHeight = config.PageHeight;
+        Crop = config.Crop;
     }
 
     public event EventHandler? Changed;
@@ -278,6 +292,46 @@ public sealed partial class OverlayItemViewModel : ObservableObject, ISceneItem
 
     partial void OnCustomPlacementChanged(NormalizedRect? value) => PlacementChanged();
 
+    /// <summary>The part of the overlay that is shown; Alt-drag on its edges in the editor trims it.</summary>
+    [ObservableProperty]
+    public partial NormalizedRect Crop { get; set; } = NormalizedRect.Full;
+
+    partial void OnCropChanged(NormalizedRect value)
+    {
+        if (!_placing)
+        {
+            Changed?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    /// <summary>How it is set up in the active scene: place, size and trim.</summary>
+    public SceneOverlay ToSceneOverlay() => new() { Position = Position, Size = Size, CustomPlacement = CustomPlacement, Crop = Crop };
+
+    /// <summary>Takes the setup a scene has for it (one change notification for all of it).</summary>
+    public void ApplySceneSetup(SceneOverlay setup)
+    {
+        ArgumentNullException.ThrowIfNull(setup);
+        if (setup == ToSceneOverlay())
+        {
+            return;
+        }
+
+        _placing = true;
+        try
+        {
+            CustomPlacement = setup.CustomPlacement;
+            Position = setup.Position;
+            Size = setup.Size;
+            Crop = setup.Crop;
+        }
+        finally
+        {
+            _placing = false;
+        }
+
+        PlacementChanged();
+    }
+
     partial void OnVisibleChanged(bool value) => Changed?.Invoke(this, EventArgs.Empty);
 
     partial void OnBitmapChanged(BitmapSource? value)
@@ -324,14 +378,17 @@ public sealed partial class OverlayItemViewModel : ObservableObject, ISceneItem
         Size = Size,
         CustomPlacement = CustomPlacement,
         Visible = Visible,
+        Crop = Crop,
     };
 }
 
 /// <summary>
-/// Overlays on top of the stream (pictures and web alerts). Each scene shows or hides each overlay
-/// (<see cref="OverlayItemViewModel.Visible"/> is "shown in the active scene"); position and size are
-/// the same in every scene. Showing, hiding, moving and resizing apply to a running stream instantly;
-/// adding an overlay needs a restart, which the main view model offers.
+/// Overlays on top of the stream (pictures and web alerts). Each overlay is set up once (its picture or
+/// page); each scene has its own list of them, each with its own place, size and trim.
+/// <see cref="OverlayItemViewModel.Visible"/> is "in the active scene", and the item's place is the active
+/// scene's. Another scene's overlay can be copied in with its setup (<see cref="OtherSceneOverlays"/>).
+/// Showing, hiding, moving and resizing apply to a running stream instantly; adding a new overlay needs a
+/// restart, which the main view model offers.
 /// </summary>
 public sealed partial class OverlaysViewModel : ObservableObject
 {
@@ -371,6 +428,23 @@ public sealed partial class OverlaysViewModel : ObservableObject
 
     /// <summary>Raised when overlays are added or removed, or a web overlay's link changes (the mixer has a fader per web overlay).</summary>
     public event EventHandler? ItemsChanged;
+
+    /// <summary>Raised when the user moves, resizes or trims an overlay in the active scene (store it in the scene).</summary>
+    public event EventHandler<OverlayItemViewModel>? SceneSetupChanged;
+
+    /// <summary>Raised when the user copies another scene's overlay into the active scene.</summary>
+    public event EventHandler<OverlayFromScene>? CopyRequested;
+
+    /// <summary>Raised when the user removes an overlay from the active scene (deleted if no other scene has it).</summary>
+    public event EventHandler<OverlayItemViewModel>? RemoveRequested;
+
+    /// <summary>Overlays other scenes show and the active one doesn't, to copy in with their setup.</summary>
+    public ObservableCollection<OverlayFromScene> OtherSceneOverlays { get; } = [];
+
+    /// <summary>The overlays the active scene shows.</summary>
+    public bool HasSceneItems => Items.Any(o => o.Visible);
+
+    public bool HasOtherSceneOverlays => OtherSceneOverlays.Count > 0;
 
     public ObservableCollection<OverlayItemViewModel> Items { get; } = [];
 
@@ -421,6 +495,7 @@ public sealed partial class OverlaysViewModel : ObservableObject
         Attach(item);
         Items.Add(item);
         Selected = item;
+        VisibilityChanged?.Invoke(this, item); // it goes into the active scene
         Changed(item, liveRelevant: true); // while live, this is where a restart is offered
     }
 
@@ -445,12 +520,36 @@ public sealed partial class OverlaysViewModel : ObservableObject
         Attach(item);
         Items.Add(item);
         Selected = item;
+        VisibilityChanged?.Invoke(this, item); // it goes into the active scene
         Changed(item, liveRelevant: false); // nothing to show until the link is saved
     }
 
+    /// <summary>Takes the overlay out of the active scene; the main view model deletes it when no other scene has it.</summary>
     [RelayCommand]
     private void Remove(OverlayItemViewModel item)
     {
+        ArgumentNullException.ThrowIfNull(item);
+        if (ReferenceEquals(Selected, item))
+        {
+            Selected = null;
+        }
+
+        RemoveRequested?.Invoke(this, item);
+    }
+
+    [RelayCommand]
+    private void AddFromScene(OverlayFromScene? choice)
+    {
+        if (choice is not null)
+        {
+            CopyRequested?.Invoke(this, choice);
+        }
+    }
+
+    /// <summary>Deletes the overlay itself (its link too). Called when no scene has it any more.</summary>
+    public void Delete(OverlayItemViewModel item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
         if (Items.Remove(item))
         {
             if (ReferenceEquals(Selected, item))
@@ -482,24 +581,52 @@ public sealed partial class OverlaysViewModel : ObservableObject
     // ---- Scenes, stream and preview -----------------------------------------------------------
 
     /// <summary>
-    /// Shows exactly the overlays <paramref name="scene"/> shows. While live, each one that changes is
-    /// shown or hidden in the stream at once (through <see cref="LiveChanged"/>).
+    /// Shows exactly the overlays <paramref name="scene"/> shows, each where that scene has it. While live,
+    /// each one that changes is moved, shown or hidden in the stream at once (through <see cref="LiveChanged"/>).
     /// </summary>
-    public void ApplyScene(SceneLayout scene)
+    public void ApplyScene(SceneLayout scene, IReadOnlyList<SceneLayout> scenes)
     {
         ArgumentNullException.ThrowIfNull(scene);
+        ArgumentNullException.ThrowIfNull(scenes);
         _applyingScene = true;
         try
         {
             foreach (var o in Items)
             {
-                o.Visible = scene.Shows(o.LayerId);
+                if (scene.Overlays.TryGetValue(o.LayerId, out var setup))
+                {
+                    o.ApplySceneSetup(setup);
+                    o.Visible = true;
+                }
+                else
+                {
+                    o.Visible = false;
+                }
             }
         }
         finally
         {
             _applyingScene = false;
         }
+
+        OtherSceneOverlays.Clear();
+        foreach (var o in Items.Where(o => !o.Visible))
+        {
+            var others = scenes.Where(s => s.Id != scene.Id && s.Shows(o.LayerId)).ToList();
+            foreach (var other in others)
+            {
+                OtherSceneOverlays.Add(new OverlayFromScene(o, other));
+            }
+
+            if (others.Count == 0)
+            {
+                OtherSceneOverlays.Add(new OverlayFromScene(o, null));
+            }
+        }
+
+        OnPropertyChanged(nameof(HasOtherSceneOverlays));
+
+        OnPropertyChanged(nameof(HasSceneItems));
     }
 
     /// <summary>Called when the output canvas changes size or orientation.</summary>
@@ -529,7 +656,7 @@ public sealed partial class OverlaysViewModel : ObservableObject
             };
             if (source is not null)
             {
-                list.Add(new OverlayLayerBinding(o.LayerId, source, o.PlacementOn(canvasWidth, canvasHeight), StartHidden: !o.Visible));
+                list.Add(new OverlayLayerBinding(o.LayerId, source, o.PlacementOn(canvasWidth, canvasHeight), StartHidden: !o.Visible) { Crop = o.Crop });
             }
         }
 
@@ -604,6 +731,7 @@ public sealed partial class OverlaysViewModel : ObservableObject
             if (e.PropertyName == nameof(OverlayItemViewModel.Visible) && !_applyingScene && !_loading)
             {
                 VisibilityChanged?.Invoke(this, item);
+                OnPropertyChanged(nameof(HasSceneItems));
             }
             else if (e.PropertyName == nameof(OverlayItemViewModel.Url))
             {
@@ -629,6 +757,10 @@ public sealed partial class OverlaysViewModel : ObservableObject
         if (!_applyingScene)
         {
             SettingsChanged?.Invoke(this, EventArgs.Empty);
+            if (liveRelevant && item is { Visible: true })
+            {
+                SceneSetupChanged?.Invoke(this, item);
+            }
         }
 
         if (liveRelevant && item is not null)

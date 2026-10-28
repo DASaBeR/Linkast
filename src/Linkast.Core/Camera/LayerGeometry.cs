@@ -9,6 +9,9 @@ public readonly record struct NormalizedRect(double X, double Y, double Width, d
     public double Bottom => Y + Height;
 
     /// <summary>Keeps the rectangle inside 0..1 with a minimum size, preserving size where possible.</summary>
+    /// <summary>All of the picture, or all of the canvas.</summary>
+    public static NormalizedRect Full { get; } = new(0, 0, 1, 1);
+
     public NormalizedRect Clamped(double minSize = 0.02)
     {
         var w = Math.Clamp(double.IsFinite(Width) ? Width : 0.25, minSize, 1);

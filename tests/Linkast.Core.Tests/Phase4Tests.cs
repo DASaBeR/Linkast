@@ -410,8 +410,11 @@ public class SceneLayoutTests
         Assert.Equal(["a"], s.HiddenOverlays);
         Assert.Equal(["game"], s.MutedChannels);
         Assert.Equal((SceneMediaKind.Card, (string?)null, 60), (s.Media!.Kind, s.Media.Path, s.Media.Title.Length));
-        Assert.False(s.Shows("a"));
-        Assert.True(s.Shows("b"));
+        var withB = s.WithOverlay("b", new SceneOverlay { Size = 9, Position = OverlayPosition.Custom });
+        Assert.False(withB.Shows("a"));
+        Assert.True(withB.Shows("b"));
+        Assert.Equal((OverlayPosition.FullScreen, 1.0), (withB.Overlays["b"].Position, withB.Overlays["b"].Size)); // custom without a rectangle falls back
+        Assert.False(withB.WithoutOverlay("b").Shows("b"));
     }
 
     [Fact]

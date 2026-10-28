@@ -15,6 +15,9 @@ public static class AudioChannels
     /// <summary>The captured game or app on its own.</summary>
     public const string Game = "game";
 
+    /// <summary>The channel of one captured game or app, from its program name (for example "game_dota2").</summary>
+    public static string ForGame(string program) => "game_" + Clean(program);
+
     /// <summary>The channel of a web overlay, from its layer ID (for example "overlay-2" gives "web_overlay_2").</summary>
     public static string ForOverlay(string layerId) => "web_" + Clean(layerId);
 

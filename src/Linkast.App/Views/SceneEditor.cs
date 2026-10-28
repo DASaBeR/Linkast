@@ -21,8 +21,8 @@ namespace Linkast.App.Views;
 /// on a logical canvas the size of the output (1920×1080, or 1080×1920 for vertical) scaled by a Viewbox,
 /// so editor coordinates are output pixels: what you place here is exactly what streams. Click an item
 /// to select it, drag to move, drag a corner to resize (aspect kept), arrow keys nudge; snapping to a
-/// grid, the edges and the centre with visible guides. The gameplay area also has edge handles: a plain
-/// drag resizes that side, an Alt-drag trims the captured picture on that side (a crop, as in OBS).
+/// grid, the edges and the centre with visible guides. Every item also has edge handles: a plain drag
+/// resizes that side, an Alt-drag (on an edge or a corner) trims the picture there (a crop, as in OBS).
 /// Cameras are drawn in stream order (later ones on top), overlays above them, the away screen on top.
 /// In preview mode (the Stream page) only the selected or hovered item shows an outline and handles,
 /// unless <see cref="ShowOverlayNames"/> asks for every overlay's outline and name. The selected item is
@@ -531,6 +531,73 @@ public sealed class SceneEditor : UserControl
         return r;
     }
 
+    /// <summary>Moves one side of a rectangle; the other three stay.</summary>
+    private Rect ResizedEdge(Rect r, Side side, double delta)
+    {
+        var (cw, ch) = (CanvasWidth, CanvasHeight);
+        switch (side)
+        {
+            case Side.Left:
+                var x = Math.Clamp(r.X + delta, 0, r.Right - MinSize);
+                return new Rect(x, r.Y, r.Right - x, r.Height);
+            case Side.Right:
+                r.Width = Math.Clamp(r.Width + delta, MinSize, cw - r.X);
+                return r;
+            case Side.Top:
+                var y = Math.Clamp(r.Y + delta, 0, r.Bottom - MinSize);
+                return new Rect(r.X, y, r.Width, r.Bottom - y);
+            default:
+                r.Height = Math.Clamp(r.Height + delta, MinSize, ch - r.Y);
+                return r;
+        }
+    }
+
+    /// <summary>
+    /// Alt-drag: one side of <paramref name="drawn"/> (where the picture part <paramref name="c"/> is
+    /// drawn) moves, and the picture under it is trimmed away instead of squeezed, so what stays keeps its
+    /// scale and place, as in OBS. Dragging back restores what was trimmed. Returns the new drawn area.
+    /// </summary>
+    private Rect Trimmed(Rect drawn, ref NormalizedRect c, Side side, double delta)
+    {
+        var (cw, ch) = (CanvasWidth, CanvasHeight);
+        switch (side)
+        {
+            case Side.Left:
+            {
+                // Fraction of the picture removed on this side, limited by what is left, what was
+                // trimmed before (when dragging back out) and the canvas edge.
+                var f = Math.Clamp(delta / drawn.Width * c.Width, Math.Max(-c.X, -drawn.X / drawn.Width * c.Width), c.Width - SceneLayout.MinCrop);
+                var px = f * drawn.Width / c.Width;
+                c = new NormalizedRect(c.X + f, c.Y, c.Width - f, c.Height);
+                return new Rect(drawn.X + px, drawn.Y, drawn.Width - px, drawn.Height);
+            }
+
+            case Side.Right:
+            {
+                var f = Math.Clamp(-delta / drawn.Width * c.Width, Math.Max(-(1 - c.Right), (drawn.Right - cw) / drawn.Width * c.Width), c.Width - SceneLayout.MinCrop);
+                var px = f * drawn.Width / c.Width;
+                c = c with { Width = c.Width - f };
+                return new Rect(drawn.X, drawn.Y, drawn.Width - px, drawn.Height);
+            }
+
+            case Side.Top:
+            {
+                var f = Math.Clamp(delta / drawn.Height * c.Height, Math.Max(-c.Y, -drawn.Y / drawn.Height * c.Height), c.Height - SceneLayout.MinCrop);
+                var px = f * drawn.Height / c.Height;
+                c = new NormalizedRect(c.X, c.Y + f, c.Width, c.Height - f);
+                return new Rect(drawn.X, drawn.Y + px, drawn.Width, drawn.Height - px);
+            }
+
+            default:
+            {
+                var f = Math.Clamp(-delta / drawn.Height * c.Height, Math.Max(-(1 - c.Bottom), (drawn.Bottom - ch) / drawn.Height * c.Height), c.Height - SceneLayout.MinCrop);
+                var px = f * drawn.Height / c.Height;
+                c = c with { Height = c.Height - f };
+                return new Rect(drawn.X, drawn.Y, drawn.Width, drawn.Height - px);
+            }
+        }
+    }
+
     private NormalizedRect Normalized(Rect r) =>
         new NormalizedRect(r.X / CanvasWidth, r.Y / CanvasHeight, r.Width / CanvasWidth, r.Height / CanvasHeight).Clamped();
 
@@ -603,6 +670,8 @@ public sealed class SceneEditor : UserControl
         private readonly ISceneItem _item;
         private readonly int _zBase;
         private readonly Image _image = new() { Stretch = Stretch.Fill };
+        private readonly Canvas _picture = new();
+        private readonly Border _clip = new() { ClipToBounds = true, IsHitTestVisible = false };
         private readonly Border _placeholder = new() { Background = new SolidColorBrush(Color.FromArgb(160, 0x91, 0x46, 0xFF)) };
         private readonly TextBlock _placeholderText = new() { Foreground = Brushes.White, FontSize = 56, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center };
         private readonly Rectangle _tint = new() { Fill = Tint, IsHitTestVisible = false };
@@ -610,7 +679,10 @@ public sealed class SceneEditor : UserControl
         private readonly Border _label = new() { Background = new SolidColorBrush(Color.FromArgb(200, 0, 0, 0)), Padding = new Thickness(14, 4, 14, 4), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false };
         private readonly TextBlock _labelText = new() { Foreground = Brushes.White, FontSize = 36 };
         private readonly List<Thumb> _corners = [];
+        private readonly List<Thumb> _edges = [];
         private Rect _dragRect;
+        private NormalizedRect _dragCrop;
+        private bool _trimming;
         private bool _hover;
 
         public LayerVisual(SceneEditor owner, ISceneItem item, int zBase)
@@ -623,10 +695,12 @@ public sealed class SceneEditor : UserControl
             _label.Child = _labelText;
             var body = new Thumb { Cursor = Cursors.SizeAll, Opacity = 0 };
             body.DragStarted += (_, _) => BeginDrag();
-            body.DragDelta += (_, e) => Commit(_dragRect = _owner.Moved(_dragRect, e.HorizontalChange, e.VerticalChange));
+            body.DragDelta += (_, e) => Commit(_dragRect = _owner.Moved(_dragRect, e.HorizontalChange, e.VerticalChange), _dragCrop);
             body.DragCompleted += (_, _) => _owner.ShowGuides(null, null);
+            _picture.Children.Add(_image);
+            _clip.Child = _picture;
             Root.Children.Add(_placeholder);
-            Root.Children.Add(_image);
+            Root.Children.Add(_clip);
             Root.Children.Add(_tint);
             Root.Children.Add(_outline);
             Root.Children.Add(_label);
@@ -637,9 +711,42 @@ public sealed class SceneEditor : UserControl
                 var top = v == VerticalAlignment.Top;
                 var t = RoundThumb(h, v, left == top ? Cursors.SizeNWSE : Cursors.SizeNESW);
                 t.DragStarted += (_, _) => BeginDrag();
-                t.DragDelta += (_, e) => Commit(_dragRect = _owner.ResizedFromCorner(_dragRect, left, top, e.HorizontalChange));
+                t.DragDelta += (_, e) =>
+                {
+                    if (_trimming)
+                    {
+                        // Alt on a corner trims both of its sides.
+                        Trim(left ? Side.Left : Side.Right, e.HorizontalChange);
+                        Trim(top ? Side.Top : Side.Bottom, e.VerticalChange);
+                    }
+                    else
+                    {
+                        Commit(_dragRect = _owner.ResizedFromCorner(_dragRect, left, top, e.HorizontalChange), _dragCrop);
+                    }
+                };
                 t.DragCompleted += (_, _) => _owner.ShowGuides(null, null);
                 _corners.Add(t);
+                Root.Children.Add(t);
+            }
+
+            // Edges: a drag moves that side (the picture stretches), an Alt-drag trims the picture there.
+            foreach (var side in Enum.GetValues<Side>())
+            {
+                var t = EdgeThumb(side);
+                t.DragStarted += (_, _) => BeginDrag();
+                t.DragDelta += (_, e) =>
+                {
+                    var delta = side is Side.Left or Side.Right ? e.HorizontalChange : e.VerticalChange;
+                    if (_trimming)
+                    {
+                        Trim(side, delta);
+                    }
+                    else
+                    {
+                        Commit(_dragRect = _owner.ResizedEdge(_dragRect, side, delta), _dragCrop);
+                    }
+                };
+                _edges.Add(t);
                 Root.Children.Add(t);
             }
 
@@ -687,7 +794,7 @@ public sealed class SceneEditor : UserControl
 
         private void OnItemChanged(object? sender, PropertyChangedEventArgs e)
         {
-            if (e.PropertyName is nameof(ISceneItem.Placement) or nameof(ISceneItem.IsShown)
+            if (e.PropertyName is nameof(ISceneItem.Placement) or nameof(ISceneItem.Crop) or nameof(ISceneItem.IsShown)
                 or nameof(ISceneItem.IsSelected) or nameof(ISceneItem.Name) or nameof(ISceneItem.Preview))
             {
                 Refresh();
@@ -703,6 +810,7 @@ public sealed class SceneEditor : UserControl
             var preview = _item.Preview;
             Root.Visibility = _item.IsShown && (!clean || preview is not null || selected || named) ? Visibility.Visible : Visibility.Collapsed;
             _image.Source = preview;
+            _clip.Visibility = preview is null ? Visibility.Collapsed : Visibility.Visible;
 
             // An overlay without a picture yet (a page still loading) is marked by its tint and name tag;
             // the solid placeholder would hide everything under a full-screen alert box.
@@ -714,19 +822,32 @@ public sealed class SceneEditor : UserControl
             _outline.Visibility = !clean || selected || _hover || named ? Visibility.Visible : Visibility.Collapsed;
             _outline.Stroke = selected ? Accent : Faint;
             _outline.StrokeThickness = selected ? 6 : 3;
-            foreach (var c in _corners)
+            foreach (var c in _corners.Concat(_edges))
             {
                 c.Visibility = selected ? Visibility.Visible : Visibility.Collapsed;
             }
 
             Panel.SetZIndex(Root, _zBase + (selected ? 1 : 0));
-            AutomationProperties.SetName(Root, $"{_item.Name} position. Drag to move, drag a corner to resize, or use the arrow keys.");
+            AutomationProperties.SetName(Root, $"{_item.Name} position. Drag to move, drag a corner or an edge to resize, hold Alt and drag an edge or a corner to trim, or use the arrow keys.");
             var r = CurrentRect();
             Canvas.SetLeft(Root, r.X);
             Canvas.SetTop(Root, r.Y);
             Root.Width = r.Width;
             Root.Height = r.Height;
+            ArrangePicture(r);
             UpdateLabel();
+        }
+
+        /// <summary>The whole picture, scaled so its kept part fills the item; the trimmed parts fall outside the clip.</summary>
+        private void ArrangePicture(Rect r)
+        {
+            var c = _item.Crop.Clamped(SceneLayout.MinCrop);
+            _clip.Width = r.Width;
+            _clip.Height = r.Height;
+            _image.Width = r.Width / c.Width;
+            _image.Height = r.Height / c.Height;
+            Canvas.SetLeft(_image, -c.X * _image.Width);
+            Canvas.SetTop(_image, -c.Y * _image.Height);
         }
 
         /// <summary>The name, and while selected the size it has on the stream in output pixels.</summary>
@@ -749,7 +870,20 @@ public sealed class SceneEditor : UserControl
         {
             _owner.Select(_item);
             _dragRect = CurrentRect();
+            _dragCrop = _item.Crop.Clamped(SceneLayout.MinCrop);
+            _trimming = Keyboard.Modifiers.HasFlag(ModifierKeys.Alt);
             Root.Focus();
+        }
+
+        private void Trim(Side side, double delta)
+        {
+            if (delta == 0)
+            {
+                return;
+            }
+
+            _dragRect = _owner.Trimmed(_dragRect, ref _dragCrop, side, delta);
+            Commit(_dragRect, _dragCrop);
         }
 
         private void OnKeyDown(object sender, KeyEventArgs e)
@@ -760,11 +894,17 @@ public sealed class SceneEditor : UserControl
             }
 
             e.Handled = true;
-            Commit(_owner.Nudged(CurrentRect(), e.Key));
+            Commit(_owner.Nudged(CurrentRect(), e.Key), _item.Crop);
         }
 
-        private void Commit(Rect r)
+        private void Commit(Rect r, NormalizedRect crop)
         {
+            var c = crop.Clamped(SceneLayout.MinCrop);
+            if (c != _item.Crop)
+            {
+                _item.Crop = c;
+            }
+
             var n = _owner.Normalized(r);
             if (n != _item.Placement)
             {
@@ -932,28 +1072,8 @@ public sealed class SceneEditor : UserControl
         /// <summary>Moves one side; the other three stay. The picture is refitted inside the new shape.</summary>
         private void ResizeEdge(Side side, double delta)
         {
-            var r = _dragRect;
-            var (cw, ch) = (_owner.CanvasWidth, _owner.CanvasHeight);
-            switch (side)
-            {
-                case Side.Left:
-                    var x = Math.Clamp(r.X + delta, 0, r.Right - MinSize);
-                    r = new Rect(x, r.Y, r.Right - x, r.Height);
-                    break;
-                case Side.Right:
-                    r.Width = Math.Clamp(r.Width + delta, MinSize, cw - r.X);
-                    break;
-                case Side.Top:
-                    var y = Math.Clamp(r.Y + delta, 0, r.Bottom - MinSize);
-                    r = new Rect(r.X, y, r.Width, r.Bottom - y);
-                    break;
-                case Side.Bottom:
-                    r.Height = Math.Clamp(r.Height + delta, MinSize, ch - r.Y);
-                    break;
-            }
-
-            _dragRect = r;
-            Commit(r, _dragCrop);
+            _dragRect = _owner.ResizedEdge(_dragRect, side, delta);
+            Commit(_dragRect, _dragCrop);
         }
 
         /// <summary>
@@ -965,52 +1085,8 @@ public sealed class SceneEditor : UserControl
         {
             var region = Region(_dragRect, _dragCrop);
             var drawn = new Rect(_dragRect.X + region.X, _dragRect.Y + region.Y, region.Width, region.Height);
-            var (cw, ch) = (_owner.CanvasWidth, _owner.CanvasHeight);
-            var c = _dragCrop;
-            switch (side)
-            {
-                case Side.Left:
-                {
-                    // Fraction of the picture removed on this side, limited by what is left, what was
-                    // trimmed before (when dragging back out) and the canvas edge.
-                    var f = Math.Clamp(delta / drawn.Width * c.Width, Math.Max(-c.X, -drawn.X / drawn.Width * c.Width), c.Width - SceneLayout.MinCrop);
-                    var px = f * drawn.Width / c.Width;
-                    c = new NormalizedRect(c.X + f, c.Y, c.Width - f, c.Height);
-                    drawn = new Rect(drawn.X + px, drawn.Y, drawn.Width - px, drawn.Height);
-                    break;
-                }
-
-                case Side.Right:
-                {
-                    var f = Math.Clamp(-delta / drawn.Width * c.Width, Math.Max(-(1 - c.Right), (drawn.Right - cw) / drawn.Width * c.Width), c.Width - SceneLayout.MinCrop);
-                    var px = f * drawn.Width / c.Width;
-                    c = c with { Width = c.Width - f };
-                    drawn = new Rect(drawn.X, drawn.Y, drawn.Width - px, drawn.Height);
-                    break;
-                }
-
-                case Side.Top:
-                {
-                    var f = Math.Clamp(delta / drawn.Height * c.Height, Math.Max(-c.Y, -drawn.Y / drawn.Height * c.Height), c.Height - SceneLayout.MinCrop);
-                    var px = f * drawn.Height / c.Height;
-                    c = new NormalizedRect(c.X, c.Y + f, c.Width, c.Height - f);
-                    drawn = new Rect(drawn.X, drawn.Y + px, drawn.Width, drawn.Height - px);
-                    break;
-                }
-
-                case Side.Bottom:
-                {
-                    var f = Math.Clamp(-delta / drawn.Height * c.Height, Math.Max(-(1 - c.Bottom), (drawn.Bottom - ch) / drawn.Height * c.Height), c.Height - SceneLayout.MinCrop);
-                    var px = f * drawn.Height / c.Height;
-                    c = c with { Height = c.Height - f };
-                    drawn = new Rect(drawn.X, drawn.Y, drawn.Width, drawn.Height - px);
-                    break;
-                }
-            }
-
-            _dragCrop = c;
-            _dragRect = drawn;
-            Commit(drawn, c);
+            _dragRect = _owner.Trimmed(drawn, ref _dragCrop, side, delta);
+            Commit(_dragRect, _dragCrop);
         }
 
         private void OnKeyDown(object sender, KeyEventArgs e)

@@ -179,6 +179,35 @@ public sealed class WebOverlayRenderer : IAsyncDisposable
     /// <summary>Loads the page again, for example after changing the alert design. UI thread only.</summary>
     public void Reload() => _controller.CoreWebView2.Reload();
 
+    /// <summary>
+    /// Plays a short two-note chime inside the page, at about the loudness of a typical alert (−6 dBFS
+    /// peak). It comes out of the overlay's own browser, so it is heard, metered and streamed exactly like
+    /// a real alert sound, through the overlay's fader.
+    /// </summary>
+    public Task PlayTestSoundAsync() => _controller.CoreWebView2.ExecuteScriptAsync(TestSoundScript);
+
+    private const string TestSoundScript = """
+        (() => {
+          const ctx = new AudioContext();
+          const out = ctx.createGain();
+          out.gain.value = 0.5;
+          out.connect(ctx.destination);
+          [[880, 0], [1320, 0.35]].forEach(([freq, at]) => {
+            const osc = ctx.createOscillator();
+            const env = ctx.createGain();
+            osc.frequency.value = freq;
+            const t = ctx.currentTime + at;
+            env.gain.setValueAtTime(0, t);
+            env.gain.linearRampToValueAtTime(1, t + 0.02);
+            env.gain.exponentialRampToValueAtTime(0.001, t + 0.9);
+            osc.connect(env).connect(out);
+            osc.start(t);
+            osc.stop(t + 0.95);
+          });
+          setTimeout(() => ctx.close(), 2000);
+        })();
+        """;
+
     public ValueTask DisposeAsync()
     {
         lock (_gate)

@@ -73,7 +73,11 @@ public sealed class LiveCameraLayer
 /// <summary>Places a camera layer on the output canvas for one stream.</summary>
 /// <param name="Placement">Normalized to the output canvas.</param>
 /// <param name="StartHidden">Starts off the canvas: the camera is in another scene, ready to be shown by a switch.</param>
-public sealed record CameraLayerBinding(LiveCameraLayer Layer, NormalizedRect Placement, bool StartHidden = false);
+public sealed record CameraLayerBinding(LiveCameraLayer Layer, NormalizedRect Placement, bool StartHidden = false)
+{
+    /// <summary>The part of the rendered camera that is shown (fractions of it); the rest is trimmed away.</summary>
+    public NormalizedRect Crop { get; init; } = NormalizedRect.Full;
+}
 
 /// <summary>A rendered layer that FFmpeg reads from a local named pipe as raw BGRA video.</summary>
 public interface IVideoLayerInput : IAsyncDisposable

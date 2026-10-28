@@ -293,7 +293,8 @@ public sealed partial class MainViewModel
     /// </summary>
     private void OnActiveSceneChanged(SceneLayout scene)
     {
-        Overlays.ApplyScene(scene);
+        LoadCaptureCard(scene);
+        Overlays.ApplyScene(scene, Webcam.Layouts);
         ApplySceneMutes(scene);
         RefreshScenePreview();
         foreach (var name in new[]
@@ -352,8 +353,7 @@ public sealed partial class MainViewModel
             while (_baseDirty)
             {
                 _baseDirty = false;
-                var scene = Webcam.ActiveLayout;
-                await _engine.SetBaseAsync(scene.ShowCapture ? scene.BasePlacement : null, scene.BaseCrop, scene.BaseFit);
+                await SendCapturesAsync();
             }
         }
         finally
@@ -361,15 +361,6 @@ public sealed partial class MainViewModel
             _baseInFlight = false;
         }
     }
-
-    /// <summary>The user showed or hid an overlay: that is part of the active scene.</summary>
-    private void OnOverlayVisibilityChanged(OverlayItemViewModel item) =>
-        Webcam.UpdateActiveScene(s => s with
-        {
-            HiddenOverlays = item.Visible
-                ? [.. s.HiddenOverlays.Where(id => id != item.LayerId)]
-                : [.. s.HiddenOverlays, item.LayerId],
-        });
 
     private void RefreshScenePreview()
     {
@@ -418,9 +409,13 @@ public sealed partial class MainViewModel
             wanted.Add((AudioChannels.Microphone, MixerChannelKind.Microphone, "Microphone"));
         }
 
-        if (SeparateGameAudio && SelectedSourceKind.Kind == VideoSourceKind.Window && SelectedWindow is { } window)
+        // One fader per captured game: each scene's own, heard only while that scene is on.
+        if (SeparateGameAudio)
         {
-            wanted.Add((AudioChannels.Game, MixerChannelKind.Game, window.ProcessName is { } exe ? $"Game ({Path.GetFileNameWithoutExtension(exe)})" : "Game"));
+            foreach (var game in GameWindows())
+            {
+                wanted.Add((GameChannel(game), MixerChannelKind.Game, game.ProcessName is { } exe ? $"Game ({Path.GetFileNameWithoutExtension(exe)})" : "Game"));
+            }
         }
 
         foreach (var web in Overlays.Items.Where(o => o.IsWeb && o.HasUrl))
@@ -456,8 +451,17 @@ public sealed partial class MainViewModel
         {
             foreach (var channel in Mixer.Channels)
             {
-                channel.SceneMuted = scene.Mutes(channel.Key);
+                // "game" in older scenes silences every game.
+                channel.SceneMuted = scene.Mutes(channel.Key) || (channel.Kind == MixerChannelKind.Game && scene.Mutes(AudioChannels.Game));
+                channel.InActiveScene = channel.Kind switch
+                {
+                    MixerChannelKind.SceneVideo => channel.Key == AudioChannels.ForSceneMedia(scene.Id),
+                    MixerChannelKind.Game => channel.Key == ActiveGameChannel,
+                    _ => true,
+                };
             }
+
+            OnPropertyChanged(nameof(ActiveSceneName));
         }
         finally
         {
@@ -519,6 +523,12 @@ public sealed partial class MainViewModel
             return 0;
         }
 
+        // A game is heard only in the scene that captures it.
+        if (key.StartsWith("game_", StringComparison.Ordinal) && (key != ActiveGameChannel || Webcam.ActiveLayout.Mutes(AudioChannels.Game)))
+        {
+            return 0;
+        }
+
         if (Mixer.Get(key) is { } channel)
         {
             return channel.Gain;
@@ -570,7 +580,7 @@ public sealed partial class MainViewModel
                 case MixerChannelKind.Microphone:
                     meter.Monitor.Start(SelectedInputDevice?.Id);
                     break;
-                case MixerChannelKind.Game when SelectedWindow is { ProcessId: > 0 } game:
+                case MixerChannelKind.Game when GameWindows().FirstOrDefault(w => GameChannel(w) == channel.Key) is { } game:
                     meter.Monitor.StartProcess(game.ProcessId, include: true);
                     break;
                 case MixerChannelKind.WebOverlay when OverlayProcessId(channel.Key) is { } pid:
@@ -597,6 +607,79 @@ public sealed partial class MainViewModel
         Overlays.Items.FirstOrDefault(o => o.IsWeb && AudioChannels.ForOverlay(o.LayerId) == channelKey) is { } web
         && _webOverlays.Get(web.LayerId)?.ProcessId is > 0 and var pid ? pid : null;
 
+    /// <summary>The scene whose sounds the Audio tab shows.</summary>
+    public string ActiveSceneName => Webcam?.ActiveLayout.Name ?? string.Empty;
+
+    /// <summary>How long a channel's level is watched after its test sound starts (the chime lasts about 1.3 s).</summary>
+    private static readonly TimeSpan TestSoundWatch = TimeSpan.FromSeconds(2.5);
+
+    /// <summary>
+    /// Plays a web overlay's test sound and reports how loud it is in the stream: its loudest level,
+    /// after the fader and any mute. While live, viewers hear it too, like a real alert.
+    /// </summary>
+    private async Task TestChannelSoundAsync(MixerChannelViewModel channel)
+    {
+        if (channel.IsTesting || Overlays.Items.FirstOrDefault(o => o.IsWeb && AudioChannels.ForOverlay(o.LayerId) == channel.Key) is not { } web)
+        {
+            return;
+        }
+
+        channel.IsTesting = true;
+        channel.TestResult = "Playing…";
+        try
+        {
+            // The page only runs while it is needed; start it for the test.
+            await EnsureWebOverlaysAsync();
+            if (_webOverlays.Get(web.LayerId) is not { } page)
+            {
+                channel.TestResult = "The page isn't running yet. Check its link on the Overlays tab.";
+                return;
+            }
+
+            UpdateStreamMeters();
+            await page.PlayTestSoundAsync();
+            var peak = double.NegativeInfinity;
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (clock.Elapsed < TestSoundWatch)
+            {
+                await Task.Delay(50);
+                if (_channelMeters.TryGetValue(channel.Key, out var meter) && meter.Bus.Active)
+                {
+                    peak = Math.Max(peak, meter.Bus.Meter.LevelDb);
+                }
+            }
+
+            channel.TestResult = DescribeTestLevel(channel, peak);
+            AppendLog($"Test sound for '{web.Name}': {channel.TestResult}");
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException)
+        {
+            channel.TestResult = "The test sound could not play: " + ex.Message;
+        }
+        finally
+        {
+            channel.IsTesting = false;
+        }
+    }
+
+    /// <summary>Words for a test's loudest level as the stream gets it (the meter is before the fader).</summary>
+    private static string DescribeTestLevel(MixerChannelViewModel channel, double peakDb)
+    {
+        if (peakDb <= -55)
+        {
+            return "Not heard. Is the overlay's sound muted in Windows' volume mixer?";
+        }
+
+        if (channel.Muted || channel.SceneMuted || channel.Volume <= 0)
+        {
+            return string.Create(CultureInfo.InvariantCulture, $"Heard at {peakDb:0} dB, but muted here, so viewers won't hear it.");
+        }
+
+        var streamed = peakDb + (20 * Math.Log10(channel.Volume / 100));
+        var advice = streamed > -3 ? " Too loud: turn it down." : streamed < -24 ? " Quiet: turn it up." : string.Empty;
+        return string.Create(CultureInfo.InvariantCulture, $"{streamed:0} dB in the stream.{advice}");
+    }
+
     // ---- What a new stream contains -------------------------------------------------------------
 
     /// <summary>The sounds of a new stream, one per mixer channel, each at its gain now.</summary>
@@ -621,9 +704,13 @@ public sealed partial class MainViewModel
             });
         }
 
-        if (SeparateGameAudio && SelectedSourceKind.Kind == VideoSourceKind.Window && SelectedWindow is { ProcessId: > 0 } game)
+        if (SeparateGameAudio)
         {
-            audio.Add(new ProcessAudioSource(game.ProcessId, game.ProcessName ?? "Game") { Channel = AudioChannels.Game, Gain = GainOf(AudioChannels.Game) });
+            foreach (var game in GameWindows())
+            {
+                var channel = GameChannel(game);
+                audio.Add(new ProcessAudioSource(game.ProcessId, game.ProcessName ?? "Game") { Channel = channel, Gain = GainOf(channel) });
+            }
         }
 
         foreach (var web in Overlays.Items.Where(o => o.IsWeb && o.HasUrl))
@@ -649,11 +736,11 @@ public sealed partial class MainViewModel
         {
             if (active.CameraPlacements.TryGetValue(layer.LayerId, out var here))
             {
-                cameras.Add(new CameraLayerBinding(layer.Layer, here));
+                cameras.Add(new CameraLayerBinding(layer.Layer, here) { Crop = layer.Crop });
             }
             else if (scenes.Select(s => s.CameraPlacements.TryGetValue(layer.LayerId, out var p) ? p : (NormalizedRect?)null).FirstOrDefault(p => p is not null) is { } elsewhere)
             {
-                cameras.Add(new CameraLayerBinding(layer.Layer, elsewhere, StartHidden: true));
+                cameras.Add(new CameraLayerBinding(layer.Layer, elsewhere, StartHidden: true) { Crop = layer.Crop });
             }
         }
 
@@ -696,6 +783,9 @@ public sealed partial class MainViewModel
     /// <summary>After scenes and overlays were loaded (start-up, OBS import): the overlays, pickers and mixer follow the active scene.</summary>
     private void ScenesLoaded()
     {
+        // The card holds the saved capture now: scenes without their own use it.
+        _defaultCapture = CardCapture();
+        AdoptOrphanOverlays();
         RebuildSceneChoices(_pendingSceneChoices.Start, _pendingSceneChoices.End);
         OnActiveSceneChanged(Webcam.ActiveLayout);
     }
@@ -706,8 +796,12 @@ public sealed partial class MainViewModel
         Webcam.ActiveSceneChanged += (_, scene) => OnActiveSceneChanged(scene);
         Webcam.LayoutOptions.CollectionChanged += (_, _) => RebuildSceneChoices(StartSceneChoice?.Id, EndSceneChoice?.Id);
         Overlays.VisibilityChanged += (_, item) => OnOverlayVisibilityChanged(item);
+        Overlays.SceneSetupChanged += (_, item) => OnOverlaySceneSetupChanged(item);
+        Overlays.CopyRequested += (_, choice) => OnOverlayCopyRequested(choice);
+        Overlays.RemoveRequested += (_, item) => OnOverlayRemoveRequested(item);
         Overlays.ItemsChanged += (_, _) => RefreshMixerChannels();
         Mixer.ChannelChanged += (_, channel) => OnMixerChannelChanged(channel);
+        Mixer.TestRequested += (_, channel) => _ = TestChannelSoundAsync(channel);
         Mixer.Channels.CollectionChanged += (_, e) =>
         {
             foreach (var channel in e.NewItems?.OfType<MixerChannelViewModel>() ?? [])

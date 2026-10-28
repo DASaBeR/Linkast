@@ -16,6 +16,9 @@ public interface ISceneItem : INotifyPropertyChanged
     /// <summary>Where it is on the output canvas, normalized. The editor sets it when the user drags.</summary>
     NormalizedRect Placement { get; set; }
 
+    /// <summary>The part of its picture that is shown, as fractions of it (Alt-drag in the editor trims it).</summary>
+    NormalizedRect Crop { get; set; }
+
     /// <summary>False when the item is not on the canvas at all (hidden camera, overlay switched off).</summary>
     bool IsShown { get; }
 

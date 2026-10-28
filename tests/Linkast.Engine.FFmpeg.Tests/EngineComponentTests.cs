@@ -81,7 +81,7 @@ public class ArgumentBuilderTests
     public void The_capture_is_a_named_layer_on_a_paced_canvas()
     {
         var args = FfmpegArgumentBuilder.Build(Job());
-        Assert.Equal("color=c=black:s=1920x1080:r=60,realtime", ValueAfter(args, "-i", 0));
+        Assert.Equal("color=c=black:s=1920x1080:r=60,realtime=limit=60", ValueAfter(args, "-i", 0));
         Assert.Equal("gfxcapture=monitor_idx=1:max_framerate=60:capture_cursor=1", ValueAfter(args, "-i", 1));
 
         var graph = ValueAfter(args, "-filter_complex");
@@ -140,10 +140,55 @@ public class ArgumentBuilderTests
         Assert.True(wallclock > list.IndexOf(@"\\.\pipe\linkast-sys") || list.IndexOf(@"\\.\pipe\linkast-sys") > list.IndexOf(@"\\.\pipe\linkast-cam-1"), "Audio input stays unchanged.");
 
         var graph = ValueAfter(args, "-filter_complex");
-        Assert.Contains("[2:v]scale@cam0=w=480:h=270:flags=bicubic,format=yuva420p[cam0]", graph, StringComparison.Ordinal);
+        Assert.Contains("[2:v]crop@cam0=w='iw*1':h='ih*1':x='iw*0':y='ih*0',scale@cam0=w=480:h=270:flags=bicubic,format=yuva420p[cam0]", graph, StringComparison.Ordinal);
         Assert.Contains("[base][cam0]overlay@cam0=x=1400:y=780:eval=frame:format=yuv420:eof_action=pass[comp0]", graph, StringComparison.Ordinal);
         Assert.Contains(@"[comp0]zmq=bind_address=tcp\\://127.0.0.1\\:5555,format=nv12[vout]", graph, StringComparison.Ordinal);
         Assert.Contains("[3:a]aresample", graph, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Each_scene_capture_is_its_own_input_and_only_the_first_is_shown()
+    {
+        var full = Linkast.Core.Camera.NormalizedRect.Full;
+        var job = Job() with
+        {
+            Captures =
+            [
+                new CaptureJobInput(new WindowSource(11, "Dota 2", "dota2.exe"), full, full, Linkast.Core.Camera.BaseFit.Fit, Hidden: false),
+                new CaptureJobInput(new WindowSource(22, "Deadlock", "deadlock.exe"), full, full, Linkast.Core.Camera.BaseFit.Fill, Hidden: true),
+            ],
+        };
+        var args = FfmpegArgumentBuilder.Build(job);
+        Assert.StartsWith("gfxcapture=hwnd=11:", ValueAfter(args, "-i", 1), StringComparison.Ordinal);
+        Assert.StartsWith("gfxcapture=hwnd=22:", ValueAfter(args, "-i", 2), StringComparison.Ordinal);
+
+        var graph = ValueAfter(args, "-filter_complex");
+        Assert.Contains("[canvas][game]overlay@base=x='0+(1920-w)/2'", graph, StringComparison.Ordinal);
+        Assert.Contains("[2:v]hwdownload,format=bgra,fps=60,crop@base1=", graph, StringComparison.Ordinal); // only the first window is probed for black
+        Assert.Contains("[base][game1]overlay@base1=x='1936'", graph, StringComparison.Ordinal); // hidden just off the canvas
+        Assert.Contains("[base1]format=nv12[vout]", graph, StringComparison.Ordinal); // the last capture is the bottom of the layers
+        Assert.Single(BaseLayerArgs.For(full, full, Linkast.Core.Camera.BaseFit.Fit, 1920, 1080).Commands(1).Select(c => c.Target).Where(t => t == "overlay@base1").Distinct());
+    }
+
+    [Fact]
+    public void Too_many_captures_are_refused()
+    {
+        var full = Linkast.Core.Camera.NormalizedRect.Full;
+        var many = Enumerable.Range(1, FfmpegArgumentBuilder.MaxCaptures + 1)
+            .Select(i => new CaptureJobInput(new WindowSource(i, "w", null), full, full, Linkast.Core.Camera.BaseFit.Fit, Hidden: i > 1)).ToList();
+        var ex = Assert.Throws<StreamFailureException>(() => FfmpegArgumentBuilder.Build(Job() with { Captures = many }));
+        Assert.Equal("captures.count", ex.Error.Code);
+    }
+
+    [Fact]
+    public void A_trimmed_layer_is_cropped_before_its_scale()
+    {
+        var layer = new VideoLayerJobInput(@"\\.\pipe\linkast-web-1", 1920, 1080, 30, new Linkast.Core.Camera.PixelRect(0, 0, 960, 540))
+        {
+            Crop = new Linkast.Core.Camera.NormalizedRect(0.25, 0.1, 0.5, 0.8),
+        };
+        var graph = ValueAfter(FfmpegArgumentBuilder.Build(Job() with { Layers = [layer] }), "-filter_complex");
+        Assert.Contains("[2:v]crop@cam0=w='iw*0.5':h='ih*0.8':x='iw*0.25':y='ih*0.1',scale@cam0=w=960:h=540", graph, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -153,7 +198,7 @@ public class ArgumentBuilderTests
         var args = FfmpegArgumentBuilder.Build(Job(new BlankCanvasSource()) with { Layers = [layer] });
         var graph = ValueAfter(args, "-filter_complex");
         Assert.DoesNotContain("@base", graph, StringComparison.Ordinal);
-        Assert.Contains("[1:v]scale@cam0=", graph, StringComparison.Ordinal);
+        Assert.Contains("[1:v]crop@cam0=", graph, StringComparison.Ordinal);
         Assert.Contains("[canvas][cam0]overlay@cam0=", graph, StringComparison.Ordinal);
     }
 
@@ -249,7 +294,7 @@ public class ArgumentBuilderTests
     public void Blank_canvas_needs_no_hwdownload()
     {
         var args = FfmpegArgumentBuilder.Build(Job(new BlankCanvasSource()));
-        Assert.Equal("color=c=black:s=1920x1080:r=60,realtime", ValueAfter(args, "-i"));
+        Assert.Equal("color=c=black:s=1920x1080:r=60,realtime=limit=60", ValueAfter(args, "-i"));
         Assert.DoesNotContain("hwdownload", ValueAfter(args, "-filter_complex"), StringComparison.Ordinal);
     }
 

@@ -260,8 +260,9 @@
                         </ListBox>
 
                         <!-- ===== Source ===== -->
+                        <!-- The capture can change while live: the stream switches to the new game with a short pause. -->
                         <StackPanel Visibility="{Binding IsSelected, ElementName=TabSource, Converter={StaticResource BoolToVis}}">
-                            <Border Style="{StaticResource Linkast.Card}" IsEnabled="{Binding CanEditSettings}">
+                            <Border Style="{StaticResource Linkast.Card}">
                                 <StackPanel>
                                     <DockPanel Margin="0,0,0,10">
                                         <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Subtle}" Command="{Binding RefreshSourcesCommand}"
@@ -271,8 +272,13 @@
                                                 <AccessText Text="_Refresh" />
                                             </StackPanel>
                                         </Button>
-                                        <TextBlock Text="Capture" Style="{StaticResource Linkast.Card.Title}" Margin="0" />
+                                        <TextBlock Style="{StaticResource Linkast.Card.Title}" Margin="0">
+                                            <Run Text="Capture for" />
+                                            <Run Text="{Binding ActiveSceneName, Mode=OneWay}" />
+                                        </TextBlock>
                                     </DockPanel>
+                                    <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,0,0,10" TextWrapping="Wrap"
+                                               Text="Each scene has its own game, window or display. Switch scenes to set theirs. While live, a switch between scenes is instant; choosing a new game here shows it after a short pause." />
                                     <Grid>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
@@ -293,6 +299,8 @@
                                             <ComboBox x:Name="WindowBox" ItemsSource="{Binding Windows}" SelectedItem="{Binding SelectedWindow}" />
                                         </StackPanel>
                                     </Grid>
+                                    <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{DynamicResource Linkast.Warning}" Text="{Binding SceneCaptureNote}"
+                                               Visibility="{Binding SceneCaptureNote, Converter={x:Static vm:Converters.NotNullToVisibility}}" />
                                     <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,8,0,0" TextWrapping="Wrap"
                                                Visibility="{Binding IsDisplaySource, Converter={StaticResource BoolToVis}}"
                                                Text="Everything on this display is captured, including notifications, chat and other windows." />
@@ -356,7 +364,11 @@
                                         <CheckBox DockPanel.Dock="Right" Content="Game sound on its own fader" IsChecked="{Binding SeparateGameAudio}" MinWidth="0"
                                                   IsEnabled="{Binding CanEditSettings}" VerticalAlignment="Center"
                                                   ToolTip="When you capture a window, its program gets a fader of its own. Its sound is also in Desktop audio, so turn one of them down." />
-                                        <TextBlock Text="Mixer" Style="{StaticResource Linkast.Text.FieldLabel}" Margin="0" VerticalAlignment="Center" />
+                                        <TextBlock Style="{StaticResource Linkast.Text.FieldLabel}" Margin="0" VerticalAlignment="Center">
+                                            <Run Text="Mixer" />
+                                            <Run Text="&#x00B7;" Foreground="{DynamicResource Linkast.TextTertiary}" />
+                                            <Run Text="{Binding ActiveSceneName, Mode=OneWay}" Foreground="{DynamicResource Linkast.TextSecondary}" FontWeight="Normal" />
+                                        </TextBlock>
                                     </DockPanel>
                                     <TextBlock Style="{StaticResource Linkast.Text.Body}" Foreground="{DynamicResource Linkast.TextSecondary}" Margin="0,0,0,8"
                                                Visibility="{Binding Mixer.Channels.Count, Converter={x:Static vm:Converters.ZeroToVisibility}}"
@@ -370,8 +382,10 @@
                                             </ItemsControl.ItemsPanel>
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate DataType="{x:Type vm:MixerChannelViewModel}">
-                                                    <Border Width="104" Margin="0,0,8,6" Padding="8" CornerRadius="{StaticResource Linkast.Radius.Action}" BorderThickness="1"
+                                                    <!-- Only the active scene's sounds: another scene's background video is hidden until that scene is on. -->
+                                                    <Border Width="112" Margin="0,0,8,6" Padding="8" CornerRadius="{StaticResource Linkast.Radius.Action}" BorderThickness="1"
                                                             Background="{DynamicResource Linkast.Surface2}" BorderBrush="{DynamicResource Linkast.BorderSubtle}"
+                                                            Visibility="{Binding InActiveScene, Converter={StaticResource BoolToVis}}"
                                                             AutomationProperties.Name="{Binding Name}">
                                                         <StackPanel>
                                                             <DockPanel>
@@ -396,16 +410,32 @@
                                                                 <Run Text="{Binding Volume, StringFormat={}{0:0}%, Mode=OneWay}" FontWeight="SemiBold" Foreground="{DynamicResource Linkast.TextPrimary}" />
                                                                 <Run Text="{Binding VolumeText, Mode=OneWay}" />
                                                             </TextBlock>
-                                                            <UniformGrid Columns="2" Margin="0,6,0,0">
-                                                                <ToggleButton Style="{StaticResource Linkast.ToggleButton.Secondary}" MinHeight="26" Padding="0" Margin="0,0,3,0"
-                                                                              IsChecked="{Binding Muted}" ToolTip="Mute (works while live)" AutomationProperties.Name="Mute">
+                                                            <UniformGrid Columns="3" Margin="0,6,0,0">
+                                                                <ToggleButton Style="{StaticResource Linkast.ToggleButton.Secondary}" MinHeight="26" Padding="0" Margin="0,0,2,0"
+                                                                              IsChecked="{Binding Muted}" ToolTip="Mute in every scene (works while live)" AutomationProperties.Name="Mute">
                                                                     <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE74F;" FontSize="12" />
                                                                 </ToggleButton>
-                                                                <Button Style="{StaticResource Linkast.Button.Subtle}" MinHeight="26" Padding="0" Margin="3,0,0,0"
+                                                                <ToggleButton Style="{StaticResource Linkast.ToggleButton.Secondary}" MinHeight="26" Padding="0" Margin="2,0,2,0"
+                                                                              IsChecked="{Binding SceneMuted}" ToolTip="Silent in this scene only (the fader keeps its place)"
+                                                                              AutomationProperties.Name="Silent in this scene">
+                                                                    <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE7F4;" FontSize="12" />
+                                                                </ToggleButton>
+                                                                <Button Style="{StaticResource Linkast.Button.Subtle}" MinHeight="26" Padding="0" Margin="2,0,0,0"
                                                                         Command="{Binding ResetVolumeCommand}" ToolTip="Back to 100%" AutomationProperties.Name="Reset volume">
                                                                     <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE72C;" FontSize="12" />
                                                                 </Button>
                                                             </UniformGrid>
+                                                            <Button Style="{StaticResource Linkast.Button.Subtle}" MinHeight="26" Padding="0" Margin="0,4,0,0"
+                                                                    Command="{Binding TestCommand}" Visibility="{Binding CanTest, Converter={StaticResource BoolToVis}}"
+                                                                    ToolTip="Play a short chime through this overlay so you hear it and see how loud it is in the stream. While live, viewers hear it too."
+                                                                    AutomationProperties.Name="Play test sound">
+                                                                <StackPanel Orientation="Horizontal">
+                                                                    <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE767;" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                                                    <TextBlock Text="Test sound" FontSize="11" VerticalAlignment="Center" />
+                                                                </StackPanel>
+                                                            </Button>
+                                                            <TextBlock Text="{Binding TestResult}" FontSize="10" Margin="0,4,0,0" TextWrapping="Wrap" TextAlignment="Center"
+                                                                       Foreground="{DynamicResource Linkast.TextSecondary}" Visibility="{Binding TestResult, Converter={x:Static vm:Converters.NotNullToVisibility}}" />
                                                             <TextBlock Text="Silent in this scene" FontSize="10" Margin="0,6,0,0" TextWrapping="Wrap" TextAlignment="Center"
                                                                        Foreground="{DynamicResource Linkast.Warning}" Visibility="{Binding SceneMuted, Converter={StaticResource BoolToVis}}" />
                                                             <TextBlock Text="{Binding Note}" FontSize="10" Margin="0,4,0,0" TextWrapping="Wrap" TextAlignment="Center"
@@ -417,7 +447,7 @@
                                         </ItemsControl>
                                     </ScrollViewer>
                                     <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,6,0,0"
-                                               Text="Every alert or web overlay has its own fader, so Desktop audio no longer carries them (with your default output device). The microphone also drives voice-reactive camera effects. Faders and meters work while live; a scene can silence any of them (Scenes tab)." />
+                                               Text="Every alert or web overlay has its own fader, so Desktop audio no longer carries them (with your default output device). The microphone also drives voice-reactive camera effects. Faders and meters work while live. The mixer shows the scene that is on: switch scenes to set each one's sounds, and use the middle button to silence a sound in this scene only. Test sound plays a chime through an alert overlay to check its level." />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -773,28 +803,46 @@
                                     <StackPanel>
                                         <DockPanel Margin="0,0,0,6">
                                             <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Primary}" Command="{Binding AddWebCommand}" Margin="8,0,0,0" AutomationProperties.Name="Add alerts or web page"
-                                                    ToolTip="Paste the overlay link from Reymit, Streamlabs, StreamElements or another alert service (up to 3 overlays)">
+                                                    ToolTip="Paste the overlay link from Reymit, Streamlabs, StreamElements or another alert service. It is added to the scene that is on (up to 8 overlays in all scenes)">
                                                 <StackPanel Orientation="Horizontal">
                                                     <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE774;" FontSize="12" Margin="0,0,8,0" />
                                                     <AccessText Text="Add _alerts or web page" />
                                                 </StackPanel>
                                             </Button>
                                             <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Primary}" Command="{Binding AddImageCommand}" AutomationProperties.Name="Add picture"
-                                                    ToolTip="Add a logo or another picture on top of your stream (up to 3 overlays)">
+                                                    ToolTip="Add a logo or another picture to the scene that is on (up to 8 overlays in all scenes)">
                                                 <StackPanel Orientation="Horizontal">
                                                     <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE710;" FontSize="12" Margin="0,0,8,0" />
                                                     <AccessText Text="Add _picture" />
                                                 </StackPanel>
                                             </Button>
-                                            <TextBlock Text="Overlays" Style="{StaticResource Linkast.Card.Title}" Margin="0" />
+                                            <TextBlock Style="{StaticResource Linkast.Card.Title}" Margin="0">
+                                                <Run Text="Overlays in" />
+                                                <Run Text="{Binding DataContext.ActiveSceneName, Mode=OneWay, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                            </TextBlock>
                                         </DockPanel>
                                         <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,0,0,12"
-                                                   Text="Alerts, a chat box or a logo on top of your stream. While this tab is open the Output preview outlines every overlay with its name. Click an overlay here to select it there, then drag it anywhere and drag its corner to resize it. Showing, hiding, moving and resizing work while live." />
+                                                   Text="Each scene has its own overlays, each with its own place, size and trim. While this tab is open the Output preview outlines every overlay with its name. Click an overlay here to select it there, then drag it, drag a corner to resize it, or hold Alt and drag an edge to trim it. Switch scenes to set up another scene's overlays. All of this works while live." />
+
+                                        <!-- Another scene's overlay, copied in with that scene's place, size and trim. -->
+                                        <DockPanel Margin="0,0,0,12" Visibility="{Binding HasOtherSceneOverlays, Converter={StaticResource BoolToVis}}">
+                                            <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Secondary}" Margin="8,0,0,0" MinHeight="32" Padding="12,4"
+                                                    Command="{Binding AddFromSceneCommand}" CommandParameter="{Binding SelectedItem, ElementName=OtherSceneOverlayBox}"
+                                                    ToolTip="Add the chosen overlay to this scene, placed and sized as in the scene it comes from. The overlay itself (its link or picture) is shared; its place in each scene is separate.">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE8C8;" FontSize="12" Margin="0,0,8,0" />
+                                                    <TextBlock Text="Add to this scene" />
+                                                </StackPanel>
+                                            </Button>
+                                            <TextBlock DockPanel.Dock="Left" Text="From another scene" Style="{StaticResource Linkast.Text.FieldLabel}" Margin="0,0,10,0" VerticalAlignment="Center" />
+                                            <ComboBox x:Name="OtherSceneOverlayBox" ItemsSource="{Binding OtherSceneOverlays}" SelectedIndex="0"
+                                                      AutomationProperties.Name="Overlay from another scene" />
+                                        </DockPanel>
 
                                         <Border Background="{DynamicResource Linkast.Surface2}" CornerRadius="{StaticResource Linkast.Radius.Action}" Padding="16,14"
-                                                Visibility="{Binding HasItems, Converter={x:Static vm:Converters.InverseBoolToVisibility}}">
-                                            <TextBlock Style="{StaticResource Linkast.Text.Body}" TextAlignment="Center"
-                                                       Text="No overlays yet. Add your alerts link from your donation or alert service, or a picture such as your logo." />
+                                                Visibility="{Binding HasSceneItems, Converter={x:Static vm:Converters.InverseBoolToVisibility}}">
+                                            <TextBlock Style="{StaticResource Linkast.Text.Body}" TextAlignment="Center" TextWrapping="Wrap"
+                                                       Text="This scene has no overlays yet. Add your alerts link from your donation or alert service, a picture such as your logo, or an overlay from another scene." />
                                         </Border>
 
                                         <ItemsControl ItemsSource="{Binding Items}" Focusable="False">
@@ -802,6 +850,7 @@
                                                 <DataTemplate DataType="{x:Type vm:OverlayItemViewModel}">
                                                     <!-- Clicking anywhere on the card selects the overlay in the Output preview; the selected card is highlighted. -->
                                                     <Border CornerRadius="{StaticResource Linkast.Radius.Action}" Margin="0,0,0,8" PreviewMouseLeftButtonDown="OnOverlayCardPressed"
+                                                            Visibility="{Binding Visible, Converter={StaticResource BoolToVis}}"
                                                             AutomationProperties.Name="{Binding Name}">
                                                         <Border.Style>
                                                             <Style TargetType="Border">
@@ -837,14 +886,12 @@
                                                                 <DockPanel>
                                                                     <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Icon}" Content="&#xE74D;" Foreground="{DynamicResource Linkast.Live}"
                                                                             Command="{Binding DataContext.RemoveCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}"
-                                                                            ToolTip="Remove this overlay" AutomationProperties.Name="Remove overlay" />
+                                                                            ToolTip="Remove from this scene (deleted when no other scene has it)" AutomationProperties.Name="Remove overlay from this scene" />
                                                                     <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Icon}" Content="&#xE707;" Click="OnLocateOverlay"
                                                                             ToolTip="Show me where it is in the Output preview" AutomationProperties.Name="Show in preview" />
                                                                     <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Subtle}" Content="Change picture" MinHeight="30" Padding="10,4"
                                                                             Visibility="{Binding IsImage, Converter={StaticResource BoolToVis}}"
                                                                             Command="{Binding DataContext.ChangeImageCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}" />
-                                                                    <CheckBox DockPanel.Dock="Right" Content="In this scene" IsChecked="{Binding Visible}" Margin="0,0,10,0" MinWidth="0" VerticalAlignment="Center"
-                                                                              ToolTip="Show this overlay in the scene that is on now. Each scene remembers which overlays it shows." />
                                                                     <TextBox Text="{Binding Name, UpdateSourceTrigger=LostFocus}" MaxLength="40" Margin="0,0,10,0" AutomationProperties.Name="Overlay name" />
                                                                 </DockPanel>
 

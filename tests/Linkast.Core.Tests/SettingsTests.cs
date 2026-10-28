@@ -7,6 +7,40 @@ namespace Linkast.Core.Tests;
 public class SettingsSerializerTests
 {
     [Fact]
+    public void Version_3_gives_every_scene_its_own_capture_and_overlays()
+    {
+        var gaming = SceneLayout.DefaultLandscape("camera-1") with { HiddenOverlays = ["overlay-2"] };
+        var soon = SceneLayout.Create(SceneKind.StartingSoon, "camera-1", id: SceneLayout.StartingSoonId);
+        var old = new LinkastSettings
+        {
+            Stream = new StreamSettings { SourceKind = "Window", WindowTitle = "Dota 2", WindowProcess = "dota2.exe", CaptureCursor = false },
+            Webcam = new WebcamSettings { Layouts = [soon, gaming] },
+            Overlays = new OverlaySettings
+            {
+                Items =
+                [
+                    new OverlayConfig { LayerId = "overlay-1", Name = "Alerts", Kind = OverlayKind.Web, Position = OverlayPosition.TopRight, Size = 0.3 },
+                    new OverlayConfig { LayerId = "overlay-2", Name = "Logo", Kind = OverlayKind.Image, Crop = new NormalizedRect(0.1, 0, 0.8, 1) },
+                ],
+            },
+        };
+        var json = SettingsSerializer.Serialize(old).Replace("\"schemaVersion\": 4", "\"schemaVersion\": 3", StringComparison.Ordinal);
+
+        var (back, outcome) = SettingsSerializer.Deserialize(json);
+
+        Assert.Equal(SettingsLoadOutcome.Migrated, outcome);
+        var g = back.Webcam.Layouts.Single(l => l.Id == gaming.Id);
+        Assert.Equal((SceneCaptureKind.Window, "dota2.exe", false), (g.Capture!.Kind, g.Capture.WindowProcess, g.Capture.CaptureCursor));
+        Assert.Equal(["overlay-1"], g.Overlays.Keys);
+        Assert.Equal((OverlayPosition.TopRight, 0.3), (g.Overlays["overlay-1"].Position, g.Overlays["overlay-1"].Size));
+
+        // Starting soon hid the game: it captures nothing, and shows both overlays (it hid neither).
+        var s = back.Webcam.Layouts.Single(l => l.Id == soon.Id);
+        Assert.Equal(SceneCaptureKind.None, s.Capture!.Kind);
+        Assert.Equal(new NormalizedRect(0.1, 0, 0.8, 1), s.Overlays["overlay-2"].Crop);
+    }
+
+    [Fact]
     public void Round_trip_preserves_everything()
     {
         var custom = CameraPresets.Duplicate(CameraPresets.BuiltIn[0], CameraPresets.BuiltIn, "Mine");
@@ -51,7 +85,7 @@ public class SettingsSerializerTests
         var (back, outcome) = SettingsSerializer.Deserialize(json);
 
         Assert.Equal(SettingsLoadOutcome.Loaded, outcome);
-        Assert.Contains("\"schemaVersion\": 3", json, StringComparison.Ordinal);
+        Assert.Contains("\"schemaVersion\": 4", json, StringComparison.Ordinal);
         Assert.Contains("\"shape\": \"Circle\"", json, StringComparison.Ordinal); // enums as names
         Assert.Equal("Window", back.Stream.SourceKind);
         Assert.Equal(["face", "desk"], back.Webcam.Layers.Select(l => l.LayerId));
