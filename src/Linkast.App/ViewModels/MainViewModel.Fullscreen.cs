@@ -116,17 +116,15 @@ public sealed partial class MainViewModel
         }
 
         var live = IsActive;
-        var answer = MessageBox.Show(
-            Application.Current.MainWindow,
+        var capture = Views.ConfirmDialog.Ask(
+            "Capture this display instead?",
             $"Linkast will capture all of {monitor} instead of only the game window.\n\n"
             + "Everything on that display may appear on stream, including notifications, chat and other windows. Close or move anything private first."
-            + (live ? "\n\nViewers see a short pause while the stream switches." : string.Empty)
-            + "\n\nCapture this display?",
-            "Capture this display instead",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Warning,
-            MessageBoxResult.No);
-        if (answer != MessageBoxResult.Yes)
+            + (live ? "\n\nViewers see a short pause while the stream switches." : string.Empty),
+            "Capture display",
+            "Keep the game window",
+            Views.ConfirmKind.Warning);
+        if (!capture)
         {
             return;
         }

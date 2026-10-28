@@ -26,6 +26,49 @@ public static class Converters
         _ => "Problem",
     });
 
+    /// <summary>
+    /// The settings tab that fixes an error: by its code for settings problems (destination.*, encoder.*),
+    /// by its category otherwise. Null when no tab helps (for example an FFmpeg crash).
+    /// </summary>
+    public static string? ErrorFixTab(StreamError? error) => error switch
+    {
+        null => null,
+        { Code: var c } when c.StartsWith("destination.", StringComparison.Ordinal) => "Destination",
+        { Code: var c } when c.StartsWith("encoder.", StringComparison.Ordinal) => "Quality",
+        { Category: ErrorCategory.Encoder } => "Quality",
+        { Category: ErrorCategory.Network } => "Network",
+        { Category: ErrorCategory.Capture } => "Capture",
+        { Category: ErrorCategory.Audio } => "Audio",
+        _ => null,
+    };
+
+    /// <summary>"Open Destination settings" for the error's fix button, or null to hide it.</summary>
+    public static IValueConverter ErrorFixLabel { get; } = new Lambda(v =>
+        ErrorFixTab(v as StreamError) is { } tab ? $"Open {tab} settings" : null);
+
+    public static IValueConverter ErrorFixVisibility { get; } = new Lambda(v =>
+        ErrorFixTab(v as StreamError) is null ? Visibility.Collapsed : Visibility.Visible);
+
+    /// <summary>Visible for a null or empty string, for "this field is still empty" hints.</summary>
+    public static IValueConverter EmptyToVisibility { get; } = new Lambda(v =>
+        v is null || (v is string s && string.IsNullOrWhiteSpace(s)) ? Visibility.Visible : Visibility.Collapsed);
+
+    public static IValueConverter Upper { get; } = new Lambda(v => (v as string)?.ToUpper(CultureInfo.CurrentCulture));
+
+    /// <summary>True only when every bound value is true (for example "enabled and not live").</summary>
+    public static IMultiValueConverter AllTrue { get; } = new MultiLambda(v => v.All(x => x is true));
+
+    public static IMultiValueConverter AllTrueToVisibility { get; } = new MultiLambda(v =>
+        v.All(x => x is true) ? Visibility.Visible : Visibility.Collapsed);
+
+    /// <summary>The destination step of "Before you go live": what is still missing, or where the stream goes.</summary>
+    public static IMultiValueConverter DestinationCheck { get; } = new MultiLambda(v => (v[0] as string, v[1] is true, v[2] as string) switch
+    {
+        (var server, _, _) when string.IsNullOrWhiteSpace(server) => "Add the server address.",
+        (_, false, var where) => $"Add your stream key for {where}.",
+        (_, true, var where) => $"{where}, stream key saved.",
+    });
+
     public static IValueConverter TestResultBrush { get; } = new Lambda(v => v switch
     {
         true => Brush("Linkast.Success"),

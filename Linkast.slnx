@@ -10,6 +10,9 @@
     <Project Path="src/Linkast.Platform.Windows/Linkast.Platform.Windows.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Linkast.App.Tests/Linkast.App.Tests.csproj">
+      <Platform Project="x64" />
+    </Project>
     <Project Path="tests/Linkast.Core.Tests/Linkast.Core.Tests.csproj" />
     <Project Path="tests/Linkast.Effects.Tests/Linkast.Effects.Tests.csproj">
       <Platform Project="x64" />

@@ -3,9 +3,8 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <!-- The GPL's "appropriate legal notices": copyright, no warranty, licence and source. -->
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-        <StackPanel Margin="22,18,22,22" MaxWidth="860" HorizontalAlignment="Left">
-            <TextBlock Text="About" Style="{StaticResource Linkast.Text.PageTitle}" />
-            <TextBlock Text="Version, licence and open-source notices." Style="{StaticResource Linkast.Text.Hint}" FontSize="12" Margin="0,2,0,16" />
+        <StackPanel Margin="12">
+            <!-- The page name and its description are in the window header. -->
 
             <Border Style="{StaticResource Linkast.Card}" Padding="18">
                 <StackPanel Orientation="Horizontal">

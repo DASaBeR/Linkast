@@ -660,7 +660,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(StartCommand), nameof(ToggleRecordingCommand))]
-    [NotifyPropertyChangedFor(nameof(StatusTitleText))]
+    [NotifyPropertyChangedFor(nameof(StatusTitleText), nameof(NeedsSetup))]
     public partial bool IsReady { get; set; }
 
     [ObservableProperty]
@@ -684,7 +684,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     public ObservableCollection<WindowInfo> Windows { get; } = [];
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsDisplaySource), nameof(IsWindowSource))]
+    [NotifyPropertyChangedFor(nameof(IsDisplaySource), nameof(IsWindowSource), nameof(CaptureSummary))]
     public partial VideoSourceKindOption SelectedSourceKind { get; set; }
 
     public bool IsDisplaySource => SelectedSourceKind.Kind == VideoSourceKind.Display;
@@ -692,10 +692,20 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     public bool IsWindowSource => SelectedSourceKind.Kind == VideoSourceKind.Window;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CaptureSummary))]
     public partial MonitorInfo? SelectedMonitor { get; set; }
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CaptureSummary))]
     public partial WindowInfo? SelectedWindow { get; set; }
+
+    /// <summary>What this scene captures, in one line for the sources list (the display or window, as in its picker).</summary>
+    public string CaptureSummary => SelectedSourceKind.Kind switch
+    {
+        VideoSourceKind.Display => SelectedMonitor?.ToString() ?? "Choose a display",
+        VideoSourceKind.Window => SelectedWindow?.ToString() ?? "Choose a window or game",
+        _ => SelectedSourceKind.Label,
+    };
 
     [ObservableProperty]
     public partial bool UseDesktopDuplication { get; set; }
@@ -811,7 +821,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     /// <summary>A preset fills in the server; Custom lets the user type it.</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsCustomPlatform))]
+    [NotifyPropertyChangedFor(nameof(IsCustomPlatform), nameof(DestinationSummary))]
     public partial StreamPlatformInfo SelectedPlatform { get; set; } = StreamPlatforms.Get(StreamPlatform.Custom);
 
     public bool IsCustomPlatform => SelectedPlatform.Platform == StreamPlatform.Custom;
@@ -877,7 +887,22 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     public partial DestinationKindOption SelectedDestinationKind { get; set; }
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsDestinationReady), nameof(NeedsSetup), nameof(DestinationSummary), nameof(StatusTitleText))]
     public partial string ServerUrl { get; set; } = string.Empty;
+
+    /// <summary>A stream key is saved (its value is never exposed to the view).</summary>
+    public bool HasStreamKey => !StreamKey.IsEmpty;
+
+    /// <summary>Both a server and a key are filled in. Only presence is checked; the server validates the rest when you go live.</summary>
+    public bool IsDestinationReady => HasStreamKey && !string.IsNullOrWhiteSpace(ServerUrl);
+
+    /// <summary>Something required before going live is still missing, so the status panel shows the setup steps.</summary>
+    public bool NeedsSetup => !IsReady || !IsDestinationReady;
+
+    /// <summary>Where the stream goes, for the status panel: the platform name, or the custom server's host.</summary>
+    public string DestinationSummary => !IsCustomPlatform
+        ? SelectedPlatform.Name
+        : Uri.TryCreate(ServerUrl, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.Host) ? uri.Host : "Custom server";
 
     /// <summary>Set from the view's PasswordBox. Never bound as plain text. Saved encrypted with DPAPI.</summary>
     public Secret StreamKey
@@ -887,6 +912,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         {
             field = value ?? new Secret(string.Empty);
             OnPropertyChanged(nameof(CanMeasureUpload));
+            OnPropertyChanged(nameof(HasStreamKey));
+            OnPropertyChanged(nameof(IsDestinationReady));
+            OnPropertyChanged(nameof(NeedsSetup));
+            OnPropertyChanged(nameof(StatusTitleText));
             if (!_loading)
             {
                 _secrets.Set(DpapiSecretStore.StreamKeyName, field);
@@ -941,7 +970,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         StreamState.Stopping when _recordOnly => "Saving recording…",
         StreamState.Stopping => "Ending stream…",
         StreamState.Failed => "Stopped with an error",
-        _ when IsReady => "Ready to stream",
+        _ when IsReady && IsDestinationReady => "Ready to stream",
+        _ when IsReady => "Add your destination",
         _ => "Not ready yet",
     };
 
@@ -1456,13 +1486,12 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
-        var answer = MessageBox.Show(
-            Application.Current.MainWindow,
-            $"\"{item.Name}\" isn't part of the running stream yet.\n\nThe stream has to restart to show it, which takes a few seconds. Restart the stream now?",
+        var restart = Views.ConfirmDialog.Ask(
             "Show the new overlay",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question);
-        if (answer != MessageBoxResult.Yes)
+            $"\"{item.Name}\" isn't part of the running stream yet. The stream has to restart to show it, which takes a few seconds; viewers see a short break.",
+            "Restart stream",
+            "Later");
+        if (!restart)
         {
             AppendLog($"\"{item.Name}\" will appear the next time you go live.");
             return;
@@ -1553,13 +1582,12 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         var reason = to.Orientation != from.Orientation
             ? $"'{to.Name}' changes the stream to {(to.Orientation == OutputOrientation.Vertical ? "vertical" : "landscape")}."
             : $"'{to.Name}' shows a camera that isn't in the current stream.";
-        var answer = MessageBox.Show(
-            Application.Current.MainWindow,
-            reason + "\n\nThe stream has to restart to apply it, which takes a few seconds. Restart the stream now?",
+        var restart = Views.ConfirmDialog.Ask(
             "Switch scene",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question);
-        if (answer != MessageBoxResult.Yes)
+            reason + " The stream has to restart to apply it, which takes a few seconds; viewers see a short break.",
+            "Restart and switch",
+            "Stay on this scene");
+        if (!restart)
         {
             return Task.FromResult(false);
         }

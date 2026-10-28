@@ -67,50 +67,40 @@
         </Style>
     </UserControl.Resources>
 
-    <!-- One camera layer: the camera and its preview on the left, its look and effects on the right. -->
+    <!-- One camera layer: a large live preview on the left; the device, look and effects in the inspector on the right. -->
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*" MinWidth="300" />
+            <ColumnDefinition Width="3*" MinWidth="340" />
             <ColumnDefinition Width="14" />
-            <ColumnDefinition Width="360" />
+            <ColumnDefinition Width="2*" MinWidth="340" MaxWidth="520" />
         </Grid.ColumnDefinitions>
 
-        <!-- ===== Camera ===== -->
+        <!-- ===== Preview ===== -->
         <Border Style="{StaticResource Linkast.Card}" VerticalAlignment="Top">
             <StackPanel>
                 <DockPanel Margin="0,0,0,12">
-                    <CheckBox DockPanel.Dock="Right" Content="_Camera on" IsChecked="{Binding CameraOn}" IsEnabled="{Binding HasCamera}" FontWeight="SemiBold"
-                              VerticalAlignment="Center" ToolTip="Turning the camera off releases it immediately and hides it from your stream." />
-                    <Border DockPanel.Dock="Right" Style="{StaticResource Linkast.StatusPill.Success}" Margin="0,0,14,0"
+                    <Border DockPanel.Dock="Right" Style="{StaticResource Linkast.StatusPill.Success}"
                             Visibility="{Binding State, Converter={x:Static vm:Converters.RunningToVisibility}}" AutomationProperties.Name="Camera is active">
                         <TextBlock Text="● CAMERA ACTIVE" />
                     </Border>
-                    <TextBlock Text="{Binding Name}" Style="{StaticResource Linkast.Card.Title}" Margin="0" TextTrimming="CharacterEllipsis" />
+                    <Border DockPanel.Dock="Right" Style="{StaticResource Linkast.StatusPill}"
+                            Visibility="{Binding State, Converter={x:Static vm:Converters.NotRunningToVisibility}}">
+                        <TextBlock Text="CAMERA OFF" />
+                    </Border>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Name}" Style="{StaticResource Linkast.Card.Title}" Margin="0" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding SelectedDevice}" Foreground="{DynamicResource Linkast.TextTertiary}" Margin="10,0,0,0" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
                 </DockPanel>
 
+                <!-- A 16:9 frame as wide as the card: the invisible Viewbox sets the height, the picture fits inside. -->
                 <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="2*" />
-                        <ColumnDefinition Width="10" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="10" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel>
-                        <TextBlock Text="Device" Style="{StaticResource Linkast.Text.FieldLabel}" />
-                        <ComboBox ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice}" AutomationProperties.Name="Camera" />
-                    </StackPanel>
-                    <StackPanel Grid.Column="2">
-                        <Label Content="_Resolution" Target="{Binding ElementName=FormatBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
-                        <ComboBox x:Name="FormatBox" ItemsSource="{Binding Formats}" SelectedItem="{Binding SelectedFormat}" />
-                    </StackPanel>
-                    <Button Grid.Column="4" Style="{StaticResource Linkast.Button.Icon}" Content="&#xE72C;" VerticalAlignment="Bottom" Width="34" Height="34"
-                            Command="{Binding DataContext.RefreshDevicesCommand, RelativeSource={RelativeSource AncestorType=views:WebcamPanel}}"
-                            ToolTip="Look for cameras again" AutomationProperties.Name="Look for cameras again" />
-                </Grid>
-
-                <Border Margin="0,12,0,0" CornerRadius="{StaticResource Linkast.Radius.Preview}" Background="#FF07080F" MinHeight="220"
-                        BorderBrush="{DynamicResource Linkast.BorderStrong}" BorderThickness="1" ClipToBounds="True">
+                    <Viewbox x:Name="PreviewAspect" Stretch="Uniform" IsHitTestVisible="False">
+                        <Border Width="16" Height="9" />
+                    </Viewbox>
+                <Border CornerRadius="{StaticResource Linkast.Radius.Preview}" Background="#FF07080F" Height="{Binding ActualHeight, ElementName=PreviewAspect}"
+                        BorderBrush="{DynamicResource Linkast.BorderStrong}" BorderThickness="1" ClipToBounds="True" VerticalAlignment="Top">
                     <Grid>
                         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24"
                                     Visibility="{Binding State, Converter={x:Static vm:Converters.NotRunningToVisibility}}">
@@ -125,6 +115,33 @@
                                AutomationProperties.Name="Camera preview" />
                     </Grid>
                 </Border>
+                </Grid>
+
+                <!-- The camera itself: on/off, device and format. -->
+                <Grid Margin="0,14,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="18" />
+                        <ColumnDefinition Width="2*" />
+                        <ColumnDefinition Width="8" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="12" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <CheckBox Style="{StaticResource Linkast.ToggleSwitch}" Content="_Camera on" IsChecked="{Binding CameraOn}" IsEnabled="{Binding HasCamera}" FontWeight="SemiBold"
+                              VerticalAlignment="Bottom" Margin="0,0,0,3" ToolTip="Turning the camera off releases it immediately and hides it from your stream." />
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="Device" Style="{StaticResource Linkast.Text.FieldLabel}" />
+                        <ComboBox ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice}" AutomationProperties.Name="Camera" />
+                    </StackPanel>
+                    <Button Grid.Column="4" Style="{StaticResource Linkast.Button.Icon}" Content="&#xE72C;" VerticalAlignment="Bottom" Width="34" Height="34"
+                            Command="{Binding DataContext.RefreshDevicesCommand, RelativeSource={RelativeSource AncestorType=views:WebcamPanel}}"
+                            ToolTip="Look for cameras again" AutomationProperties.Name="Look for cameras again" />
+                    <StackPanel Grid.Column="6">
+                        <Label Content="_Resolution" Target="{Binding ElementName=FormatBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
+                        <ComboBox x:Name="FormatBox" ItemsSource="{Binding Formats}" SelectedItem="{Binding SelectedFormat}" />
+                    </StackPanel>
+                </Grid>
                 <TextBlock Style="{StaticResource Linkast.Text.Hint}" Text="{Binding DiagnosticsText}" Margin="0,8,0,0" />
                 <Border Style="{StaticResource Linkast.Issue.Warning}" Margin="0,10,0,0"
                         Visibility="{Binding CameraError, Converter={x:Static vm:Converters.NotNullToVisibility}}"
@@ -139,13 +156,7 @@
         <!-- ===== Inspector ===== -->
         <Border Grid.Column="2" Style="{StaticResource Linkast.Card}" VerticalAlignment="Top">
             <StackPanel>
-                <ListBox Style="{StaticResource Linkast.Segmented}" AutomationProperties.Name="Camera settings" SelectedIndex="0">
-                    <ListBox.ItemContainerStyle>
-                        <Style TargetType="ListBoxItem" BasedOn="{StaticResource Linkast.Segmented.Item}">
-                            <Setter Property="Padding" Value="2,6" />
-                            <Setter Property="FontSize" Value="12" />
-                        </Style>
-                    </ListBox.ItemContainerStyle>
+                <ListBox Style="{StaticResource Linkast.Tabs}" AutomationProperties.Name="Camera settings" SelectedIndex="0" Margin="-4,-4,-4,0">
                     <ListBoxItem x:Name="TabLook" Content="Look" />
                     <ListBoxItem x:Name="TabBackground" Content="Background" />
                     <ListBoxItem x:Name="TabFraming" Content="Framing" />
@@ -273,7 +284,7 @@
 
                 <!-- Framing -->
                 <StackPanel Visibility="{Binding IsSelected, ElementName=TabFraming, Converter={StaticResource BoolToVis}}" Margin="0,16,0,0">
-                    <CheckBox Content="_Keep my face in frame" IsChecked="{Binding FramingEnabled}" FontWeight="SemiBold"
+                    <CheckBox Style="{StaticResource Linkast.ToggleSwitch}" Content="_Keep my face in frame" IsChecked="{Binding FramingEnabled}" FontWeight="SemiBold"
                               ToolTip="Follows your face smoothly. Manual zoom and crop are paused while this is on." />
                     <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,6,0,0"
                                Text="Uses Windows' face detection on this PC. Small movements are ignored so the picture stays calm." />
@@ -301,7 +312,7 @@
                                Text="Animations change the border, so give the camera a border in Look." />
 
                     <Border Height="1" Background="{DynamicResource Linkast.BorderSubtle}" Margin="0,16" />
-                    <CheckBox Content="_React to my voice" IsChecked="{Binding AudioReactive}" FontWeight="SemiBold" ToolTip="The border or glow responds while you speak" />
+                    <CheckBox Style="{StaticResource Linkast.ToggleSwitch}" Content="_React to my voice" IsChecked="{Binding AudioReactive}" FontWeight="SemiBold" ToolTip="The border or glow responds while you speak" />
                     <StackPanel Visibility="{Binding AudioReactive, Converter={StaticResource BoolToVis}}">
                         <Label Content="St_yle" Target="{Binding ElementName=AudioStyleBox}" Style="{StaticResource Linkast.Label.Field}" />
                         <ComboBox x:Name="AudioStyleBox" ItemsSource="{Binding AudioStyles}" SelectedItem="{Binding AudioStyle}" ItemTemplate="{StaticResource EnumTemplate}" />

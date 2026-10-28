@@ -262,6 +262,11 @@
     <Setter Property="TextWrapping" Value="Wrap"/>
     <Setter Property="Margin" Value="0,4,0,0"/>
   </Style>
+  <!-- Inline validation under a field: what is missing, in the warning colour. -->
+  <Style x:Key="Linkast.Text.Warning" TargetType="TextBlock" BasedOn="{StaticResource Linkast.Text.Hint}">
+    <Setter Property="FontSize" Value="{DynamicResource Linkast.FontSize.Label}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.Warning}"/>
+  </Style>
   <Style x:Key="Linkast.Text.Body" TargetType="TextBlock">
     <Setter Property="Foreground" Value="{DynamicResource Linkast.TextSecondary}"/>
     <Setter Property="TextWrapping" Value="Wrap"/>
@@ -480,5 +485,198 @@
         </ControlTemplate>
       </Setter.Value>
     </Setter>
+  </Style>
+
+  <!-- ===== Tabs =====
+       Navigation between sections of one page: text with an accent underline under the selected tab.
+       Kept visually apart from the Segmented control, which picks a value (platform, shape, background). -->
+  <Style x:Key="Linkast.Tabs.Item" TargetType="ListBoxItem">
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextSecondary}"/>
+    <Setter Property="FontSize" Value="{DynamicResource Linkast.FontSize.Body}"/>
+    <Setter Property="Padding" Value="12,9,12,10"/>
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="FocusVisualStyle" Value="{StaticResource Linkast.FocusVisual}"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ListBoxItem">
+          <Grid Background="Transparent">
+            <Border x:Name="Overlay" CornerRadius="6,6,0,0" Background="{DynamicResource Linkast.StateOverlay}" Opacity="0"/>
+            <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            <Border x:Name="Underline" Height="2" CornerRadius="1" VerticalAlignment="Bottom" Margin="8,0"
+                    Background="{DynamicResource Linkast.Accent}" Visibility="Hidden"/>
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Overlay" Property="Opacity" Value="0.05"/>
+              <Setter Property="Foreground" Value="{DynamicResource Linkast.TextPrimary}"/>
+            </Trigger>
+            <Trigger Property="IsSelected" Value="True">
+              <Setter TargetName="Underline" Property="Visibility" Value="Visible"/>
+              <Setter Property="Foreground" Value="{DynamicResource Linkast.TextPrimary}"/>
+              <Setter Property="FontWeight" Value="{DynamicResource Linkast.FontWeight.SemiBold}"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.45"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+  <!-- A thin divider between two groups of tabs (a disabled, non-focusable item). -->
+  <Style x:Key="Linkast.Tabs.Divider" TargetType="ListBoxItem">
+    <Setter Property="IsEnabled" Value="False"/>
+    <Setter Property="Focusable" Value="False"/>
+    <Setter Property="IsTabStop" Value="False"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ListBoxItem">
+          <Border Width="1" Margin="8,10" Background="{DynamicResource Linkast.BorderStrong}"/>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+  <Style x:Key="Linkast.Tabs" TargetType="ListBox">
+    <Setter Property="ItemContainerStyle" Value="{StaticResource Linkast.Tabs.Item}"/>
+    <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+    <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Disabled"/>
+    <Setter Property="ItemsPanel">
+      <Setter.Value>
+        <ItemsPanelTemplate>
+          <WrapPanel/>
+        </ItemsPanelTemplate>
+      </Setter.Value>
+    </Setter>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ListBox">
+          <Border BorderBrush="{DynamicResource Linkast.BorderSubtle}" BorderThickness="0,0,0,1">
+            <ItemsPresenter/>
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ===== Toggle switch =====
+       A CheckBox drawn as a switch, for settings that turn something on or off. The label (Content)
+       sits on the left; the switch on the right. -->
+  <Style x:Key="Linkast.ToggleSwitch" TargetType="CheckBox">
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextPrimary}"/>
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="MinHeight" Value="28"/>
+    <Setter Property="HorizontalAlignment" Value="Left"/>
+    <Setter Property="HorizontalContentAlignment" Value="Left"/>
+    <Setter Property="FocusVisualStyle" Value="{StaticResource Linkast.FocusVisual}"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="CheckBox">
+          <DockPanel Background="Transparent">
+            <Grid DockPanel.Dock="Right" Width="38" Height="20" VerticalAlignment="Center" Margin="10,0,0,0">
+              <Border x:Name="Track" CornerRadius="10" BorderThickness="1" Background="{DynamicResource Linkast.Surface3}"
+                      BorderBrush="{DynamicResource Linkast.BorderStrong}"/>
+              <Ellipse x:Name="Knob" Width="12" Height="12" Margin="4,0" HorizontalAlignment="Left" Fill="{DynamicResource Linkast.TextSecondary}"/>
+            </Grid>
+            <ContentPresenter RecognizesAccessKey="True" VerticalAlignment="Center" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"/>
+          </DockPanel>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="Track" Property="Background" Value="{DynamicResource Linkast.Accent}"/>
+              <Setter TargetName="Track" Property="BorderBrush" Value="{DynamicResource Linkast.Accent}"/>
+              <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right"/>
+              <Setter TargetName="Knob" Property="Fill" Value="{DynamicResource Linkast.OnAccent}"/>
+            </Trigger>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Track" Property="BorderBrush" Value="{DynamicResource Linkast.Accent}"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.45"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ===== Workspace panel and section header =====
+       The Stream page is three panels (scenes and sources, preview and settings, status). -->
+  <Style x:Key="Linkast.Panel" TargetType="Border">
+    <Setter Property="Background" Value="{DynamicResource Linkast.Surface1}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Linkast.BorderSubtle}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="{DynamicResource Linkast.Radius.Card}"/>
+  </Style>
+  <Style x:Key="Linkast.Text.Section" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="{DynamicResource Linkast.FontSize.Caption}"/>
+    <Setter Property="FontWeight" Value="{DynamicResource Linkast.FontWeight.SemiBold}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextTertiary}"/>
+    <Setter Property="VerticalAlignment" Value="Center"/>
+  </Style>
+
+  <!-- ===== List row =====
+       One row in a vertical list (scenes, sources): hover tint, selected = soft accent with accent edge. -->
+  <Style x:Key="Linkast.ListRow" TargetType="ListBoxItem">
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.TextPrimary}"/>
+    <Setter Property="Margin" Value="0,0,0,2"/>
+    <Setter Property="Padding" Value="8,6"/>
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+    <Setter Property="FocusVisualStyle" Value="{StaticResource Linkast.FocusVisual}"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ListBoxItem">
+          <Grid>
+            <Border x:Name="Bd" CornerRadius="{DynamicResource Linkast.Radius.Control}" Background="Transparent" BorderThickness="1" BorderBrush="Transparent"/>
+            <Border x:Name="Overlay" CornerRadius="{DynamicResource Linkast.Radius.Control}" Background="{DynamicResource Linkast.StateOverlay}" Opacity="0"/>
+            <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center"/>
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Overlay" Property="Opacity" Value="0.05"/>
+            </Trigger>
+            <Trigger Property="IsSelected" Value="True">
+              <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Linkast.AccentSoft}"/>
+              <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Linkast.Accent}"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter Property="Opacity" Value="0.45"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+  <Style x:Key="Linkast.List" TargetType="ListBox">
+    <Setter Property="ItemContainerStyle" Value="{StaticResource Linkast.ListRow}"/>
+    <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+    <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Disabled"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ListBox">
+          <ItemsPresenter/>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- ===== Notices =====
+       Info: neutral facts the user should know (for example, settings that are locked while live).
+       Success: a check that passed. Same shape as the Issue banners. -->
+  <Style x:Key="Linkast.Issue.Info" TargetType="Border" BasedOn="{StaticResource Linkast.Issue.Error}">
+    <Setter Property="Background" Value="{DynamicResource Linkast.InfoSoft}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Linkast.Info}"/>
+    <Setter Property="Padding" Value="12,9"/>
+  </Style>
+  <Style x:Key="Linkast.Issue.Success" TargetType="Border" BasedOn="{StaticResource Linkast.Issue.Error}">
+    <Setter Property="Background" Value="{DynamicResource Linkast.SuccessSoft}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Linkast.Success}"/>
+  </Style>
+
+  <!-- A text-only action in the accent colour, for "Set up", "Change" and similar links inside a row. -->
+  <Style x:Key="Linkast.Button.Link" TargetType="Button" BasedOn="{StaticResource Linkast.Button.Subtle}">
+    <Setter Property="Foreground" Value="{DynamicResource Linkast.Accent}"/>
+    <Setter Property="FontWeight" Value="{DynamicResource Linkast.FontWeight.SemiBold}"/>
+    <Setter Property="MinHeight" Value="26"/>
+    <Setter Property="Padding" Value="8,3"/>
   </Style>
 </ResourceDictionary>

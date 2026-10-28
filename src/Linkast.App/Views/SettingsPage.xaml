@@ -12,9 +12,8 @@
     </UserControl.Resources>
 
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-        <StackPanel Margin="22,18,22,22" MaxWidth="1100" HorizontalAlignment="Left">
-            <TextBlock Text="Settings" Style="{StaticResource Linkast.Text.PageTitle}" />
-            <TextBlock Text="Appearance, updates, hotkeys, importing from OBS and diagnostics." Style="{StaticResource Linkast.Text.Hint}" FontSize="12" Margin="0,2,0,16" />
+        <StackPanel Margin="12">
+            <!-- The page name and its description are in the window header. -->
 
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -113,7 +112,7 @@
                                         Command="{Binding ResetDefaultsCommand}" VerticalAlignment="Top" />
                                 <TextBlock Text="Hotkeys" Style="{StaticResource Linkast.Card.Title}" />
                             </DockPanel>
-                            <CheckBox Content="Use hotkeys, even while a game or another app is in front" IsChecked="{Binding Enabled}" Margin="0,0,0,10" />
+                            <CheckBox Style="{StaticResource Linkast.ToggleSwitch}" Content="Use hotkeys, even while a game or another app is in front" IsChecked="{Binding Enabled}" Margin="0,0,0,10" />
                             <ItemsControl ItemsSource="{Binding Rows}" IsEnabled="{Binding Enabled}" Focusable="False">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate DataType="{x:Type vm:HotkeyRowViewModel}">

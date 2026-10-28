@@ -33,7 +33,7 @@
     </UserControl.Resources>
 
     <StackPanel>
-        <ListBox x:Name="StudioTabs" Style="{StaticResource Linkast.Segmented}" HorizontalAlignment="Left" Margin="0,0,0,14"
+        <ListBox x:Name="StudioTabs" Style="{StaticResource Linkast.Tabs}" Margin="0,0,0,14"
                  SelectedIndex="0" AutomationProperties.Name="Webcam Studio sections">
             <ListBoxItem x:Name="TabStudio" Padding="14,6" AutomationProperties.Name="Camera and effects">
                 <StackPanel Orientation="Horizontal">
@@ -67,8 +67,7 @@
                                 <TextBlock Text="Add camera" />
                             </StackPanel>
                         </Button>
-                        <Button Style="{StaticResource Linkast.Button.DestructiveOutline}" Command="{Binding RemoveCameraCommand}" Margin="8,0,0,0"
-                                ToolTip="Remove the selected camera layer">
+                        <Button Style="{StaticResource Linkast.Button.DestructiveOutline}" x:Name="RemoveCameraButton" Click="OnRemoveCamera" Margin="8,0,0,0" ToolTip="Remove the selected camera layer from every scene">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE74D;" FontSize="13" Margin="0,0,8,0" />
                                 <TextBlock Text="Remove" />
@@ -96,7 +95,7 @@
                                     <Ellipse Width="8" Height="8" Margin="0,0,8,0" VerticalAlignment="Center" Fill="{DynamicResource Linkast.Live}"
                                              Visibility="{Binding State, Converter={x:Static vm:Converters.RunningToVisibility}}" ToolTip="Camera active" />
                                     <TextBlock Text="{Binding Name}" />
-                                    <TextBlock Text=" · hidden in this layout" Foreground="{DynamicResource Linkast.TextTertiary}" FontSize="11" VerticalAlignment="Center"
+                                    <TextBlock Text=" · hidden in this scene" Foreground="{DynamicResource Linkast.TextTertiary}" FontSize="11" VerticalAlignment="Center"
                                                Visibility="{Binding IsShown, Converter={x:Static vm:Converters.InverseBoolToVisibility}}" />
                                 </StackPanel>
                             </DataTemplate>
@@ -135,8 +134,8 @@
                 <StackPanel>
                     <WrapPanel Margin="0,0,0,12">
                         <ListBox Style="{StaticResource Linkast.Segmented}" ItemsSource="{Binding LayoutOptions}" SelectedItem="{Binding SelectedLayout}"
-                                 AutomationProperties.Name="Layout" Margin="0,0,14,6"
-                                 ToolTip="Landscape for Twitch and YouTube, vertical for Shorts, TikTok and Reels. Each layout remembers its own positions.">
+                                 AutomationProperties.Name="Scene" Margin="0,0,14,6"
+                                 ToolTip="Landscape for Twitch and YouTube, vertical for Shorts, TikTok and Reels. Each scene remembers its own positions.">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding Converter={x:Static vm:Converters.LayoutShort}}" ToolTip="{Binding Name}" />
@@ -190,12 +189,12 @@
                                     <Border x:Name="Row" CornerRadius="8" Padding="10,6" Margin="0,0,0,4" BorderThickness="1" BorderBrush="Transparent">
                                         <DockPanel>
                                             <CheckBox DockPanel.Dock="Right" IsChecked="{Binding IsShown}" MinWidth="0" VerticalAlignment="Center"
-                                                      ToolTip="Show in this layout">
+                                                      ToolTip="Show in this scene">
                                                 <CheckBox.Content>
                                                     <TextBlock Text="Shown" FontSize="11" Foreground="{DynamicResource Linkast.TextSecondary}" />
                                                 </CheckBox.Content>
                                                 <AutomationProperties.Name>
-                                                    <MultiBinding StringFormat="Show {0} in this layout">
+                                                    <MultiBinding StringFormat="Show {0} in this scene">
                                                         <Binding Path="Name" />
                                                     </MultiBinding>
                                                 </AutomationProperties.Name>
@@ -241,7 +240,7 @@
                             <TextBlock>
                                 <Run Text="Show" />
                                 <Run Text="{Binding Name, Mode=OneWay}" />
-                                <Run Text="in this layout" />
+                                <Run Text="in this scene" />
                             </TextBlock>
                         </CheckBox>
                         <TextBlock Text="{Binding PlacementSummary}" FontFamily="{DynamicResource Linkast.Font.Mono}" FontSize="11.5" Margin="0,10,0,0"
@@ -296,7 +295,7 @@
                 Visibility="{Binding IsSelected, ElementName=TabVirtualCamera, Converter={StaticResource BoolToVis}}">
             <StackPanel>
                 <DockPanel Margin="0,0,0,10">
-                    <CheckBox DockPanel.Dock="Right" Content="On" IsChecked="{Binding VirtualCameraEnabled}" FontWeight="SemiBold" MinWidth="0"
+                    <CheckBox DockPanel.Dock="Right" Style="{StaticResource Linkast.ToggleSwitch}" Content="On" IsChecked="{Binding VirtualCameraEnabled}" FontWeight="SemiBold" MinWidth="0"
                               IsEnabled="{Binding VirtualCameraInstalled}" AutomationProperties.Name="Linkast Camera on"
                               ToolTip="Send your camera to apps that use the Linkast Camera" />
                     <TextBlock Text="Linkast Camera for Zoom, Teams and Discord" Style="{StaticResource Linkast.Card.Title}" Margin="0" />

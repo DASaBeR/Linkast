@@ -1,0 +1,30 @@
+<Window x:Class="Linkast.App.Views.ConfirmDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Width="460" SizeToContent="Height" ResizeMode="NoResize" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner" Icon="pack://application:,,,/Assets/linkast.ico"
+        Background="{DynamicResource Linkast.Surface1}" Foreground="{DynamicResource Linkast.TextPrimary}"
+        FontFamily="{DynamicResource Linkast.Font.Body}" FontSize="{DynamicResource Linkast.FontSize.Body}">
+    <!-- A question in the app's own look: icon, short title, the consequences, and two clearly named buttons. -->
+    <Grid Margin="22,20,22,18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <DockPanel>
+            <Border x:Name="IconBadge" DockPanel.Dock="Left" Width="36" Height="36" CornerRadius="18" Margin="0,0,14,0" VerticalAlignment="Top"
+                    Background="{DynamicResource Linkast.AccentSoft}">
+                <TextBlock x:Name="IconGlyph" Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE9CE;" FontSize="16" HorizontalAlignment="Center"
+                           Foreground="{DynamicResource Linkast.Accent}" />
+            </Border>
+            <StackPanel>
+                <TextBlock x:Name="TitleText" FontFamily="{DynamicResource Linkast.Font.Display}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
+                <TextBlock x:Name="MessageText" Style="{StaticResource Linkast.Text.Body}" Margin="0,8,0,0" LineHeight="19" />
+            </StackPanel>
+        </DockPanel>
+        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
+            <Button x:Name="CancelButton" Style="{StaticResource Linkast.Button.Secondary}" MinWidth="96" IsCancel="True" Click="OnCancel" />
+            <Button x:Name="ConfirmButton" Style="{StaticResource Linkast.Button.Primary}" MinWidth="96" Margin="8,0,0,0" Click="OnConfirm" />
+        </StackPanel>
+    </Grid>
+</Window>

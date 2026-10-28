@@ -37,6 +37,8 @@
   <Color x:Key="Linkast.SuccessSoftColor">#2948D597</Color>
   <Color x:Key="Linkast.ErrorColor">#FFFF765E</Color>
   <Color x:Key="Linkast.ErrorSoftColor">#29FF765E</Color>
+  <Color x:Key="Linkast.InfoColor">#FF62B6FF</Color>
+  <Color x:Key="Linkast.InfoSoftColor">#2962B6FF</Color>
   <Color x:Key="Linkast.IdleColor">#FF9299B3</Color>
   <Color x:Key="Linkast.IdleSoftColor">#299299B3</Color>
   <Color x:Key="Linkast.ShadowColor">#59000000</Color>
@@ -72,6 +74,8 @@
   <SolidColorBrush x:Key="Linkast.SuccessSoft" Color="{StaticResource Linkast.SuccessSoftColor}"/>
   <SolidColorBrush x:Key="Linkast.Error" Color="{StaticResource Linkast.ErrorColor}"/>
   <SolidColorBrush x:Key="Linkast.ErrorSoft" Color="{StaticResource Linkast.ErrorSoftColor}"/>
+  <SolidColorBrush x:Key="Linkast.Info" Color="{StaticResource Linkast.InfoColor}"/>
+  <SolidColorBrush x:Key="Linkast.InfoSoft" Color="{StaticResource Linkast.InfoSoftColor}"/>
   <SolidColorBrush x:Key="Linkast.Idle" Color="{StaticResource Linkast.IdleColor}"/>
   <SolidColorBrush x:Key="Linkast.IdleSoft" Color="{StaticResource Linkast.IdleSoftColor}"/>
   <SolidColorBrush x:Key="Linkast.Shadow" Color="{StaticResource Linkast.ShadowColor}"/>
