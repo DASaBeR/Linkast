@@ -808,18 +808,23 @@ public sealed class SceneEditor : UserControl
             var selected = _item.IsSelected && (overlay || _owner.CameraHandlesAllowed);
             var named = overlay && _owner.ShowOverlayNames;
             var preview = _item.Preview;
-            Root.Visibility = _item.IsShown && (!clean || preview is not null || selected || named) ? Visibility.Visible : Visibility.Collapsed;
+            // Anything the scene shows stays on the canvas, even without a picture (a camera that is off, a
+            // page still loading, a missing file), so selecting something else never makes it vanish.
+            var missing = preview is null;
+            Root.Visibility = _item.IsShown ? Visibility.Visible : Visibility.Collapsed;
             _image.Source = preview;
-            _clip.Visibility = preview is null ? Visibility.Collapsed : Visibility.Visible;
+            _clip.Visibility = missing ? Visibility.Collapsed : Visibility.Visible;
 
-            // An overlay without a picture yet (a page still loading) is marked by its tint and name tag;
-            // the solid placeholder would hide everything under a full-screen alert box.
-            _placeholder.Visibility = preview is null && !overlay && (!clean || selected) ? Visibility.Visible : Visibility.Collapsed;
+            // A camera without a picture is a box with its name, dimmed in the preview while not selected.
+            // An overlay without one is marked by its tint and name tag; a solid box would hide everything
+            // under a full-screen alert.
+            _placeholder.Visibility = missing && !overlay ? Visibility.Visible : Visibility.Collapsed;
+            _placeholder.Opacity = clean && !selected ? 0.55 : 1;
             _placeholderText.Text = _item.Name;
-            _tint.Visibility = selected || (named && clean) || (overlay && preview is null) ? Visibility.Visible : Visibility.Collapsed;
+            _tint.Visibility = selected || (named && clean) || (overlay && missing) ? Visibility.Visible : Visibility.Collapsed;
             _tint.Opacity = selected ? 1 : 0.35;
-            _label.Visibility = (clean ? selected || _hover || named : preview is not null || selected || overlay) ? Visibility.Visible : Visibility.Collapsed;
-            _outline.Visibility = !clean || selected || _hover || named ? Visibility.Visible : Visibility.Collapsed;
+            _label.Visibility = (clean ? selected || _hover || named || (overlay && missing) : !missing || selected || overlay) ? Visibility.Visible : Visibility.Collapsed;
+            _outline.Visibility = !clean || selected || _hover || named || missing ? Visibility.Visible : Visibility.Collapsed;
             _outline.Stroke = selected ? Accent : Faint;
             _outline.StrokeThickness = selected ? 6 : 3;
             foreach (var c in _corners.Concat(_edges))
