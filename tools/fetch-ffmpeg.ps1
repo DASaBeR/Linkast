@@ -44,7 +44,8 @@ function Get-Verified([string]$url, [string]$sha256) {
 
     Write-Host "Fetching $url ..."
     $temp = "$file.download"
-    curl.exe -sSfL -o $temp $url
+    # Retries: a release once failed because ffmpeg.org did not answer the build machine for 21 s.
+    curl.exe -sSfL --retry 4 --retry-all-errors --retry-delay 10 --connect-timeout 30 --max-time 900 -o $temp $url
     if ($LASTEXITCODE -ne 0) { throw "Download failed: $url" }
     $hash = (Get-FileHash $temp -Algorithm SHA256).Hash
     if ($hash -ne $sha256) {
@@ -57,8 +58,50 @@ function Get-Verified([string]$url, [string]$sha256) {
     return $file
 }
 
+# The FFmpeg tarball, also inside the corresponding source every Linkast release publishes: used when
+# ffmpeg.org can't be reached. Same pinned hash either way, so it is the identical file.
+function Get-SourceFromRelease {
+    $tarball = Split-Path $pin.SourceUrl -Leaf
+    $file = Join-Path $cache $tarball
+    $repoName = if ($env:GITHUB_REPOSITORY) { $env:GITHUB_REPOSITORY } else { "DASaBeR/Linkast" }
+    $url = "https://github.com/$repoName/releases/latest/download/ffmpeg-$($pin.Version)-corresponding-source.zip"
+    $released = Join-Path $cache "released-ffmpeg-$($pin.Version)-corresponding-source.zip"
+    Write-Host "Fetching $tarball from the latest Linkast release: $url ..."
+    curl.exe -sSfL --retry 4 --retry-all-errors --retry-delay 10 --connect-timeout 30 --max-time 1800 -o $released $url
+    if ($LASTEXITCODE -ne 0) { throw "Download failed: $url" }
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::OpenRead($released)
+    try {
+        $entry = $archive.Entries | Where-Object { $_.FullName -eq $tarball } | Select-Object -First 1
+        if (-not $entry) { throw "$tarball is not in $url" }
+        [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, "$file.download", $true)
+    }
+    finally {
+        $archive.Dispose()
+    }
+
+    $hash = (Get-FileHash "$file.download" -Algorithm SHA256).Hash
+    if ($hash -ne $pin.SourceSha256) {
+        Remove-Item "$file.download" -Force
+        throw "Verification failed for $tarball from the latest release (SHA-256 $hash). Refusing to use it."
+    }
+
+    Move-Item "$file.download" $file -Force
+    Remove-Item $released -Force
+    Write-Host "OK      $tarball (from the latest release, hash verified)"
+    return $file
+}
+
 $zip = Get-Verified $pin.BuildUrl $pin.BuildSha256
-$source = Get-Verified $pin.SourceUrl $pin.SourceSha256
+try {
+    $source = Get-Verified $pin.SourceUrl $pin.SourceSha256
+}
+catch {
+    Write-Host "$($_.Exception.Message)"
+    $source = Get-SourceFromRelease
+}
+
 Copy-Item $source $sourceOut -Force
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
