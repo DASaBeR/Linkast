@@ -624,7 +624,9 @@ public static class FfmpegArgumentBuilder
 
     private static void ValidatePublishUrl(string url)
     {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var u) || (u.Scheme != "rtmp" && u.Scheme != "rtmps")
+        // tcp:// only to this PC: the output buffer in front of the server (BufferedOutputLease).
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var u)
+            || (u.Scheme != "rtmp" && u.Scheme != "rtmps" && !(u.Scheme == "tcp" && u.IsLoopback))
             || url.Any(c => char.IsWhiteSpace(c) || char.IsControl(c)) || url.StartsWith('-'))
         {
             throw new StreamFailureException(new StreamError(ErrorCategory.Configuration, "destination.url", "The output URL is not a valid RTMP URL."));

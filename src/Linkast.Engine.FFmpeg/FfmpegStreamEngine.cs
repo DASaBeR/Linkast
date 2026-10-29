@@ -377,7 +377,13 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
         try
         {
             lease = session.Broadcast
-                ? await _transport.OpenAsync(session.Destination, session.Network, ct).ConfigureAwait(false)
+                ? BufferedOutputLease.Start(_ffmpeg, await _transport.OpenAsync(session.Destination, session.Network, ct).ConfigureAwait(false), _logger, line =>
+                {
+                    var redacted = _redactor.Redact("sender: " + line);
+                    recent.Enqueue(redacted);
+                    LogFfmpegLine(redacted);
+                    DiagnosticLine?.Invoke(this, redacted);
+                })
                 : new RecordOnlyLease();
 
             string? recordingPath = null;
@@ -505,7 +511,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 };
             }).ToList();
             var args = FfmpegArgumentBuilder.Build(new FfmpegJob(session.Video, jobAudio, session.Encoder,
-                session.Broadcast ? lease.PublishUrl : null, session.Broadcast ? lease.TcUrl : null)
+                session.Broadcast ? lease.PublishUrl : null, session.Broadcast && lease.TcUrl.Length > 0 ? lease.TcUrl : null)
             {
                 RecordingPath = recordingPath,
                 Layers = jobLayers,
