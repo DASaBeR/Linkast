@@ -27,6 +27,9 @@ public sealed record EngineOptions
 
     public TimeSpan TelemetryInterval { get; init; } = TimeSpan.FromSeconds(1);
 
+    /// <summary>How often a live stream writes its frame, duplicate and bitrate counts to the log.</summary>
+    public TimeSpan StatsLogInterval { get; init; } = TimeSpan.FromMinutes(1);
+
     /// <summary>
     /// Restarts after Desktop Duplication loses the display. Kept apart from the network budget and
     /// quicker at first; long enough in total (about 45 s) to wait out a UAC prompt or the lock screen.
@@ -526,6 +529,17 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 await process.DisposeAsync().ConfigureAwait(false);
             }
 
+            if (Volatile.Read(ref latest) is { } last)
+            {
+                LogAttemptStats(
+                    last.OutTime.ToString(@"h\:mm\:ss", System.Globalization.CultureInfo.InvariantCulture),
+                    last.Frame,
+                    last.DuplicatedFrames,
+                    last.DroppedFrames,
+                    last.BitrateKbps,
+                    (lease?.IsMeasured == true ? lease.Snapshot().BytesSent : last.TotalSizeBytes) / 1e6);
+            }
+
             if (Interlocked.Exchange(ref _currentRecording, null) is { } saved && File.Exists(saved))
             {
                 RecordingSaved?.Invoke(this, saved);
@@ -561,6 +575,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
         var attemptStart = _time.GetTimestamp();
         long? liveSince = null;
         long lastFrame = -1, lastBytes = -1;
+        (long At, EncoderProgress? Progress, long Bytes) lastStats = (attemptStart, null, 0);
         var lastFrameAdvance = attemptStart;
         var lastBytesAdvance = attemptStart;
         var audioFault = FirstFault(audioInputs.Select(a => a.Completion));
@@ -634,13 +649,13 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 if (framesFresh && bytesFresh)
                 {
                     liveSince = now;
+                    lastStats = (now, progress, net.BytesSent);
                     _state.TryTransition(StreamState.Live);
                 }
                 else if (_time.GetElapsedTime(attemptStart, now) > _options.ConnectTimeout)
                 {
                     process.Kill();
-                    return FirstSpecificError(recent)
-                        ?? new StreamError(ErrorCategory.Network, "network.connect_timeout", "Could not start streaming to the server in time.");
+                    return FirstSpecificError(recent) ?? ConnectTimeoutError(progress, net);
                 }
             }
             else if (_state.Current == StreamState.Live && liveSince is { } since)
@@ -659,6 +674,23 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                         ErrorCategory.Network,
                         "network.stalled",
                         byteStall ? "The connection stopped sending data." : "The stream stopped making progress (the capture source may be minimized or closed).");
+                }
+
+                // Counts over the last interval, so a tester's log shows when a stream stuttered and why.
+                var span = _time.GetElapsedTime(lastStats.At, now);
+                if (span >= _options.StatsLogInterval && progress is not null)
+                {
+                    var before = lastStats.Progress;
+                    var frames = progress.Frame - (before?.Frame ?? 0);
+                    LogLiveStats(
+                        span.TotalSeconds,
+                        frames,
+                        frames / span.TotalSeconds,
+                        progress.DuplicatedFrames - (before?.DuplicatedFrames ?? 0),
+                        progress.DroppedFrames - (before?.DroppedFrames ?? 0),
+                        progress.Speed,
+                        lease.IsMeasured ? (net.BytesSent - lastStats.Bytes) * 8 / 1000.0 / span.TotalSeconds : progress.BitrateKbps);
+                    lastStats = (now, progress, net.BytesSent);
                 }
             }
 
@@ -973,6 +1005,16 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
     private static StreamError? LeaseError(IOutputLease lease) =>
         lease.Completion is { IsFaulted: true } t && t.Exception?.GetBaseException() is StreamFailureException sfe ? sfe.Error : null;
 
+    /// <summary>
+    /// Why an attempt never went live. FFmpeg opens every input before it connects to the relay, so
+    /// with no encoded frame and no connection it is still waiting for a picture (Windows sends none of
+    /// a minimized window): a capture problem, not the network.
+    /// </summary>
+    internal static StreamError ConnectTimeoutError(EncoderProgress? progress, NetworkSnapshot net) =>
+        progress is not { Frame: > 0 } && !net.Connected
+            ? new StreamError(ErrorCategory.Capture, StreamError.NoPictureCode, "The game or window isn't sending a picture yet, often because it's minimized. Switch back to it; Linkast keeps trying.")
+            : new StreamError(ErrorCategory.Network, "network.connect_timeout", "Could not start streaming to the server in time.");
+
     private static StreamError? FirstSpecificError(ConcurrentQueue<string> recent)
     {
         foreach (var line in recent)
@@ -999,6 +1041,12 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Reconnect attempt {Attempt}/{Max} in {DelaySeconds:0.#}s after {Error}")]
     private partial void LogReconnecting(int attempt, int max, double delaySeconds, string error);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Live, last {Seconds:0} s: {Frames} frames ({Fps:0.#} fps), {Duplicated} duplicated, {Dropped} dropped, encoder speed {Speed:0.##}x, sending {Kbps:0} kbps")]
+    private partial void LogLiveStats(double seconds, long frames, double fps, long duplicated, long dropped, double speed, double kbps);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Attempt ended after {Duration}: {Frames} frames, {Duplicated} duplicated, {Dropped} dropped, {Kbps:0} kbps average, {SentMegabytes:0.0} MB sent")]
+    private partial void LogAttemptStats(string duration, long frames, long duplicated, long dropped, double kbps, double sentMegabytes);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Captured window black: {Black}")]
     private partial void LogBlackProbe(bool black);

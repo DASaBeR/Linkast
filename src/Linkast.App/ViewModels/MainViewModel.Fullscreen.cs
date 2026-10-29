@@ -21,6 +21,9 @@ public sealed partial class MainViewModel
     // The running stream's picture of the window has been black for a few seconds.
     private bool _captureLooksBlack;
 
+    // The captured window is minimized: Windows sends no picture of it until it is restored.
+    private bool _captureMinimized;
+
     /// <summary>What to tell the user about the captured window, or null when all looks fine.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasCaptureHint))]
@@ -40,6 +43,7 @@ public sealed partial class MainViewModel
         {
             _fullscreenTimer?.Stop();
             _fullscreen.Reset();
+            _captureMinimized = false;
             UpdateCaptureHint();
             return;
         }
@@ -52,18 +56,23 @@ public sealed partial class MainViewModel
         }
     }
 
-    private void InspectCapturedWindow()
+    /// <summary>Checks the captured window now. True when it is minimized.</summary>
+    private bool InspectCapturedWindow()
     {
         if (SelectedWindow is not { } window)
         {
-            return;
+            return false;
         }
 
         var seen = FullscreenDetector.Inspect(window.Handle, out var minimized);
-        if (_fullscreen.Observe(window.Handle, seen, minimized))
+        var changed = _fullscreen.Observe(window.Handle, seen, minimized) | (minimized != _captureMinimized);
+        _captureMinimized = minimized;
+        if (changed)
         {
             UpdateCaptureHint();
         }
+
+        return minimized;
     }
 
     /// <summary>From telemetry. Black only counts while the window is (or was last seen) fullscreen: a dark scene in a normal window is not a capture problem.</summary>
@@ -82,6 +91,11 @@ public sealed partial class MainViewModel
         var program = s.ExecutableName ?? "This program";
         var parts = new List<string>();
         var black = _captureLooksBlack && IsWindowSource && s.Kind != FullscreenKind.None;
+        if (_captureMinimized && IsWindowSource)
+        {
+            parts.Add($"{program} is minimized. Windows sends no picture of a minimized window, so the stream can't start, or shows a frozen picture, until you switch back to it.");
+        }
+
         if (black)
         {
             parts.Add($"The stream shows {program} as black. This happens with games in exclusive fullscreen. Capture its display instead, or switch the game to borderless or windowed mode.");

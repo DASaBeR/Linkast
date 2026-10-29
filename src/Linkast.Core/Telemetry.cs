@@ -19,11 +19,14 @@ public sealed record StreamError(ErrorCategory Category, string Code, string Use
     /// <summary>Desktop Duplication lost access to the display, for example when a game changed display mode.</summary>
     public const string CaptureLostCode = "capture.dda.lost";
 
+    /// <summary>FFmpeg never got a picture to send, so it never reached the server; usually a minimized game window.</summary>
+    public const string NoPictureCode = "capture.no_picture";
+
     /// <summary>
-    /// Network failures are retried by the reconnect policy, and a lost Desktop Duplication by the
-    /// capture restart policy; others need user action.
+    /// Network failures are retried by the reconnect policy, and a lost Desktop Duplication or a missing
+    /// picture by the capture restart policy; others need user action.
     /// </summary>
-    public bool IsRetryable => Category == ErrorCategory.Network || Code == CaptureLostCode;
+    public bool IsRetryable => Category == ErrorCategory.Network || Code is CaptureLostCode or NoPictureCode;
 
     public override string ToString() => $"[{Category}/{Code}] {UserMessage}";
 }

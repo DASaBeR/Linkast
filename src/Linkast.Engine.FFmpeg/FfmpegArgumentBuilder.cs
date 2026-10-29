@@ -99,13 +99,14 @@ public static class FfmpegArgumentBuilder
 
             ValidatePipePath(layer.PipePath);
 
-            // Wall-clock timestamps put the camera on the same clock as the live capture. With
-            // frame-count timestamps, any moment FFmpeg read the pipe slower than real time made the
-            // camera's timeline lag, and the overlay buffered gameplay frames without limit while
-            // waiting for it (FFmpeg grew to 9.6 GB in a 30-minute soak).
+            // Frame-count timestamps: the pipe writer sends exactly one frame per frame interval of real
+            // time from when FFmpeg connects (catching up with repeats, never skipping), so frame n is
+            // the picture at n / rate seconds. Not -use_wallclock_as_timestamps: that stamps a frame when
+            // FFmpeg reads it, and FFmpeg pauses reading an input that is ahead of the output, so as soon
+            // as encoding ran slightly slower than real time the reads bunched up, most frames shared a
+            // time, and the camera showed 1–2 fps on stream (tester report, 1.0.0).
             args.AddRange([
                 "-thread_queue_size", "64",
-                "-use_wallclock_as_timestamps", "1",
                 "-f", "rawvideo",
                 "-pix_fmt", "bgra",
                 "-video_size", $"{layer.Width.ToString(Inv)}x{layer.Height.ToString(Inv)}",

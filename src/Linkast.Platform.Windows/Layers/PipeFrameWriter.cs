@@ -8,7 +8,11 @@ namespace Linkast.Platform.Windows.Layers;
 /// <summary>
 /// Serves a layer to FFmpeg as raw BGRA video (straight alpha) over a current-user-only named pipe,
 /// paced to <see cref="FrameRate"/>. Subclasses only fill <see cref="Frame"/>: a camera, a picture or a
-/// web page. If nothing new is drawn the previous image repeats, and a stall never causes a burst.
+/// web page. If nothing new is drawn the previous image repeats.
+/// FFmpeg timestamps these frames by count, so frame n must be the picture at n / <see cref="FrameRate"/>
+/// seconds after FFmpeg connected: after any stall (FFmpeg not reading, or this process paused) the
+/// writer catches up with the current picture instead of skipping. Skipping would put the layer behind
+/// the rest of the stream for good.
 /// </summary>
 public abstract class PipeFrameWriter : IVideoLayerInput
 {
@@ -115,11 +119,6 @@ public abstract class PipeFrameWriter : IVideoLayerInput
             while (!ct.IsCancellationRequested)
             {
                 var due = (long)(Stopwatch.GetElapsedTime(start).TotalSeconds * FrameRate) + 1;
-                if (due - sent > FrameRate)
-                {
-                    sent = due - 1; // fell more than a second behind (system stall): skip rather than burst
-                }
-
                 if (sent >= due)
                 {
                     await Task.Delay(interval / 2, ct).ConfigureAwait(false);

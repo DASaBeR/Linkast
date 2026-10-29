@@ -132,12 +132,10 @@ public class ArgumentBuilderTests
         Assert.Equal(@"\\.\pipe\linkast-cam-1", ValueAfter(args, "-i", 2));
         Assert.Equal(@"\\.\pipe\linkast-sys", ValueAfter(args, "-i", 3));
 
-        // Camera pipes are timestamped by the wall clock, like the live capture (regression: unbounded
-        // overlay buffering when FFmpeg read the pipe slower than real time).
-        var list = args.ToList();
-        var wallclock = list.IndexOf("-use_wallclock_as_timestamps");
-        Assert.True(wallclock >= 0 && wallclock < list.IndexOf(@"\\.\pipe\linkast-cam-1"), "Wall-clock timestamps must apply to the camera input.");
-        Assert.True(wallclock > list.IndexOf(@"\\.\pipe\linkast-sys") || list.IndexOf(@"\\.\pipe\linkast-sys") > list.IndexOf(@"\\.\pipe\linkast-cam-1"), "Audio input stays unchanged.");
+        // Camera pipes use frame-count timestamps, never read-time ones (regression: the camera fell
+        // to 1–2 fps on stream once encoding ran slower than real time).
+        Assert.DoesNotContain("-use_wallclock_as_timestamps", args);
+        Assert.Equal("60", ValueAfter(args, "-framerate"));
 
         var graph = ValueAfter(args, "-filter_complex");
         Assert.Contains("[2:v]crop@cam0=w='iw*1':h='ih*1':x='iw*0':y='ih*0',scale@cam0=w=480:h=270:flags=bicubic,format=yuva420p[cam0]", graph, StringComparison.Ordinal);
@@ -452,8 +450,30 @@ public class ErrorClassifierTests
     [InlineData("capture.dda", false)]
     [InlineData("capture.dda.unsupported", false)]
     [InlineData("capture.wgc", false)]
-    public void Only_a_lost_display_is_retried_among_capture_errors(string code, bool retried) =>
+    [InlineData("capture.no_picture", true)]
+    public void Only_a_lost_display_or_missing_picture_is_retried_among_capture_errors(string code, bool retried) =>
         Assert.Equal(retried, new StreamError(ErrorCategory.Capture, code, "x").IsRetryable);
+
+    private static NetworkSnapshot Net(bool connected) => new(connected ? 4096 : 0, 0, 0, null, null, null, connected);
+
+    private static EncoderProgress Progress(long frame) => new(frame, 60, 6000, 0, TimeSpan.Zero, 0, 0, 1, false);
+
+    [Fact]
+    public void A_timeout_before_any_frame_or_connection_is_a_missing_picture()
+    {
+        var e = FfmpegStreamEngine.ConnectTimeoutError(null, Net(connected: false));
+        Assert.Equal(StreamError.NoPictureCode, e.Code);
+        Assert.Equal(ErrorCategory.Capture, e.Category);
+        Assert.True(e.IsRetryable);
+        Assert.Equal(StreamError.NoPictureCode, FfmpegStreamEngine.ConnectTimeoutError(Progress(0), Net(connected: false)).Code);
+    }
+
+    [Fact]
+    public void A_timeout_after_frames_or_a_connection_is_the_network()
+    {
+        Assert.Equal("network.connect_timeout", FfmpegStreamEngine.ConnectTimeoutError(null, Net(connected: true)).Code);
+        Assert.Equal("network.connect_timeout", FfmpegStreamEngine.ConnectTimeoutError(Progress(120), Net(connected: false)).Code);
+    }
 
     [Fact]
     public void Capture_restarts_start_fast_and_wait_out_a_uac_prompt()

@@ -1730,6 +1730,12 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
+        // Not blocking: the engine waits for the picture and keeps trying, and the hint says why.
+        if (IsWindowSource && InspectCapturedWindow())
+        {
+            AppendLog("The captured window is minimized; the stream starts once you switch back to it.");
+        }
+
         _recordOnly = recordOnly;
         _recording = session.Recording is not null;
         RememberLiveSources(session);
