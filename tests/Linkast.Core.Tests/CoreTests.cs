@@ -108,6 +108,17 @@ public class SessionValidatorTests
     [Fact]
     public void Valid_session_has_no_errors() => Assert.Empty(SessionValidator.Validate(Session()));
 
+    [Fact]
+    public void Desktop_mic_a_game_and_alert_boxes_fit_in_one_stream()
+    {
+        static AudioSourceSpec App(uint pid) => new ProcessAudioSource(pid, "app");
+        var five = Session() with { Audio = [new SystemAudioSource(null, "Desktop"), new MicrophoneSource(null, "Mic"), App(1), App(2), App(3)] };
+        Assert.Empty(SessionValidator.Validate(five));
+
+        var tooMany = Session() with { Audio = [.. Enumerable.Range(1, SessionValidator.MaxAudioSources + 1).Select(i => App((uint)i))] };
+        Assert.Contains(SessionValidator.Validate(tooMany), e => e.Code == "audio.count");
+    }
+
     [Theory]
     [InlineData("http://example.com/app", "destination.scheme")]
     [InlineData("rtmp://example.com", "destination.app")]

@@ -6,6 +6,9 @@ namespace Linkast.Core;
 /// <summary>Validates user-controlled values before anything reaches a process argument.</summary>
 public static partial class SessionValidator
 {
+    /// <summary>Most sounds (pipes FFmpeg mixes) in one stream.</summary>
+    public const int MaxAudioSources = 16;
+
     public const int MinWidth = 160;
     public const int MaxWidth = 7680;
     public const int MinHeight = 90;
@@ -152,9 +155,11 @@ public static partial class SessionValidator
                 break;
         }
 
-        if (s.Audio.Count > 4)
+        // Desktop, microphone, a game per scene (up to four) and every alert box each have their own sound.
+        // Four, the old limit, stopped a stream with the game on its own fader and two alert boxes.
+        if (s.Audio.Count > MaxAudioSources)
         {
-            errors.Add(new StreamError(ErrorCategory.Audio, "audio.count", "At most four audio sources are supported."));
+            errors.Add(new StreamError(ErrorCategory.Audio, "audio.count", $"At most {MaxAudioSources} sounds can go into a stream. Remove an alert box or turn off a sound on the Audio tab."));
         }
 
         foreach (var a in s.Audio)
