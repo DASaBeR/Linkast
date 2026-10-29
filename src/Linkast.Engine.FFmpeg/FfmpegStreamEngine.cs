@@ -53,8 +53,23 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
 
     private const string SourceSwitchCode = "capture.switch";
 
-    /// <summary>A source switch only waits briefly for FFmpeg to flush; the next attempt starts right after.</summary>
-    private static readonly TimeSpan SourceSwitchStopTimeout = TimeSpan.FromSeconds(1);
+    /// <summary>
+    /// A source switch lets FFmpeg close the connection properly (unpublish) before the next attempt
+    /// starts: a connection cut short leaves the server holding the stream key, and it then refuses the
+    /// next one for a while ("closed right away").
+    /// </summary>
+    private static readonly TimeSpan SourceSwitchStopTimeout = TimeSpan.FromSeconds(3);
+
+    /// <summary>A refusal this soon after our own previous connection is the server still holding it.</summary>
+    private static readonly TimeSpan KeyStillHeldWindow = TimeSpan.FromSeconds(90);
+
+    /// <summary>How long to wait before trying again while the server still holds the previous connection.</summary>
+    private static readonly TimeSpan KeyStillHeldDelay = TimeSpan.FromSeconds(10);
+
+    private const string ClosedEarlyCode = "network.closed.early";
+
+    // When a connection that reached the server last ended (a timestamp), or 0.
+    private long _lastServerConnectionEnd;
 
     private readonly FfmpegInstallation _ffmpeg;
     private readonly IOutputTransport _transport;
@@ -99,6 +114,12 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
     // When the black probe last saw black start in this attempt (a timestamp), or 0.
     private long _blackSince;
 
+    // Frames the captured game window delivered in this attempt (counted by the black probe's branch).
+    private long _gameFrames;
+
+    // The running FFmpeg's process ID, or 0.
+    private int _ffmpegProcessId;
+
     public FfmpegStreamEngine(
         FfmpegInstallation ffmpeg,
         IOutputTransport transport,
@@ -139,6 +160,15 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
     public string? CurrentRecording => Volatile.Read(ref _currentRecording);
 
     public StreamState State => _state.Current;
+
+    /// <summary>
+    /// Tells the size of a captured window right now (the app reads it from Windows), or null. FFmpeg then
+    /// scales a window bigger than the stream down on the GPU. Asked at every start, so a resized game counts.
+    /// </summary>
+    public Func<VideoSourceSpec, (int Width, int Height)?>? SourceSize { get; set; }
+
+    /// <summary>The running FFmpeg's process ID (for CPU diagnostics), or 0 when none runs.</summary>
+    public int FfmpegProcessId => Volatile.Read(ref _ffmpegProcessId);
 
     public FfmpegInstallation Installation => _ffmpeg;
 
@@ -277,10 +307,20 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                     continue;
                 }
 
+                // Refused right after our own connection (a quick restart, a source switch): the key is fine,
+                // the server just hasn't let go of the previous session yet. Wait longer and say so.
+                var keyStillHeld = error.Code == ClosedEarlyCode && Interlocked.Read(ref _lastServerConnectionEnd) is var ended and not 0
+                    && _time.GetElapsedTime(ended) < KeyStillHeldWindow;
+                if (keyStillHeld)
+                {
+                    error = error with { UserMessage = "The server is still closing the previous connection with this stream key. Linkast tries again in a few seconds." };
+                }
+
                 _lastError = error;
                 var budget = error.Category == ErrorCategory.Capture ? captureRestarts : backoff;
-                if (error.IsRetryable && budget.NextDelay() is { } delay)
+                if (error.IsRetryable && budget.NextDelay() is { } nextDelay)
                 {
+                    var delay = keyStillHeld && nextDelay < KeyStillHeldDelay ? KeyStillHeldDelay : nextDelay;
                     _reconnectCount++;
                     LogReconnecting(budget.Attempts, budget.Policy.MaxAttempts, delay.TotalSeconds, error.ToString());
                     _state.TryTransition(StreamState.Reconnecting, error);
@@ -459,7 +499,10 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
             var jobCaptures = captures.Select(c =>
             {
                 var now = _liveBases.TryGetValue(c.Key, out var live) ? live : new LiveBase(c.StartHidden ? null : c.Placement, c.Crop, c.Fit);
-                return new CaptureJobInput(c.Source, now.Placement ?? c.Placement, now.Crop, now.Fit, now.Placement is null);
+                return new CaptureJobInput(c.Source, now.Placement ?? c.Placement, now.Crop, now.Fit, now.Placement is null)
+                {
+                    SourceSize = SourceSize?.Invoke(c.Source),
+                };
             }).ToList();
             var args = FfmpegArgumentBuilder.Build(new FfmpegJob(session.Video, jobAudio, session.Encoder,
                 session.Broadcast ? lease.PublishUrl : null, session.Broadcast ? lease.TcUrl : null)
@@ -472,6 +515,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
             });
             LogLaunching(_redactor.Redact(string.Join(' ', args.Select(QuoteForLog))));
             Interlocked.Exchange(ref _blackSince, 0);
+            Interlocked.Exchange(ref _gameFrames, 0);
 
             process = FfmpegProcess.Start(
                 _ffmpeg.Path,
@@ -487,7 +531,11 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 {
                     if (BlackProbe.IsProbeLine(line))
                     {
-                        if (BlackProbe.Parse(line) is { } black)
+                        if (line.AsSpan().Trim().SequenceEqual(BlackProbe.FrameMark))
+                        {
+                            Interlocked.Increment(ref _gameFrames);
+                        }
+                        else if (BlackProbe.Parse(line) is { } black)
                         {
                             Interlocked.Exchange(ref _blackSince, black ? _time.GetTimestamp() : 0);
                             LogBlackProbe(black);
@@ -507,6 +555,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 });
 
             Volatile.Write(ref _currentRecording, recordingPath);
+            Volatile.Write(ref _ffmpegProcessId, process.ProcessId);
             if (commandPort is { } port)
             {
                 Volatile.Write(ref _composition, new ActiveComposition(new FfmpegCommandChannel(port), layerIds, fixedLayers,
@@ -525,6 +574,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
         }
         finally
         {
+            Volatile.Write(ref _ffmpegProcessId, 0);
             Interlocked.Exchange(ref _blackSince, 0);
             Interlocked.Exchange(ref _composition, null)?.Commands.Dispose();
             if (process is not null)
@@ -558,6 +608,11 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 await a.DisposeAsync().ConfigureAwait(false);
             }
 
+            if (lease is { IsMeasured: true } && lease.Snapshot().BytesSent > 0)
+            {
+                Interlocked.Exchange(ref _lastServerConnectionEnd, _time.GetTimestamp());
+            }
+
             if (lease is not null)
             {
                 await lease.DisposeAsync().ConfigureAwait(false);
@@ -579,6 +634,12 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
         long? liveSince = null;
         long lastFrame = -1, lastBytes = -1;
         (long At, EncoderProgress? Progress, long Bytes) lastStats = (attemptStart, null, 0);
+
+        // The game window's real frame rate: per second (to find the slowest) and per stats interval.
+        var countsGame = CapturesOf(session).Any(c => c.Source is WindowSource);
+        (long At, long Frames) gameSecond = (attemptStart, 0);
+        var gameAtStats = 0L;
+        var gameSlowest = double.MaxValue;
         var lastFrameAdvance = attemptStart;
         var lastBytesAdvance = attemptStart;
         var audioFault = FirstFault(audioInputs.Select(a => a.Completion));
@@ -589,10 +650,15 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
             sourceSwitch.TrySetResult(); // chosen while this attempt was starting
         }
 
+        // A switch asked for while connecting waits until the stream is live: cutting the server's
+        // handshake short left it holding the stream key and refusing the next connection (tester, 1.0.2).
+        var switchSignal = sourceSwitch.Task;
+        var switchWaiting = false;
+
         while (true)
         {
             var tick = Task.Delay(_options.TelemetryInterval, _time, ct);
-            var done = await Task.WhenAny(process.Exited, lease.Completion, audioFault, sourceSwitch.Task, tick).ConfigureAwait(false);
+            var done = await Task.WhenAny(process.Exited, lease.Completion, audioFault, switchSignal, tick).ConfigureAwait(false);
 
             if (ct.IsCancellationRequested)
             {
@@ -600,8 +666,15 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 return null;
             }
 
-            if (done == sourceSwitch.Task)
+            if (done == switchSignal)
             {
+                if (_state.Current != StreamState.Live)
+                {
+                    switchWaiting = true;
+                    switchSignal = new TaskCompletionSource().Task; // never completes; checked again once live
+                    continue;
+                }
+
                 await process.StopAsync(SourceSwitchStopTimeout).ConfigureAwait(false);
                 return new StreamError(ErrorCategory.Capture, SourceSwitchCode, "Switching to the new capture source.");
             }
@@ -643,6 +716,13 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 lastBytesAdvance = now;
             }
 
+            var gameFrames = Interlocked.Read(ref _gameFrames);
+            if (_time.GetElapsedTime(gameSecond.At, now) is { TotalSeconds: >= 0.5 } tickSpan)
+            {
+                gameSlowest = Math.Min(gameSlowest, (gameFrames - gameSecond.Frames) / tickSpan.TotalSeconds);
+                gameSecond = (now, gameFrames);
+            }
+
             var framesFresh = progress is not null && _time.GetElapsedTime(lastFrameAdvance, now) <= _options.HealthWindow;
             var bytesFresh = !lease.IsMeasured
                 || (net.Connected && net.BytesSent >= _options.MinBytesForLive && _time.GetElapsedTime(lastBytesAdvance, now) <= _options.HealthWindow);
@@ -653,7 +733,14 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 {
                     liveSince = now;
                     lastStats = (now, progress, net.BytesSent);
+                    gameAtStats = gameFrames;
+                    gameSlowest = double.MaxValue;
                     _state.TryTransition(StreamState.Live);
+                    if (switchWaiting)
+                    {
+                        await process.StopAsync(SourceSwitchStopTimeout).ConfigureAwait(false);
+                        return new StreamError(ErrorCategory.Capture, SourceSwitchCode, "Switching to the new capture source.");
+                    }
                 }
                 else if (_time.GetElapsedTime(attemptStart, now) > _options.ConnectTimeout)
                 {
@@ -692,8 +779,11 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                         progress.DuplicatedFrames - (before?.DuplicatedFrames ?? 0),
                         progress.DroppedFrames - (before?.DroppedFrames ?? 0),
                         progress.Speed,
-                        lease.IsMeasured ? (net.BytesSent - lastStats.Bytes) * 8 / 1000.0 / span.TotalSeconds : progress.BitrateKbps);
+                        lease.IsMeasured ? (net.BytesSent - lastStats.Bytes) * 8 / 1000.0 / span.TotalSeconds : progress.BitrateKbps,
+                        countsGame ? GameRate((gameFrames - gameAtStats) / span.TotalSeconds, gameSlowest) : "no game window captured");
                     lastStats = (now, progress, net.BytesSent);
+                    gameAtStats = gameFrames;
+                    gameSlowest = double.MaxValue;
                 }
             }
 
@@ -1069,8 +1159,16 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
     [LoggerMessage(Level = LogLevel.Warning, Message = "Reconnect attempt {Attempt}/{Max} in {DelaySeconds:0.#}s after {Error}")]
     private partial void LogReconnecting(int attempt, int max, double delaySeconds, string error);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Live, last {Seconds:0} s: {Frames} frames ({Fps:0.#} fps), {Duplicated} duplicated, {Dropped} dropped, encoder speed {Speed:0.##}x, sending {Kbps:0} kbps")]
-    private partial void LogLiveStats(double seconds, long frames, double fps, long duplicated, long dropped, double speed, double kbps);
+    [LoggerMessage(Level = LogLevel.Information, Message = "Live, last {Seconds:0} s: {Frames} frames ({Fps:0.#} fps), {Duplicated} duplicated, {Dropped} dropped, encoder speed {Speed:0.##}x, sending {Kbps:0} kbps; {Game}")]
+    private partial void LogLiveStats(double seconds, long frames, double fps, long duplicated, long dropped, double speed, double kbps, string game);
+
+    /// <summary>
+    /// The game window's delivered frame rate for the stats line. Windows sends a window's picture only
+    /// when it changes, up to the capture limit, so this is the game's own frame rate as the stream gets it.
+    /// </summary>
+    internal static string GameRate(double average, double slowest) => string.Create(
+        System.Globalization.CultureInfo.InvariantCulture,
+        $"game window sent {average:0.#} fps (slowest second {(slowest == double.MaxValue ? average : slowest):0})");
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Attempt ended after {Duration}: {Frames} frames, {Duplicated} duplicated, {Dropped} dropped, {Kbps:0} kbps average, {SentMegabytes:0.0} MB sent")]
     private partial void LogAttemptStats(string duration, long frames, long duplicated, long dropped, double kbps, double sentMegabytes);

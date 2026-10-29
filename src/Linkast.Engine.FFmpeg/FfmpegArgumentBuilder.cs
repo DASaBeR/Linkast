@@ -68,7 +68,7 @@ public static class FfmpegArgumentBuilder
 
         foreach (var capture in captures)
         {
-            args.AddRange(["-thread_queue_size", "64", "-f", "lavfi", "-i", VideoSourceGraph(capture.Source, e.Fps, e.Width, e.Height)]);
+            args.AddRange(["-thread_queue_size", "64", "-f", "lavfi", "-i", VideoSourceGraph(capture.Source, e.Fps, e.Width, e.Height, capture.SourceSize)]);
         }
 
         // Then the layers: scene media files, and rendered cameras and overlays (raw BGRA with alpha).
@@ -226,10 +226,38 @@ public static class FfmpegArgumentBuilder
         return sb.ToString();
     }
 
+    /// <summary>
+    /// The size a captured window of <paramref name="sourceWidth"/> × <paramref name="sourceHeight"/> is scaled
+    /// to on the GPU before FFmpeg copies it to the CPU, or null to keep it. Every frame is copied, so a
+    /// 1440p game into a 1080p stream copied 78 % more than the stream can show, and that copy competes
+    /// with the game for the GPU. The aspect ratio is kept (trims stay right) and the result still covers
+    /// the canvas, so the picture filling the stream loses nothing.
+    /// </summary>
+    public static (int Width, int Height)? GpuScaledSize(int sourceWidth, int sourceHeight, int canvasWidth, int canvasHeight)
+    {
+        if (sourceWidth <= 0 || sourceHeight <= 0 || canvasWidth <= 0 || canvasHeight <= 0)
+        {
+            return null;
+        }
+
+        var f = Math.Max((double)canvasWidth / sourceWidth, (double)canvasHeight / sourceHeight);
+        if (f >= 0.95)
+        {
+            return null; // not worth a scale (and never upscale)
+        }
+
+        static int Even(double v) => Math.Max(2, (int)Math.Round(v / 2) * 2);
+        return (Even(sourceWidth * f), Even(sourceHeight * f));
+    }
+
     /// <summary>The lavfi source graph for input 0.</summary>
-    public static string VideoSourceGraph(VideoSourceSpec video, int fps, int width = 1280, int height = 720)
+    /// <param name="sourceSize">The captured window's size, when known: a larger one is scaled down on the GPU.</param>
+    public static string VideoSourceGraph(VideoSourceSpec video, int fps, int width = 1280, int height = 720, (int Width, int Height)? sourceSize = null)
     {
         var f = fps.ToString(Inv);
+        var gpuScale = video is WindowSource && sourceSize is { } s && GpuScaledSize(s.Width, s.Height, width, height) is { } t
+            ? $":width={t.Width.ToString(Inv)}:height={t.Height.ToString(Inv)}"
+            : string.Empty;
         return video switch
         {
             // Generated pictures are paced to real time; otherwise FFmpeg makes them as fast as it can and
@@ -246,7 +274,7 @@ public static class FfmpegArgumentBuilder
             DisplaySource d =>
                 $"gfxcapture=monitor_idx={d.MonitorIndex.ToString(Inv)}:max_framerate={f}:capture_cursor={Bool(d.CaptureCursor)}",
             WindowSource w =>
-                $"gfxcapture=hwnd={w.WindowHandle.ToString(Inv)}:max_framerate={f}:capture_cursor={Bool(w.CaptureCursor)}:resize_mode=scale_aspect",
+                $"gfxcapture=hwnd={w.WindowHandle.ToString(Inv)}:max_framerate={f}:capture_cursor={Bool(w.CaptureCursor)}:resize_mode=scale_aspect{gpuScale}",
             TestPatternSource => $"testsrc2=size=1280x720:rate={f},realtime=limit={RealtimeCatchUpSeconds}",
             _ => throw new NotSupportedException($"Unsupported video source {video.GetType().Name}."),
         };
@@ -348,11 +376,13 @@ public static class FfmpegArgumentBuilder
                 sb.Append("hwdownload,format=bgra,");
             }
 
-            sb.Append(Inv, $"fps={e.Fps},");
+            // The probe branches off before the constant frame rate, so it sees the frames Windows delivered.
             if (k == probeAt)
             {
                 sb.Append(BlackProbe.Graph).Append(";[cap]");
             }
+
+            sb.Append(Inv, $"fps={e.Fps},");
 
             var b = BaseLayerArgs.For(capture.Placement, capture.Crop, capture.Fit, e.Width, e.Height, hidden: capture.Hidden);
 

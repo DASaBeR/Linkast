@@ -119,7 +119,11 @@ public sealed record CaptureJobInput(
     Linkast.Core.Camera.NormalizedRect Placement,
     Linkast.Core.Camera.NormalizedRect Crop,
     Linkast.Core.Camera.BaseFit Fit,
-    bool Hidden);
+    bool Hidden)
+{
+    /// <summary>The captured window's size when known, so a large one is scaled down on the GPU (see <see cref="FfmpegArgumentBuilder.GpuScaledSize"/>).</summary>
+    public (int Width, int Height)? SourceSize { get; init; }
+}
 
 /// <summary>One place in the stack: capture <paramref name="Index"/> or layer <paramref name="Index"/> of the job.</summary>
 public readonly record struct StackEntry(bool IsCapture, int Index)

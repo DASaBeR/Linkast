@@ -122,6 +122,12 @@ public static partial class VideoSourceCatalog
 
     public static bool WindowExists(long handle) => IsWindow((nint)handle);
 
+    /// <summary>The size of a window's picture (its client area) in pixels, or null when it can't be read or is minimized.</summary>
+    public static (int Width, int Height)? ClientSize(long handle) =>
+        GetClientRect((nint)handle, out var r) && r.Right - r.Left > 0 && r.Bottom - r.Top > 0
+            ? (r.Right - r.Left, r.Bottom - r.Top)
+            : null;
+
     private delegate bool MonitorEnumProc(nint hMonitor, nint hdc, nint lprcMonitor, nint dwData);
 
     private delegate bool EnumWindowsProc(nint hwnd, nint lParam);
@@ -165,6 +171,10 @@ public static partial class VideoSourceCatalog
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool IsWindow(nint hwnd);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetClientRect(nint hwnd, out RECT rect);
 
     [LibraryImport("user32.dll")]
     private static partial nint GetWindowLongPtrW(nint hwnd, int index);

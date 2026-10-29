@@ -51,9 +51,48 @@ public class ArgumentBuilderTests
     [Fact]
     public void Window_capture_carries_the_black_probe_and_continues_from_its_split()
     {
+        // The probe splits off before fps=60, so it counts the frames the game delivered, not the padded ones.
         var graph = ValueAfter(FfmpegArgumentBuilder.Build(Job(new WindowSource(1234, "Game", "game.exe"))), "-filter_complex");
-        Assert.Contains("[1:v]hwdownload,format=bgra,fps=60," + BlackProbe.Graph + ";[cap]crop@base=", graph, StringComparison.Ordinal);
+        Assert.Contains("[1:v]hwdownload,format=bgra," + BlackProbe.Graph + ";[cap]fps=60,crop@base=", graph, StringComparison.Ordinal);
+        Assert.Contains("[probe]metadata=mode=add:key=linkast.frame:value=1,metadata=mode=print:key=linkast.frame:", graph, StringComparison.Ordinal);
         Assert.Contains("nullsink;", graph, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(2560, 1440, 1920, 1080, 1920, 1080)] // 1440p game into a 1080p stream
+    [InlineData(3840, 2160, 1920, 1080, 1920, 1080)] // 4K
+    [InlineData(3440, 1440, 1920, 1080, 2580, 1080)] // ultrawide: still covers the canvas
+    [InlineData(2560, 1440, 1280, 720, 1280, 720)]
+    public void A_window_larger_than_the_stream_is_scaled_down_on_the_gpu(int w, int h, int cw, int ch, int ew, int eh) =>
+        Assert.Equal((ew, eh), FfmpegArgumentBuilder.GpuScaledSize(w, h, cw, ch));
+
+    [Theory]
+    [InlineData(1920, 1080, 1920, 1080)] // same size
+    [InlineData(1280, 720, 1920, 1080)] // smaller: never upscaled
+    [InlineData(2560, 1440, 1080, 1920)] // vertical stream needs the height
+    [InlineData(0, 0, 1920, 1080)] // unknown
+    public void Other_windows_are_captured_at_their_own_size(int w, int h, int cw, int ch) =>
+        Assert.Null(FfmpegArgumentBuilder.GpuScaledSize(w, h, cw, ch));
+
+    [Fact]
+    public void The_scaled_size_goes_into_the_window_capture()
+    {
+        var full = Linkast.Core.Camera.NormalizedRect.Full;
+        var job = Job() with
+        {
+            Captures = [new CaptureJobInput(new WindowSource(77, "Game", "game.exe"), full, full, Linkast.Core.Camera.BaseFit.Fit, Hidden: false) { SourceSize = (2560, 1440) }],
+        };
+        Assert.EndsWith(":resize_mode=scale_aspect:width=1920:height=1080", ValueAfter(FfmpegArgumentBuilder.Build(job), "-i", 1), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Each_delivered_game_frame_is_one_probe_line_and_the_stats_name_the_rate()
+    {
+        Assert.True(BlackProbe.IsProbeLine(BlackProbe.FrameMark));
+        Assert.True(BlackProbe.IsProbeLine("frame:12   pts:12345   pts_time:0.2"));
+        Assert.Null(BlackProbe.Parse(BlackProbe.FrameMark));
+        Assert.Equal("game window sent 58.3 fps (slowest second 41)", FfmpegStreamEngine.GameRate(58.25, 41.2));
+        Assert.Equal("game window sent 0 fps (slowest second 0)", FfmpegStreamEngine.GameRate(0, double.MaxValue));
     }
 
     [Theory]

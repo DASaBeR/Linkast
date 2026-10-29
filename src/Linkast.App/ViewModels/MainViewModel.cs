@@ -1091,7 +1091,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 _ => $"{Encoders.Count(e => e.Kind == EncoderKind.Hardware)} hardware encoder(s) available.",
             };
 
-            _engine = new FfmpegStreamEngine(ffmpeg, _transport, _audioProvider, _loggerFactory.CreateLogger<FfmpegStreamEngine>(), layerProvider: _layerProvider, overlayProvider: _overlayProvider);
+            _engine = new FfmpegStreamEngine(ffmpeg, _transport, _audioProvider, _loggerFactory.CreateLogger<FfmpegStreamEngine>(), layerProvider: _layerProvider, overlayProvider: _overlayProvider)
+            {
+                // A game window larger than the stream is scaled down on the GPU before FFmpeg copies it.
+                SourceSize = s => s is WindowSource w ? Linkast.Platform.Windows.Capture.VideoSourceCatalog.ClientSize(w.WindowHandle) : null,
+            };
             _engine.StateChanged += (_, e) => _ui.InvokeAsync(() => OnStateChanged(e));
             _engine.TelemetryUpdated += (_, t) => _ui.InvokeAsync(() => OnTelemetry(t));
             _engine.DiagnosticLine += (_, line) => _ui.InvokeAsync(() => AppendLog(line));
@@ -1113,6 +1117,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _performance?.Dispose();
         _snapshotTimer.Stop();
         _fullscreenTimer?.Stop();
         if (_saveTimer.IsEnabled)
@@ -1741,6 +1746,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             AppendLog("The captured window is minimized; the stream starts once you switch back to it.");
         }
 
+        LogStreamContext(session);
         _recordOnly = recordOnly;
         _recording = session.Recording is not null;
         RememberLiveSources(session);
@@ -1901,6 +1907,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private void OnStateChanged(StreamStateChangedEventArgs e)
     {
         State = e.Current;
+        FollowPerformance(e.Current);
         if (e.Error is not null && e.Current is StreamState.Failed or StreamState.Reconnecting)
         {
             LastError = e.Error;
@@ -1953,7 +1960,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     private void AppendLog(string line)
     {
-        LogLines.Add($"{DateTime.Now:HH:mm:ss}  {Redactor.Shared.Redact(line)}");
+        // Into the log file too, so a tester's report has what their Activity list showed.
+        var redacted = Redactor.Shared.Redact(line);
+        LogActivity(redacted);
+        LogLines.Add($"{DateTime.Now:HH:mm:ss}  {redacted}");
         while (LogLines.Count > MaxLogLines)
         {
             LogLines.RemoveAt(0);

@@ -74,8 +74,10 @@ public sealed class FfmpegProcess : IAsyncDisposable
 
         try
         {
-            // Encoding must not be starved by the game it is capturing.
-            process.PriorityClass = ProcessPriorityClass.AboveNormal;
+            // Normal, like OBS: above normal took CPU time from the game itself, and a game that drops
+            // frames streams worse than an encoder that is briefly late (testers saw FPS fall when going
+            // live). The per-minute stats show both the encoder speed and the game's real frame rate.
+            process.PriorityClass = ProcessPriorityClass.Normal;
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
         {

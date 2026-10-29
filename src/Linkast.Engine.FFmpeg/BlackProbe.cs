@@ -13,10 +13,19 @@ public static class BlackProbe
     /// Splits the capture into [cap], which the graph continues with, and a probe ending in a nullsink.
     /// The file name is quoted so its ':' reaches the metadata filter.
     /// </summary>
+    /// <remarks>
+    /// It splits before the frame rate is made constant, so it also counts every frame Windows actually
+    /// delivered (the game's real frame rate, up to the capture limit): one <see cref="FrameMark"/> line each.
+    /// </remarks>
     public const string Graph =
-        "split=2[cap][probe];[probe]fps=2,scale=32:18:flags=area,blackdetect=pic_th=0.98:pix_th=0.05,"
+        "split=2[cap][probe];[probe]metadata=mode=add:key=linkast.frame:value=1,"
+        + "metadata=mode=print:key=linkast.frame:file='pipe\\:2':direct=1,"
+        + "fps=2,scale=32:18:flags=area,blackdetect=pic_th=0.98:pix_th=0.05,"
         + "metadata=mode=print:key=lavfi.black_start:file='pipe\\:2':direct=1,"
         + "metadata=mode=print:key=lavfi.black_end:file='pipe\\:2':direct=1,nullsink";
+
+    /// <summary>The line printed for each frame the capture delivered.</summary>
+    public const string FrameMark = "linkast.frame=1";
 
     private const string StartPrefix = "lavfi.black_start=";
     private const string EndPrefix = "lavfi.black_end=";
@@ -40,6 +49,7 @@ public static class BlackProbe
         ArgumentNullException.ThrowIfNull(line);
         var t = line.Trim();
         return Parse(t) is not null
+            || t == FrameMark
             || (t.StartsWith("frame:", StringComparison.Ordinal) && t.Contains(" pts_time:", StringComparison.Ordinal));
     }
 }

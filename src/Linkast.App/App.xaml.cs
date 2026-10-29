@@ -88,6 +88,10 @@ public partial class App : Application
 
         await _host.StartAsync();
 
+        // The PC, its GPUs and monitors, once per run, for testers' reports (read off the UI thread).
+        var systemLog = _host.Services.GetRequiredService<Microsoft.Extensions.Logging.ILoggerFactory>().CreateLogger("Linkast.System");
+        _ = Task.Run(() => SystemReport.Log(systemLog));
+
         // Apply the saved appearance before the first window exists, so it never flashes light.
         ThemeService.Apply(_host.Services.GetRequiredService<JsonSettingsStore>().Load().Theme);
 
