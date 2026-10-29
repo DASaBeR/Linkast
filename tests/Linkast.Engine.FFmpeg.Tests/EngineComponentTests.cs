@@ -395,6 +395,32 @@ public class ArgumentBuilderTests
     public void Rejects_unsafe_publish_urls(string url) =>
         Assert.Throws<StreamFailureException>(() => FfmpegArgumentBuilder.Build(Job() with { PublishUrl = url }));
 
+    [Theory]
+    [InlineData("tcp://192.168.1.5:5000")]
+    [InlineData("tcp://example.com:5000")]
+    public void Rejects_plain_tcp_to_another_computer(string url) =>
+        Assert.Throws<StreamFailureException>(() => FfmpegArgumentBuilder.Build(Job() with { PublishUrl = url, TcUrl = null }));
+
+    [Fact]
+    public void Writes_flv_to_the_local_output_buffer()
+    {
+        var args = FfmpegArgumentBuilder.Build(Job() with { PublishUrl = "tcp://127.0.0.1:50001", TcUrl = null });
+        Assert.Equal("tcp://127.0.0.1:50001", args[^1]);
+        Assert.Equal("flv", ValueAfter(args, "-f", args.Count(a => a == "-f") - 1));
+        Assert.DoesNotContain("-rtmp_tcurl", args);
+    }
+
+    [Fact]
+    public void Sender_copies_the_buffer_to_the_relay_unchanged()
+    {
+        var args = BufferedOutputLease.SenderArguments(50002, Url, "rtmp://live.example.com/live");
+        Assert.Equal("tcp://127.0.0.1:50002", ValueAfter(args, "-i"));
+        Assert.Equal("copy", ValueAfter(args, "-c"));
+        Assert.Equal("rtmp://live.example.com/live", ValueAfter(args, "-rtmp_tcurl"));
+        Assert.Equal(Url, args[^1]);
+        Assert.DoesNotContain("-filter_complex", args);
+    }
+
     [Fact]
     public void Rejects_foreign_pipe_paths() =>
         Assert.Throws<StreamFailureException>(() => FfmpegArgumentBuilder.Build(Job(audio:
