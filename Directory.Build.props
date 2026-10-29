@@ -12,7 +12,7 @@
     <Product>Linkast</Product>
     <Copyright>Copyright (C) Linkast contributors</Copyright>
     <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
-    <Version>1.0.3</Version>
+    <Version>1.0.4</Version>
     <!-- GitHub repository (owner/name) whose Releases host the installer and updates. -->
     <LinkastReleaseRepository>DASaBeR/Linkast</LinkastReleaseRepository>
     <!-- Never ship the redistributable DirectML.dll (proprietary license, data-collection clause).
