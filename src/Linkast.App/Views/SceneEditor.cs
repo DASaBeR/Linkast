@@ -35,12 +35,43 @@ public sealed class SceneEditor : UserControl
     private const double SnapDistance = 18;
     private const double MinSize = 80;
 
-    // Stacking, as the stream draws it: the game, the scene's background, cameras, overlays, then the snap guides.
-    private const int ZBase = 0;
+    // Stacking, as the stream draws it: the scene's background at the back, then the scene's sources in
+    // StackOrder (or, without one, the game, cameras, overlays), then the snap guides.
     private const int ZMedia = 1;
-    private const int ZCameras = 2;
-    private const int ZOverlays = 4;
-    private const int ZGuides = 6;
+    private const int ZBase = 10;
+    private const int ZCameras = 1000;
+    private const int ZOverlays = 2000;
+    private const int ZGuides = 100000;
+
+    /// <summary>The scene's sources by ID, bottom first (see <see cref="Linkast.Core.Camera.SceneStacking"/>); null for the default grouping.</summary>
+    public static readonly DependencyProperty StackOrderProperty = DependencyProperty.Register(
+        nameof(StackOrder), typeof(IReadOnlyList<string>), typeof(SceneEditor), new PropertyMetadata(null, (d, _) => ((SceneEditor)d).RefreshAll()));
+
+    public IReadOnlyList<string>? StackOrder
+    {
+        get => (IReadOnlyList<string>?)GetValue(StackOrderProperty);
+        set => SetValue(StackOrderProperty, value);
+    }
+
+    /// <summary>Where a source is drawn: by its place in <see cref="StackOrder"/>, else at its group's level.</summary>
+    private int ZOf(string id, int group)
+    {
+        var at = StackOrder is { } order ? IndexOf(order, id) : -1;
+        return at >= 0 ? ZBase + (10 * at) : group;
+
+        static int IndexOf(IReadOnlyList<string> list, string id)
+        {
+            for (var i = 0; i < list.Count; i++)
+            {
+                if (list[i] == id)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+    }
 
     private static readonly Brush Accent = new SolidColorBrush(Color.FromRgb(0x91, 0x46, 0xFF));
     private static readonly Brush Faint = new SolidColorBrush(Color.FromArgb(200, 0xFF, 0xFF, 0xFF));
@@ -138,7 +169,6 @@ public sealed class SceneEditor : UserControl
         _canvas.Children.Add(_sceneMedia);
         _canvas.Children.Add(_vGuide);
         _canvas.Children.Add(_hGuide);
-        Panel.SetZIndex(_base.Root, ZBase);
         Panel.SetZIndex(_sceneMedia, ZMedia);
         Unloaded += (_, _) => StopVideo();
         Loaded += (_, _) => RefreshSceneMedia();
@@ -350,6 +380,7 @@ public sealed class SceneEditor : UserControl
 
     private void RefreshAll()
     {
+        Panel.SetZIndex(_base.Root, ZOf(Linkast.Core.Camera.SceneStacking.CaptureId, ZBase));
         _base.Refresh();
         foreach (var v in _cameras)
         {
@@ -832,7 +863,8 @@ public sealed class SceneEditor : UserControl
                 c.Visibility = selected ? Visibility.Visible : Visibility.Collapsed;
             }
 
-            Panel.SetZIndex(Root, _zBase + (selected ? 1 : 0));
+            // The selected one a little higher, still under the next source.
+            Panel.SetZIndex(Root, _owner.ZOf(_item.LayerId, _zBase) + (selected ? 5 : 0));
             AutomationProperties.SetName(Root, $"{_item.Name} position. Drag to move, drag a corner or an edge to resize, hold Alt and drag an edge or a corner to trim, or use the arrow keys.");
             var r = CurrentRect();
             Canvas.SetLeft(Root, r.X);

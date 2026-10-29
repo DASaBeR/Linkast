@@ -201,6 +201,7 @@ public sealed partial class MainViewModel
     {
         _liveCaptures = session.Captures;
         _liveAudio = session.Audio;
+        _liveStack = session.Stack;
     }
 
     private void ScheduleLiveSourceSwitch()
@@ -229,18 +230,23 @@ public sealed partial class MainViewModel
 
         var captures = BuildCaptures(Webcam.ActiveLayout);
         var audio = BuildAudioSources();
-        if (captures.Select(c => (c.Key, c.Source)).SequenceEqual(_liveCaptures.Select(c => (c.Key, c.Source))) && SameSounds(audio, _liveAudio))
+        var sameSources = captures.Select(c => (c.Key, c.Source)).SequenceEqual(_liveCaptures.Select(c => (c.Key, c.Source))) && SameSounds(audio, _liveAudio);
+        if (sameSources && LiveStackFits(Webcam.ActiveLayout))
         {
             _baseDirty = true;
             _ = SendBaseAsync();
             return;
         }
 
-        if (_engine.ReplaceSources(captures, audio))
+        var stack = BuildStack(Webcam.ActiveLayout);
+        if (_engine.ReplaceSources(captures, audio, stack))
         {
             _liveCaptures = captures;
             _liveAudio = audio;
-            AppendLog($"The stream now captures {(captures.Count == 0 ? "nothing (cameras and overlays only)" : string.Join(", ", captures.Select(c => Describe(c.Source))))}. Viewers see a short pause.");
+            _liveStack = stack;
+            AppendLog(sameSources
+                ? $"'{Webcam.ActiveLayout.Name}' stacks its sources in a new order. Viewers see a short pause."
+                : $"The stream now captures {(captures.Count == 0 ? "nothing (cameras and overlays only)" : string.Join(", ", captures.Select(c => Describe(c.Source))))}. Viewers see a short pause.");
         }
     }
 

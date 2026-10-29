@@ -184,13 +184,21 @@ public sealed class WebOverlayRenderer : IAsyncDisposable
     /// peak). It comes out of the overlay's own browser, so it is heard, metered and streamed exactly like
     /// a real alert sound, through the overlay's fader.
     /// </summary>
-    public Task PlayTestSoundAsync() => _controller.CoreWebView2.ExecuteScriptAsync(TestSoundScript);
+    /// <summary>
+    /// Plays a short chime in the page at <paramref name="gain"/> (the overlay's fader), so what the user
+    /// hears matches what the stream gets: a lower fader is quieter, a muted one silent.
+    /// </summary>
+    public Task PlayTestSoundAsync(double gain) =>
+        _controller.CoreWebView2.ExecuteScriptAsync(TestSoundScript.Replace("{GAIN}", (TestSoundLevel * Math.Clamp(gain, 0, 2)).ToString("0.####", System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal));
+
+    /// <summary>The chime's level at 100 %: -6 dBFS, so 200 % reaches full scale without clipping.</summary>
+    private const double TestSoundLevel = 0.5;
 
     private const string TestSoundScript = """
         (() => {
           const ctx = new AudioContext();
           const out = ctx.createGain();
-          out.gain.value = 0.5;
+          out.gain.value = {GAIN};
           out.connect(ctx.destination);
           [[880, 0], [1320, 0.35]].forEach(([freq, at]) => {
             const osc = ctx.createOscillator();

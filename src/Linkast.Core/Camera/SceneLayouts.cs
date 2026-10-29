@@ -180,6 +180,12 @@ public sealed record SceneLayout
     /// <summary>Placement per camera layer ID. Cameras without an entry are hidden in this layout.</summary>
     public IReadOnlyDictionary<string, NormalizedRect> CameraPlacements { get; init; } = new Dictionary<string, NormalizedRect>();
 
+    /// <summary>
+    /// How this scene's sources are stacked, bottom first, by ID (see <see cref="SceneStacking"/>). Empty, or
+    /// missing a source, means the default: the game, then cameras, then overlays.
+    /// </summary>
+    public IReadOnlyList<string> StackOrder { get; init; } = [];
+
     public override string ToString() => Name;
 
     /// <summary>Canvas size for this layout from the configured landscape resolution (vertical swaps it).</summary>
@@ -242,6 +248,7 @@ public sealed record SceneLayout
             .ToDictionary(kv => kv.Key, kv => kv.Value.Clamped()),
         Media = Media?.Clamped(),
         HiddenOverlays = [.. (HiddenOverlays ?? []).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.Ordinal)],
+        StackOrder = [.. (StackOrder ?? []).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.Ordinal)],
         Overlays = (Overlays ?? new Dictionary<string, SceneOverlay>())
             .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && kv.Value is not null)
             .ToDictionary(kv => kv.Key, kv => kv.Value.Clamped(), StringComparer.Ordinal),

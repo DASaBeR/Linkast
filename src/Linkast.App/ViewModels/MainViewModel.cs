@@ -809,7 +809,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Volume and mute apply to a running stream at once, and to its reconnects.</summary>
     private void ApplyLiveGain(string channel, double gain)
     {
-        if (_engine is { } engine && IsActive)
+        if (_engine is { } engine && IsActive && channel != _soundTestChannel)
         {
             _ = engine.SetGainAsync(channel, gain);
         }
@@ -1184,6 +1184,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         if (e.PropertyName is nameof(SeparateGameAudio))
         {
             ScheduleLiveSourceSwitch();
+        }
+
+        if (e.PropertyName is nameof(SystemAudioEnabled))
+        {
+            OnPropertyChanged(nameof(GameSoundOnly));
         }
 
         if (e.PropertyName is nameof(State))
@@ -1885,6 +1890,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             Overlays = overlays,
             Media = media,
             Captures = captures,
+            Stack = BuildStack(starting),
             Broadcast = !recordOnly,
             Recording = recordOnly || RecordWhenLive
                 ? new RecordingSpec(RecordingFolder) { RemuxToMp4 = RemuxRecordingsToMp4 }

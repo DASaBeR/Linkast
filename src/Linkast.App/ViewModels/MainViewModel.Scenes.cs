@@ -307,9 +307,16 @@ public sealed partial class MainViewModel
         }
 
         RefreshMixerChannels();
+        RefreshSceneSources();
         if (!IsActive || _engine is null)
         {
             return;
+        }
+
+        // A scene whose sources the running stack draws in another order needs a restack (a short pause).
+        if (!LiveStackFits(scene))
+        {
+            ScheduleLiveSourceSwitch();
         }
 
         _baseDirty = true;
@@ -381,6 +388,36 @@ public sealed partial class MainViewModel
     {
         RefreshMixerChannels();
         ScheduleSave();
+        OnPropertyChanged(nameof(GameSoundOnly));
+    }
+
+    /// <summary>
+    /// The stream hears only the captured game, the microphone and the alerts: the game gets its own
+    /// fader, and Desktop audio, which carries every other program (a browser, Discord, notifications),
+    /// is muted. Off again, Desktop audio carries everything, the game included. Works while live: muting
+    /// is instant, adding or removing the game's own sound restarts the pipeline (a short pause).
+    /// Windows can leave only one program out of Desktop audio, and that is Linkast itself (so alerts are
+    /// not heard twice), which is why the game is taken on its own instead.
+    /// </summary>
+    public bool GameSoundOnly
+    {
+        get => SeparateGameAudio && Mixer.Get(AudioChannels.System) is not { Muted: false };
+        set
+        {
+            if (value == GameSoundOnly)
+            {
+                return;
+            }
+
+            SeparateGameAudio = value;
+            if (Mixer.Get(AudioChannels.System) is { } desktop)
+            {
+                desktop.Muted = value;
+            }
+
+            AppendLog(value ? "Only the game's sound goes into the stream (and the microphone and alerts)." : "Desktop audio goes into the stream again.");
+            OnPropertyChanged();
+        }
     }
 
     /// <summary>
@@ -498,6 +535,10 @@ public sealed partial class MainViewModel
 
         ApplyLiveGain(channel.Key, GainOf(channel.Key));
         ScheduleSave();
+        if (channel.Key == AudioChannels.System)
+        {
+            OnPropertyChanged(nameof(GameSoundOnly));
+        }
 
         void SetMuted(string key, bool muted)
         {
@@ -596,9 +637,12 @@ public sealed partial class MainViewModel
 
     private void ReadStreamMeters()
     {
+        // After the fader and mutes: the meters show what viewers hear.
         foreach (var channel in Mixer.Channels)
         {
-            channel.Level = _channelMeters.TryGetValue(channel.Key, out var m) && m.Bus.Active ? m.Bus.Meter.Level * 100 : 0;
+            channel.Level = _channelMeters.TryGetValue(channel.Key, out var m) && m.Bus.Active
+                ? MixerChannelViewModel.StreamLevel(m.Bus.Meter.LevelDb, channel.Key == _soundTestChannel ? 1 : GainOf(channel.Key)) * 100
+                : 0;
         }
     }
 
@@ -624,6 +668,13 @@ public sealed partial class MainViewModel
             return;
         }
 
+        var gain = GainOf(channel.Key);
+        if (gain <= 0)
+        {
+            channel.TestResult = "Muted, so neither you nor your viewers hear it. Unmute it to test.";
+            return;
+        }
+
         channel.IsTesting = true;
         channel.TestResult = "Playing…";
         try
@@ -636,8 +687,16 @@ public sealed partial class MainViewModel
                 return;
             }
 
+            // The chime plays at the fader's level, so the user hears what viewers hear. While live the
+            // stream takes this channel at 100 % until the chime is over, or viewers would get the fader twice.
+            _soundTestChannel = channel.Key;
+            if (_engine is { } engine && IsActive)
+            {
+                await engine.SetGainAsync(channel.Key, 1);
+            }
+
             UpdateStreamMeters();
-            await page.PlayTestSoundAsync();
+            await page.PlayTestSoundAsync(gain);
             var peak = double.NegativeInfinity;
             var clock = System.Diagnostics.Stopwatch.StartNew();
             while (clock.Elapsed < TestSoundWatch)
@@ -649,7 +708,7 @@ public sealed partial class MainViewModel
                 }
             }
 
-            channel.TestResult = DescribeTestLevel(channel, peak);
+            channel.TestResult = DescribeTestLevel(peak, gain);
             AppendLog($"Test sound for '{web.Name}': {channel.TestResult}");
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException)
@@ -659,25 +718,31 @@ public sealed partial class MainViewModel
         finally
         {
             channel.IsTesting = false;
+            if (_soundTestChannel == channel.Key)
+            {
+                _soundTestChannel = null;
+                ApplyLiveGain(channel.Key, GainOf(channel.Key)); // the fader as it is now, moved during the test or not
+            }
         }
     }
 
-    /// <summary>Words for a test's loudest level as the stream gets it (the meter is before the fader).</summary>
-    private static string DescribeTestLevel(MixerChannelViewModel channel, double peakDb)
+    /// <summary>The web overlay channel whose test chime is playing: the stream holds it at 100 % meanwhile.</summary>
+    private string? _soundTestChannel;
+
+    /// <summary>
+    /// Words for a test's loudest level. The chime played at the fader's <paramref name="gain"/>, so its
+    /// level is already what the stream gets.
+    /// </summary>
+    public static string DescribeTestLevel(double peakDb, double gain)
     {
-        if (peakDb <= -55)
+        // Judged before the fader: a very low fader is quiet, not missing.
+        if (peakDb - (20 * Math.Log10(gain)) <= -55)
         {
             return "Not heard. Is the overlay's sound muted in Windows' volume mixer?";
         }
 
-        if (channel.Muted || channel.SceneMuted || channel.Volume <= 0)
-        {
-            return string.Create(CultureInfo.InvariantCulture, $"Heard at {peakDb:0} dB, but muted here, so viewers won't hear it.");
-        }
-
-        var streamed = peakDb + (20 * Math.Log10(channel.Volume / 100));
-        var advice = streamed > -3 ? " Too loud: turn it down." : streamed < -24 ? " Quiet: turn it up." : string.Empty;
-        return string.Create(CultureInfo.InvariantCulture, $"{streamed:0} dB in the stream.{advice}");
+        var advice = peakDb > -3 ? " Too loud: turn it down." : peakDb < -24 ? " Quiet: turn it up." : string.Empty;
+        return string.Create(CultureInfo.InvariantCulture, $"{peakDb:0} dB in the stream.{advice}");
     }
 
     // ---- What a new stream contains -------------------------------------------------------------
@@ -800,6 +865,8 @@ public sealed partial class MainViewModel
         Overlays.CopyRequested += (_, choice) => OnOverlayCopyRequested(choice);
         Overlays.RemoveRequested += (_, item) => OnOverlayRemoveRequested(item);
         Overlays.ItemsChanged += (_, _) => RefreshMixerChannels();
+        Overlays.Items.CollectionChanged += (_, _) => RefreshSceneSources();
+        Webcam.Layers.CollectionChanged += (_, _) => RefreshSceneSources();
         Mixer.ChannelChanged += (_, channel) => OnMixerChannelChanged(channel);
         Mixer.TestRequested += (_, channel) => _ = TestChannelSoundAsync(channel);
         Mixer.Channels.CollectionChanged += (_, e) =>

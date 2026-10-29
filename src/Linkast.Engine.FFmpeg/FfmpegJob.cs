@@ -101,6 +101,12 @@ public sealed record FfmpegJob(
     /// </summary>
     public IReadOnlyList<CaptureJobInput> Captures { get; init; } = [];
 
+    /// <summary>
+    /// How captures and layers are stacked, bottom first. Null: every capture, then every layer. Scene media
+    /// (<see cref="VideoLayerJobInput.Cover"/>) are always at the bottom, under everything listed here.
+    /// </summary>
+    public IReadOnlyList<StackEntry>? Stack { get; init; }
+
     /// <summary>The captures to put in the graph: <see cref="Captures"/>, or the single legacy one.</summary>
     public IReadOnlyList<CaptureJobInput> AllCaptures => Captures.Count > 0 ? Captures
         : FfmpegArgumentBuilder.HasCapture(Video) ? [new CaptureJobInput(Video, BasePlacement, BaseCrop, BaseFit, !ShowCapture)]
@@ -114,3 +120,11 @@ public sealed record CaptureJobInput(
     Linkast.Core.Camera.NormalizedRect Crop,
     Linkast.Core.Camera.BaseFit Fit,
     bool Hidden);
+
+/// <summary>One place in the stack: capture <paramref name="Index"/> or layer <paramref name="Index"/> of the job.</summary>
+public readonly record struct StackEntry(bool IsCapture, int Index)
+{
+    public static StackEntry Capture(int index) => new(true, index);
+
+    public static StackEntry Layer(int index) => new(false, index);
+}

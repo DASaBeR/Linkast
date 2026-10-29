@@ -146,7 +146,7 @@ public static class FfmpegArgumentBuilder
             }
         }
 
-        args.AddRange(["-filter_complex", FilterGraph(captures, audio, e, job.Layers, job.CommandPort)]);
+        args.AddRange(["-filter_complex", FilterGraph(captures, audio, e, job.Layers, job.CommandPort, job.Stack)]);
         args.AddRange(["-map", "[vout]", "-map", "[aout]"]);
         args.AddRange(VideoEncoderArgs(e));
         args.AddRange([
@@ -292,13 +292,16 @@ public static class FfmpegArgumentBuilder
     /// The whole graph for any number of captures: input 0 is the canvas, inputs 1..C the captures, then
     /// the layers, then the audio. Capture k is placed by <c>crop@base{k}</c>, <c>scale@base{k}</c> and
     /// <c>overlay@base{k}</c> (k = 0 is plain <c>base</c>), so a scene switch moves one in and the others out.
+    /// Scene media lie on the canvas first; captures and the other layers follow in <paramref name="stack"/>
+    /// order (default: captures, then layers). Filter names don't depend on the order.
     /// </summary>
     public static string FilterGraph(
         IReadOnlyList<CaptureJobInput> captures,
         IReadOnlyList<AudioJobInput> audio,
         EncoderSettings e,
         IReadOnlyList<VideoLayerJobInput> layers,
-        int? commandPort)
+        int? commandPort,
+        IReadOnlyList<StackEntry>? stack = null)
     {
         ArgumentNullException.ThrowIfNull(captures);
         ArgumentNullException.ThrowIfNull(audio);
@@ -310,15 +313,35 @@ public static class FfmpegArgumentBuilder
         // a vertical layout) costs about three times the CPU and could not keep 1080 × 1920 at 60 fps.
         sb.Append("[0:v]format=yuv420p[canvas];");
         var below = "canvas";
-        var probed = false;
-        for (var k = 0; k < captures.Count; k++)
+        var nextInput = 1 + captures.Count;
+
+        // The black probe watches the first captured window, before its trim.
+        var probeAt = -1;
+        for (var k = 0; k < captures.Count && probeAt < 0; k++)
+        {
+            probeAt = captures[k].Source is WindowSource ? k : -1;
+        }
+
+        foreach (var entry in StackOrder(captures.Count, layers, stack))
+        {
+            if (entry.IsCapture)
+            {
+                AppendCapture(entry.Index);
+            }
+            else
+            {
+                AppendLayer(entry.Index);
+            }
+        }
+
+        void AppendCapture(int k)
         {
             var capture = captures[k];
             var n = BaseLayerArgs.Name(k);
             var suffix = k == 0 ? string.Empty : k.ToString(Inv);
 
             // Capture sources produce D3D11 frames; download once, then make constant frame rate (WGC
-            // only emits frames on change). The black probe watches the first window, before the trim.
+            // only emits frames on change).
             sb.Append(Inv, $"[{1 + k}:v]");
             if (capture.Source is not TestPatternSource)
             {
@@ -326,10 +349,9 @@ public static class FfmpegArgumentBuilder
             }
 
             sb.Append(Inv, $"fps={e.Fps},");
-            if (capture.Source is WindowSource && !probed)
+            if (k == probeAt)
             {
                 sb.Append(BlackProbe.Graph).Append(";[cap]");
-                probed = true;
             }
 
             var b = BaseLayerArgs.For(capture.Placement, capture.Crop, capture.Fit, e.Width, e.Height, hidden: capture.Hidden);
@@ -341,15 +363,13 @@ public static class FfmpegArgumentBuilder
             below = n;
         }
 
-        var nextInput = 1 + captures.Count;
-
         // Each layer: scale@camI (resizable live) then overlay@camI (movable live). Names are what
         // FfmpegCommandChannel addresses through the zmq filter. Scene media cover the canvas at a
         // fixed size and are only shown and hidden; a still picture is read once and repeated.
-        var w = e.Width.ToString(Inv);
-        var h = e.Height.ToString(Inv);
-        for (var i = 0; i < layers.Count; i++)
+        void AppendLayer(int i)
         {
+            var w = e.Width.ToString(Inv);
+            var h = e.Height.ToString(Inv);
             var l = layers[i];
             var p = l.Placement;
             var input = nextInput + i;
@@ -442,6 +462,49 @@ public static class FfmpegArgumentBuilder
     }
 
     private static string Gain(double gain) => Math.Clamp(gain, 0, 4).ToString("0.###", Inv);
+
+    /// <summary>
+    /// Every capture and layer once, bottom first: scene media (on the canvas, under everything), then
+    /// <paramref name="stack"/>, then anything it left out in the default order (captures, then layers).
+    /// </summary>
+    internal static List<StackEntry> StackOrder(int captureCount, IReadOnlyList<VideoLayerJobInput> layers, IReadOnlyList<StackEntry>? stack)
+    {
+        var order = new List<StackEntry>();
+        for (var i = 0; i < layers.Count; i++)
+        {
+            if (layers[i].Cover)
+            {
+                order.Add(StackEntry.Layer(i));
+            }
+        }
+
+        bool Valid(StackEntry s) => s.Index >= 0 && (s.IsCapture ? s.Index < captureCount : s.Index < layers.Count);
+        foreach (var entry in stack ?? [])
+        {
+            if (Valid(entry) && !order.Contains(entry))
+            {
+                order.Add(entry);
+            }
+        }
+
+        for (var k = 0; k < captureCount; k++)
+        {
+            if (!order.Contains(StackEntry.Capture(k)))
+            {
+                order.Add(StackEntry.Capture(k));
+            }
+        }
+
+        for (var i = 0; i < layers.Count; i++)
+        {
+            if (!order.Contains(StackEntry.Layer(i)))
+            {
+                order.Add(StackEntry.Layer(i));
+            }
+        }
+
+        return order;
+    }
 
     /// <summary>
     /// A live audio channel's name becomes part of a filter name (<c>volume@name</c>) and of zmq

@@ -215,7 +215,8 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
     /// the new source: viewers see a pause of a second or two instead of the stream ending. Layers,
     /// live moves and volumes are kept. False when nothing is running.
     /// </summary>
-    public bool ReplaceSources(IReadOnlyList<CaptureBinding> captures, IReadOnlyList<AudioSourceSpec> audio)
+    /// <param name="stack">A new stacking order (see <see cref="StreamSession.Stack"/>), or null to keep it.</param>
+    public bool ReplaceSources(IReadOnlyList<CaptureBinding> captures, IReadOnlyList<AudioSourceSpec> audio, IReadOnlyList<string>? stack = null)
     {
         ArgumentNullException.ThrowIfNull(captures);
         ArgumentNullException.ThrowIfNull(audio);
@@ -226,14 +227,14 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 return false;
             }
 
-            Volatile.Write(ref _pendingSources, new LiveSources(captures, audio));
+            Volatile.Write(ref _pendingSources, new LiveSources(captures, audio, stack));
             Volatile.Read(ref _sourceSwitch)?.TrySetResult();
         }
 
         return true;
     }
 
-    private sealed record LiveSources(IReadOnlyList<CaptureBinding> Captures, IReadOnlyList<AudioSourceSpec> Audio);
+    private sealed record LiveSources(IReadOnlyList<CaptureBinding> Captures, IReadOnlyList<AudioSourceSpec> Audio, IReadOnlyList<string>? Stack);
 
     /// <summary>The session's captures: its list, or the single <see cref="StreamSession.Video"/> placed by its base fields.</summary>
     private static IReadOnlyList<CaptureBinding> CapturesOf(StreamSession session) =>
@@ -258,6 +259,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                         Captures = sources.Captures,
                         Video = sources.Captures.Count > 0 ? sources.Captures[0].Source : new BlankCanvasSource(),
                         Audio = sources.Audio,
+                        Stack = sources.Stack ?? session.Stack,
                     };
                 }
 
@@ -466,6 +468,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
                 Layers = jobLayers,
                 Captures = jobCaptures,
                 CommandPort = commandPort,
+                Stack = StackEntries(session.Stack, [.. captures.Select(c => c.Key)], layerIds, fixedLayers),
             });
             LogLaunching(_redactor.Redact(string.Join(' ', args.Select(QuoteForLog))));
             Interlocked.Exchange(ref _blackSince, 0);
@@ -922,16 +925,19 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
         return startHidden ? px with { X = w + 16 } : px;
     }
 
-    public Task<bool> SetGainAsync(string channel, double gain, CancellationToken cancellationToken = default)
+    public async Task<bool> SetGainAsync(string channel, double gain, CancellationToken cancellationToken = default)
     {
         if (!FfmpegArgumentBuilder.IsValidChannelName(channel))
         {
-            return Task.FromResult(false);
+            return false;
         }
 
+        // Kept for reconnects even when FFmpeg is not live yet; the next attempt starts at this gain.
         gain = Math.Clamp(gain, 0, 4);
         _liveGain[channel] = gain;
-        return SendLiveAsync("volume@" + channel, "volume", gain.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture), cancellationToken);
+        var ok = await SendLiveAsync("volume@" + channel, "volume", gain.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
+        LogGainChanged(channel, gain, ok);
+        return ok;
     }
 
     public Task<bool> SetNoiseSuppressionAsync(bool enabled, CancellationToken cancellationToken = default)
@@ -980,11 +986,32 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
     [LoggerMessage(Level = LogLevel.Information, Message = "Layer {LayerId} moved live to {X},{Y} {W}x{H} (ok: {Ok})")]
     private partial void LogLayerMoved(string layerId, int x, int y, int w, int h, bool ok);
 
+    [LoggerMessage(Level = LogLevel.Information, Message = "Sound {Channel} set live to {Gain:0.###} (ok: {Ok})")]
+    private partial void LogGainChanged(string channel, double gain, bool ok);
+
     [LoggerMessage(Level = LogLevel.Information, Message = "Captured picture changed live (shown: {Shown}, ok: {Ok})")]
     private partial void LogBaseChanged(bool shown, bool ok);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Scene picture or video for {LayerId} is missing; that scene shows without it")]
     private partial void LogMediaMissing(string layerId);
+
+    /// <summary>
+    /// The session's stacking order as graph entries: each capture key and layer ID at its place in
+    /// <paramref name="stack"/>, the rest in the default order. Scene media (<paramref name="fixedLayers"/>)
+    /// are left to the builder, which puts them at the bottom.
+    /// </summary>
+    internal static List<StackEntry> StackEntries(IReadOnlyList<string> stack, IReadOnlyList<string> captureKeys, IReadOnlyList<string> layerIds, IReadOnlySet<int> fixedLayers)
+    {
+        var present = captureKeys.Concat(layerIds.Where((_, i) => !fixedLayers.Contains(i))).ToList();
+        var entries = new List<StackEntry>();
+        foreach (var id in Linkast.Core.Camera.SceneStacking.Resolve(stack, present))
+        {
+            var k = captureKeys.ToList().IndexOf(id);
+            entries.Add(k >= 0 ? StackEntry.Capture(k) : StackEntry.Layer(layerIds.ToList().IndexOf(id)));
+        }
+
+        return entries;
+    }
 
     /// <summary>Completes (faulted) only when one of <paramref name="tasks"/> faults; normal completion is ignored.</summary>
     private static Task FirstFault(IEnumerable<Task> tasks)

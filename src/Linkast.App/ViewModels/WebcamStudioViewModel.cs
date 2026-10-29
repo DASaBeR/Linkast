@@ -597,6 +597,19 @@ public sealed partial class WebcamStudioViewModel : ObservableObject, IAsyncDisp
 
     public SceneLayout? FindScene(Guid id) => _layouts.Find(l => l.Id == id);
 
+    /// <summary>Moves a scene to <paramref name="index"/> in the scene list (dragged there).</summary>
+    public void MoveSceneTo(LayoutOption option, int index)
+    {
+        ArgumentNullException.ThrowIfNull(option);
+        var from = _layouts.FindIndex(l => l.Id == option.Id);
+        var target = index >= 0 && index < LayoutOptions.Count ? LayoutOptions[index].Id : (Guid?)null;
+        var to = target is { } id ? _layouts.FindIndex(l => l.Id == id) : _layouts.Count - 1;
+        if (from >= 0 && to >= 0)
+        {
+            MoveScene(option, to - from);
+        }
+    }
+
     private void MoveScene(LayoutOption? option, int delta)
     {
         var from = _layouts.FindIndex(l => l.Id == (option?.Id ?? _activeLayoutId));

@@ -13,6 +13,9 @@ public interface ISceneItem : INotifyPropertyChanged
 {
     string Name { get; }
 
+    /// <summary>The camera's or overlay's layer ID, its name in a scene's stacking order.</summary>
+    string LayerId { get; }
+
     /// <summary>Where it is on the output canvas, normalized. The editor sets it when the user drags.</summary>
     NormalizedRect Placement { get; set; }
 

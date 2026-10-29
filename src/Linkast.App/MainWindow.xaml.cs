@@ -24,6 +24,10 @@ public partial class MainWindow : Window
         DataContext = viewModel;
         viewModel.IsPreviewVisible = true;
         viewModel.IsStreamPageVisible = true;
+
+        // Drag a scene or a source to another place in its list.
+        Views.DragReorder.Attach(SceneList, SceneDropMarker, (item, index) => _vm.Webcam.MoveSceneTo((LayoutOption)item, index));
+        Views.DragReorder.Attach(SourceList, SourceDropMarker, (item, index) => _vm.MoveSource(item, index));
         viewModel.StreamKeyLoaded += (_, key) =>
         {
             _syncingKey = true;
@@ -306,17 +310,21 @@ public partial class MainWindow : Window
         Studio.ShowCamera();
     }
 
-    // Stacking order is the studio's: it moves the selected camera, so select it first.
-    private void OnCameraForward(object sender, RoutedEventArgs e)
+    // A source's place in the active scene's stack (the list's order): one step to the front or the back.
+    private void OnSourceForward(object sender, RoutedEventArgs e)
     {
-        OnCameraRow(sender, e);
-        _vm.Webcam.MoveSelectedUpCommand.Execute(null);
+        if (sender is FrameworkElement { DataContext: { } item })
+        {
+            _vm.StepSource(item, +1);
+        }
     }
 
-    private void OnCameraBack(object sender, RoutedEventArgs e)
+    private void OnSourceBack(object sender, RoutedEventArgs e)
     {
-        OnCameraRow(sender, e);
-        _vm.Webcam.MoveSelectedDownCommand.Execute(null);
+        if (sender is FrameworkElement { DataContext: { } item })
+        {
+            _vm.StepSource(item, -1);
+        }
     }
 
     private void OnRemoveCamera(object sender, RoutedEventArgs e)

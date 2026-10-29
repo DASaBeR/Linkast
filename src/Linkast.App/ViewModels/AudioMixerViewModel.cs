@@ -78,6 +78,22 @@ public sealed partial class MixerChannelViewModel(string key, MixerChannelKind k
     /// <summary>The gain the stream uses: 0 while muted (here or by the scene).</summary>
     public double Gain => Muted || SceneMuted ? 0 : Volume / 100;
 
+    /// <summary>
+    /// The meter position (0 to 1, for -60 to 0 dBFS) of a sound at <paramref name="levelDb"/> after a
+    /// gain of <paramref name="gain"/>: what the stream gets. A meter before the fader kept moving when a
+    /// channel was muted or turned down, and testers took the mixer for broken.
+    /// </summary>
+    public static double StreamLevel(double levelDb, double gain)
+    {
+        if (gain <= 0)
+        {
+            return 0;
+        }
+
+        var db = levelDb + (20 * Math.Log10(gain));
+        return Math.Clamp((db + 60) / 60, 0, 1);
+    }
+
     public string Glyph => Kind switch
     {
         MixerChannelKind.Desktop => "", // speaker

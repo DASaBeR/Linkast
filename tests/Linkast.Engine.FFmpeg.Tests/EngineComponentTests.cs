@@ -252,6 +252,39 @@ public class ArgumentBuilderTests
         Assert.Throws<StreamFailureException>(() => FfmpegArgumentBuilder.Build(job with { Layers = [video with { AudioName = "bad name;" }] }));
     }
 
+    [Fact]
+    public void Scene_backgrounds_lie_under_the_game_and_the_stack_can_put_the_game_on_top()
+    {
+        var full = new Linkast.Core.Camera.PixelRect(0, 0, 1920, 1080);
+        var background = new VideoLayerJobInput(string.Empty, 1920, 1080, 0, full) { Kind = LayerInputKind.Still, FilePath = @"C:\Cards\brb.png", Cover = true };
+        var camera = new VideoLayerJobInput(@"\\.\pipe\linkast-cam-1", 480, 270, 30, new Linkast.Core.Camera.PixelRect(0, 0, 480, 270));
+        var overlay = new VideoLayerJobInput(@"\\.\pipe\linkast-web-1", 800, 600, 30, new Linkast.Core.Camera.PixelRect(0, 0, 800, 600));
+        var job = Job() with { Layers = [background, camera, overlay] };
+
+        // Default: the background, the game, the camera, the overlay.
+        var graph = ValueAfter(FfmpegArgumentBuilder.Build(job), "-filter_complex");
+        Assert.Contains("[canvas][cam0]overlay@cam0=", graph, StringComparison.Ordinal);
+        Assert.Contains("[comp0][game]overlay@base=", graph, StringComparison.Ordinal);
+        Assert.Contains("[base][cam1]overlay@cam1=", graph, StringComparison.Ordinal);
+        Assert.Contains("[comp1][cam2]overlay@cam2=", graph, StringComparison.Ordinal);
+        Assert.Contains("[comp2]format=nv12[vout]", graph, StringComparison.Ordinal);
+
+        // The overlay at the bottom, the camera above it and the game on top; the background stays under all.
+        graph = ValueAfter(FfmpegArgumentBuilder.Build(job with { Stack = [StackEntry.Layer(2), StackEntry.Layer(1), StackEntry.Capture(0)] }), "-filter_complex");
+        Assert.Contains("[canvas][cam0]overlay@cam0=", graph, StringComparison.Ordinal);
+        Assert.Contains("[comp0][cam2]overlay@cam2=", graph, StringComparison.Ordinal);
+        Assert.Contains("[comp2][cam1]overlay@cam1=", graph, StringComparison.Ordinal);
+        Assert.Contains("[comp1][game]overlay@base=", graph, StringComparison.Ordinal);
+        Assert.Contains("[base]format=nv12[vout]", graph, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_session_stack_maps_capture_keys_and_layer_ids_and_keeps_the_rest_in_default_order()
+    {
+        var entries = FfmpegStreamEngine.StackEntries(["overlay-1", "w1"], ["w1", "w2"], ["scene_x", "camera-1", "overlay-1"], new HashSet<int> { 0 });
+        Assert.Equal([StackEntry.Layer(2), StackEntry.Capture(0), StackEntry.Capture(1), StackEntry.Layer(1)], entries);
+    }
+
     [Theory]
     [InlineData("mic", true)]
     [InlineData("web_overlay_2", true)]

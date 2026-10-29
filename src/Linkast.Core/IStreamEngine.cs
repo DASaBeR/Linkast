@@ -16,8 +16,14 @@ public sealed record StreamSession(
     /// <summary>Overlays (pictures, web alerts) drawn above the cameras, bottom to top.</summary>
     public IReadOnlyList<Camera.OverlayLayerBinding> Overlays { get; init; } = [];
 
-    /// <summary>Scene pictures and videos: they cover the canvas above the captured game and below the cameras.</summary>
+    /// <summary>Scene pictures and videos: each scene's background, under everything else.</summary>
     public IReadOnlyList<Camera.MediaLayerBinding> Media { get; init; } = [];
+
+    /// <summary>
+    /// How captures (by <see cref="CaptureBinding.Key"/>), cameras and overlays (by layer ID) are stacked,
+    /// bottom first. Anything not listed keeps the default place: captures, then cameras, then overlays.
+    /// </summary>
+    public IReadOnlyList<string> Stack { get; init; } = [];
 
     /// <summary>
     /// Every game, window or display in the stream, one per scene that has its own, each placed where the

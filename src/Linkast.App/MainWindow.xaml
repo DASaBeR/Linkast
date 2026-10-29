@@ -224,6 +224,7 @@
                             </DockPanel>
 
                             <!-- Click a scene to switch to it (instant while live); right-click or ⋯ for more. Ctrl+Alt+1-9 switch from a game. -->
+                            <Grid>
                             <ListBox x:Name="SceneList" DataContext="{Binding Webcam}" Style="{StaticResource Linkast.List}" ItemsSource="{Binding LayoutOptions}"
                                      SelectedItem="{Binding SelectedLayout}" AutomationProperties.Name="Scenes"
                                      PreviewMouseRightButtonDown="OnSceneTileRightButtonDown">
@@ -240,7 +241,7 @@
                                     <DataTemplate DataType="{x:Type vm:LayoutOption}">
                                         <DockPanel>
                                             <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Icon}" Width="26" Height="26" FontSize="12" Content="&#xE712;"
-                                                    Click="OnSceneMore" ToolTip="More for this scene" AutomationProperties.Name="{Binding Name, StringFormat='More for {0}'}" />
+                                                    Click="OnSceneMore" Tag="NoDrag" ToolTip="More for this scene" AutomationProperties.Name="{Binding Name, StringFormat='More for {0}'}" />
                                             <Border x:Name="OnAir" DockPanel.Dock="Right" CornerRadius="4" Padding="5,1" Margin="6,0,2,0" VerticalAlignment="Center"
                                                     Background="{DynamicResource Linkast.Live}" Visibility="Collapsed">
                                                 <TextBlock Text="ON AIR" FontSize="9" FontWeight="Bold" Foreground="White" />
@@ -271,6 +272,8 @@
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
+                                <Border x:Name="SceneDropMarker" Height="3" VerticalAlignment="Top" Margin="4,0,4,0" CornerRadius="1.5" Background="{DynamicResource Linkast.Accent}" />
+                            </Grid>
 
                             <Border Height="1" Background="{DynamicResource Linkast.BorderSubtle}" Margin="0,12" />
 
@@ -288,97 +291,114 @@
                                 </TextBlock>
                             </DockPanel>
 
-                            <!-- The game or screen: what this scene captures. The eye hides it in this scene only. -->
-                            <Button Style="{StaticResource Row}" Click="OnCaptureRow" ToolTip="Choose the game, window or display for this scene" AutomationProperties.Name="Game or screen">
-                                <DockPanel>
-                                    <ToggleButton DockPanel.Dock="Right" Style="{StaticResource EyeToggle}" IsChecked="{Binding Webcam.ShowCapture}"
-                                                  ToolTip="Show the game or screen in this scene" AutomationProperties.Name="Show the game or screen in this scene" />
-                                    <Border Style="{StaticResource RowIcon}">
-                                        <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE7FC;" FontSize="14" HorizontalAlignment="Center" Foreground="{DynamicResource Linkast.Accent}" />
-                                    </Border>
-                                    <StackPanel VerticalAlignment="Center">
-                                        <TextBlock Text="Game or screen" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Text="{Binding CaptureSummary}" FontSize="11" Foreground="{DynamicResource Linkast.TextTertiary}" TextTrimming="CharacterEllipsis"
-                                                   ToolTip="{Binding CaptureSummary}" />
-                                    </StackPanel>
-                                </DockPanel>
-                            </Button>
+                            <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="6,0,6,6" TextWrapping="Wrap"
+                                       Text="Drag to change the order. Lower in the list is in front." />
 
-                            <!-- Cameras: shown or hidden in this scene; click to select one in the preview. -->
-                            <ItemsControl ItemsSource="{Binding Webcam.Layers}" Focusable="False">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate DataType="{x:Type vm:CameraLayerViewModel}">
-                                        <Button Style="{StaticResource Row.Selectable}" Click="OnCameraRow" MouseDoubleClick="OnCameraRowDoubleClick"
-                                                ToolTip="Select in the preview. Double-click for its settings in Webcam Studio." AutomationProperties.Name="{Binding Name}">
-                                            <Button.ContextMenu>
-                                                <ContextMenu>
-                                                    <MenuItem Header="Camera settings…" Click="OnCameraSettings" />
-                                                    <MenuItem Header="Bring forward" Click="OnCameraForward" />
-                                                    <MenuItem Header="Send back" Click="OnCameraBack" />
-                                                    <Separator />
-                                                    <MenuItem Header="Remove camera…" Click="OnRemoveCamera" />
-                                                </ContextMenu>
-                                            </Button.ContextMenu>
-                                            <DockPanel>
-                                                <ToggleButton DockPanel.Dock="Right" Style="{StaticResource EyeToggle}" IsChecked="{Binding IsShown}"
-                                                              ToolTip="Show this camera in this scene" AutomationProperties.Name="{Binding Name, StringFormat='Show {0} in this scene'}" />
-                                                <Grid>
-                                                    <Border Style="{StaticResource RowIcon}" HorizontalAlignment="Left">
-                                                        <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE960;" FontSize="14" HorizontalAlignment="Center" />
+                            <!-- The active scene's sources in its stacking order, first = at the back. Drag a row to restack;
+                                 each scene keeps its own order. The eye shows or hides a source in this scene only. -->
+                            <Grid>
+                                <ItemsControl x:Name="SourceList" ItemsSource="{Binding SceneSources}" Focusable="False" AutomationProperties.Name="Sources in this scene">
+                                    <ItemsControl.Resources>
+                                        <!-- The game or screen: what this scene captures. -->
+                                        <DataTemplate DataType="{x:Type vm:CaptureSourceItem}">
+                                            <Button Style="{StaticResource Row}" Click="OnCaptureRow" ToolTip="Choose the game, window or display for this scene. Drag to change the order."
+                                                    AutomationProperties.Name="Game or screen">
+                                                <Button.ContextMenu>
+                                                    <ContextMenu>
+                                                        <MenuItem Header="Bring forward" Click="OnSourceForward" />
+                                                        <MenuItem Header="Send back" Click="OnSourceBack" />
+                                                    </ContextMenu>
+                                                </Button.ContextMenu>
+                                                <DockPanel>
+                                                    <ToggleButton DockPanel.Dock="Right" Style="{StaticResource EyeToggle}"
+                                                                  IsChecked="{Binding DataContext.Webcam.ShowCapture, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                  ToolTip="Show the game or screen in this scene" AutomationProperties.Name="Show the game or screen in this scene" />
+                                                    <Border Style="{StaticResource RowIcon}">
+                                                        <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE7FC;" FontSize="14" HorizontalAlignment="Center" Foreground="{DynamicResource Linkast.Accent}" />
                                                     </Border>
-                                                    <Ellipse Width="8" Height="8" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="25,-1,0,0" Fill="{DynamicResource Linkast.Live}"
-                                                             Stroke="{DynamicResource Linkast.Surface1}" StrokeThickness="1.5"
-                                                             Visibility="{Binding State, Converter={x:Static vm:Converters.RunningToVisibility}}" ToolTip="Camera active" />
-                                                </Grid>
-                                                <StackPanel VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                                    <TextBlock Text="{Binding StatusText}" FontSize="11" Foreground="{DynamicResource Linkast.TextTertiary}" TextTrimming="CharacterEllipsis" />
-                                                </StackPanel>
-                                            </DockPanel>
-                                        </Button>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                                                    <StackPanel VerticalAlignment="Center">
+                                                        <TextBlock Text="Game or screen" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding DataContext.CaptureSummary, RelativeSource={RelativeSource AncestorType=Window}}" FontSize="11"
+                                                                   Foreground="{DynamicResource Linkast.TextTertiary}" TextTrimming="CharacterEllipsis"
+                                                                   ToolTip="{Binding DataContext.CaptureSummary, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                                    </StackPanel>
+                                                </DockPanel>
+                                            </Button>
+                                        </DataTemplate>
 
-                            <!-- Overlays: every overlay; the eye puts it in this scene or takes it out. -->
-                            <ItemsControl ItemsSource="{Binding Overlays.Items}" Focusable="False">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate DataType="{x:Type vm:OverlayItemViewModel}">
-                                        <Button Style="{StaticResource Row.Selectable}" Click="OnOverlayRow" MouseDoubleClick="OnOverlayRowDoubleClick"
-                                                ToolTip="Select in the preview. Double-click for its settings." AutomationProperties.Name="{Binding Name}">
-                                            <Button.ContextMenu>
-                                                <ContextMenu>
-                                                    <MenuItem Header="Overlay settings…" Click="OnOverlaySettings" />
-                                                    <MenuItem Header="Show me where it is" Click="OnLocateOverlay" />
-                                                    <Separator />
-                                                    <MenuItem Header="Remove from this scene" Click="OnRemoveOverlay" />
-                                                </ContextMenu>
-                                            </Button.ContextMenu>
-                                            <DockPanel>
-                                                <ToggleButton DockPanel.Dock="Right" Style="{StaticResource EyeToggle}" IsChecked="{Binding Visible}"
-                                                              ToolTip="Show this overlay in this scene" AutomationProperties.Name="{Binding Name, StringFormat='Show {0} in this scene'}" />
-                                                <Border Style="{StaticResource RowIcon}">
-                                                    <TextBlock x:Name="Glyph" Style="{StaticResource Linkast.Text.Glyph}" Text="&#xEB9F;" FontSize="14" HorizontalAlignment="Center" />
-                                                </Border>
-                                                <StackPanel VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                                    <TextBlock x:Name="Kind" Text="Picture" FontSize="11" Foreground="{DynamicResource Linkast.TextTertiary}" TextTrimming="CharacterEllipsis" />
-                                                </StackPanel>
-                                            </DockPanel>
-                                        </Button>
-                                        <DataTemplate.Triggers>
-                                            <DataTrigger Binding="{Binding IsWeb}" Value="True">
-                                                <Setter TargetName="Glyph" Property="Text" Value="&#xE774;" />
-                                                <Setter TargetName="Kind" Property="Text" Value="Alerts or web page" />
-                                            </DataTrigger>
-                                            <DataTrigger Binding="{Binding IsMissing}" Value="True">
-                                                <Setter TargetName="Kind" Property="Text" Value="Missing file" />
-                                                <Setter TargetName="Kind" Property="Foreground" Value="{DynamicResource Linkast.Warning}" />
-                                            </DataTrigger>
-                                        </DataTemplate.Triggers>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                                        <!-- A camera: shown or hidden in this scene; click to select it in the preview. -->
+                                        <DataTemplate DataType="{x:Type vm:CameraLayerViewModel}">
+                                            <Button Style="{StaticResource Row.Selectable}" Click="OnCameraRow" MouseDoubleClick="OnCameraRowDoubleClick"
+                                                    ToolTip="Select in the preview. Double-click for its settings in Webcam Studio. Drag to change the order." AutomationProperties.Name="{Binding Name}">
+                                                <Button.ContextMenu>
+                                                    <ContextMenu>
+                                                        <MenuItem Header="Camera settings…" Click="OnCameraSettings" />
+                                                        <MenuItem Header="Bring forward" Click="OnSourceForward" />
+                                                        <MenuItem Header="Send back" Click="OnSourceBack" />
+                                                        <Separator />
+                                                        <MenuItem Header="Remove camera…" Click="OnRemoveCamera" />
+                                                    </ContextMenu>
+                                                </Button.ContextMenu>
+                                                <DockPanel>
+                                                    <ToggleButton DockPanel.Dock="Right" Style="{StaticResource EyeToggle}" IsChecked="{Binding IsShown}"
+                                                                  ToolTip="Show this camera in this scene" AutomationProperties.Name="{Binding Name, StringFormat='Show {0} in this scene'}" />
+                                                    <Grid>
+                                                        <Border Style="{StaticResource RowIcon}" HorizontalAlignment="Left">
+                                                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE960;" FontSize="14" HorizontalAlignment="Center" />
+                                                        </Border>
+                                                        <Ellipse Width="8" Height="8" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="25,-1,0,0" Fill="{DynamicResource Linkast.Live}"
+                                                                 Stroke="{DynamicResource Linkast.Surface1}" StrokeThickness="1.5"
+                                                                 Visibility="{Binding State, Converter={x:Static vm:Converters.RunningToVisibility}}" ToolTip="Camera active" />
+                                                    </Grid>
+                                                    <StackPanel VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding StatusText}" FontSize="11" Foreground="{DynamicResource Linkast.TextTertiary}" TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                </DockPanel>
+                                            </Button>
+                                        </DataTemplate>
+
+                                        <!-- An overlay: the eye puts it in this scene or takes it out. -->
+                                        <DataTemplate DataType="{x:Type vm:OverlayItemViewModel}">
+                                            <Button Style="{StaticResource Row.Selectable}" Click="OnOverlayRow" MouseDoubleClick="OnOverlayRowDoubleClick"
+                                                    ToolTip="Select in the preview. Double-click for its settings. Drag to change the order." AutomationProperties.Name="{Binding Name}">
+                                                <Button.ContextMenu>
+                                                    <ContextMenu>
+                                                        <MenuItem Header="Overlay settings…" Click="OnOverlaySettings" />
+                                                        <MenuItem Header="Show me where it is" Click="OnLocateOverlay" />
+                                                        <MenuItem Header="Bring forward" Click="OnSourceForward" />
+                                                        <MenuItem Header="Send back" Click="OnSourceBack" />
+                                                        <Separator />
+                                                        <MenuItem Header="Remove from this scene" Click="OnRemoveOverlay" />
+                                                    </ContextMenu>
+                                                </Button.ContextMenu>
+                                                <DockPanel>
+                                                    <ToggleButton DockPanel.Dock="Right" Style="{StaticResource EyeToggle}" IsChecked="{Binding Visible}"
+                                                                  ToolTip="Show this overlay in this scene" AutomationProperties.Name="{Binding Name, StringFormat='Show {0} in this scene'}" />
+                                                    <Border Style="{StaticResource RowIcon}">
+                                                        <TextBlock x:Name="Glyph" Style="{StaticResource Linkast.Text.Glyph}" Text="&#xEB9F;" FontSize="14" HorizontalAlignment="Center" />
+                                                    </Border>
+                                                    <StackPanel VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock x:Name="Kind" Text="Picture" FontSize="11" Foreground="{DynamicResource Linkast.TextTertiary}" TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                </DockPanel>
+                                            </Button>
+                                            <DataTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding IsWeb}" Value="True">
+                                                    <Setter TargetName="Glyph" Property="Text" Value="&#xE774;" />
+                                                    <Setter TargetName="Kind" Property="Text" Value="Alerts or web page" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding IsMissing}" Value="True">
+                                                    <Setter TargetName="Kind" Property="Text" Value="Missing file" />
+                                                    <Setter TargetName="Kind" Property="Foreground" Value="{DynamicResource Linkast.Warning}" />
+                                                </DataTrigger>
+                                            </DataTemplate.Triggers>
+                                        </DataTemplate>
+                                    </ItemsControl.Resources>
+                                </ItemsControl>
+                                <Border x:Name="SourceDropMarker" Height="3" VerticalAlignment="Top" Margin="4,0,4,0" CornerRadius="1.5" Background="{DynamicResource Linkast.Accent}" />
+                            </Grid>
 
                             <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="6,8,6,0"
                                        Visibility="{Binding Overlays.HasItems, Converter={x:Static vm:Converters.InverseBoolToVisibility}}"
@@ -448,6 +468,7 @@
                                                        CanvasWidth="{Binding CanvasWidth}" CanvasHeight="{Binding CanvasHeight}"
                                                        BasePlacement="{Binding BasePlacement, Mode=TwoWay}" BaseFit="{Binding BaseFit}" BaseCrop="{Binding BaseCrop, Mode=TwoWay}"
                                                        BackgroundSource="{Binding EditorBackground}" IsPreviewOnly="True"
+                                                       StackOrder="{Binding DataContext.PreviewStack, RelativeSource={RelativeSource AncestorType=Window}}"
                                                        ShowOverlayNames="{Binding IsSelected, ElementName=TabOverlays}"
                                                        Overlays="{Binding DataContext.Overlays.Items, RelativeSource={RelativeSource AncestorType=Window}}"
                                                        SelectedOverlay="{Binding DataContext.Overlays.Selected, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}"
@@ -553,6 +574,12 @@
                                                         <Run Text="{Binding ActiveSceneName, Mode=OneWay}" Foreground="{DynamicResource Linkast.TextSecondary}" FontWeight="Normal" />
                                                     </TextBlock>
                                                 </DockPanel>
+                                                <StackPanel Margin="0,0,0,12" Visibility="{Binding IsWindowSource, Converter={StaticResource BoolToVis}}">
+                                                    <CheckBox Style="{StaticResource Linkast.ToggleSwitch}" Content="Only the game's sound" IsChecked="{Binding GameSoundOnly}"
+                                                              ToolTip="Viewers hear the game, your microphone and your alerts, nothing else. Works while live." />
+                                                    <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                                               Text="Mutes Desktop audio, which carries every other program (a browser, Discord, notifications), and gives the game its own fader. Turning it on or off while live may pause the stream for a second." />
+                                                </StackPanel>
                                                 <TextBlock Style="{StaticResource Linkast.Text.Body}" Margin="0,0,0,8"
                                                            Visibility="{Binding Mixer.Channels.Count, Converter={x:Static vm:Converters.ZeroToVisibility}}"
                                                            Text="Turn on system audio or the microphone to hear them in your stream." />
@@ -610,7 +637,7 @@
                                                                         </UniformGrid>
                                                                         <Button Style="{StaticResource Linkast.Button.Subtle}" MinHeight="26" Padding="0" Margin="0,4,0,0"
                                                                                 Command="{Binding TestCommand}" Visibility="{Binding CanTest, Converter={StaticResource BoolToVis}}"
-                                                                                ToolTip="Play a short chime through this overlay so you hear it and see how loud it is in the stream. While live, viewers hear it too."
+                                                                                ToolTip="Play a short chime through this overlay at this fader's volume, so you hear it as viewers will and see how loud it is in the stream. While live, viewers hear it too."
                                                                                 AutomationProperties.Name="Play test sound">
                                                                             <StackPanel Orientation="Horizontal">
                                                                                 <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE767;" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center" />
