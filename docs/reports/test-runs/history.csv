@@ -1,0 +1,6 @@
+﻿date,commit,version,scope,result,passed,failed,skipped,minutes,cpu,report
+2026-10-29-1157,06a25dd,1.0.3,all,FAIL,401,4,15,4.6,"12th Gen Intel(R) Core(TM) i5-12400F",2026-10-29-1157-06a25dd.md
+2026-10-29-1203,06a25dd,1.0.3,unit,PASS,379,0,7,0.1,"12th Gen Intel(R) Core(TM) i5-12400F",2026-10-29-1203-06a25dd.md
+2026-10-29-1329,06a25dd,1.0.3,unit,PASS,379,0,7,0.1,"12th Gen Intel(R) Core(TM) i5-12400F",2026-10-29-1329-06a25dd.md
+2026-10-29-1534,06a25dd,1.0.3,unit,PASS,383,0,7,0.1,"12th Gen Intel(R) Core(TM) i5-12400F",2026-10-29-1534-06a25dd.md
+2026-10-29-1535,06a25dd,1.0.3,all,PASS,410,0,16,3.4,"12th Gen Intel(R) Core(TM) i5-12400F",2026-10-29-1535-06a25dd.md
