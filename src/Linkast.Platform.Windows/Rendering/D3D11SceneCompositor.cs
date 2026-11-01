@@ -121,6 +121,7 @@ public sealed partial class D3D11SceneCompositor : IDisposable
     private readonly Lock _renderGate = new();
     private readonly D3D11DeviceManager _deviceManager;
     private readonly ILogger? _logger;
+    private readonly Dictionary<IntPtr, ID3D11ShaderResourceView> _srvCache = new();
 
     private int _canvasWidth;
     private int _canvasHeight;
@@ -237,6 +238,7 @@ public sealed partial class D3D11SceneCompositor : IDisposable
     {
         var device = _deviceManager.Device;
 
+        ClearSrvCache();
         _canvasRtv?.Dispose();
         _canvasSrv?.Dispose();
         _canvasTexture?.Dispose();
@@ -346,6 +348,7 @@ public sealed partial class D3D11SceneCompositor : IDisposable
 
     /// <summary>
     /// Draws a quad layer textured with <paramref name="layerTexture"/> over the canvas.
+    /// Shader resource views are cached per texture pointer to eliminate per-frame allocations.
     /// </summary>
     public void DrawLayer(
         ID3D11Texture2D layerTexture,
@@ -362,9 +365,31 @@ public sealed partial class D3D11SceneCompositor : IDisposable
                 return;
             }
 
-            using var srv = _deviceManager.Device.CreateShaderResourceView(layerTexture);
+            var srv = GetOrCreateSrv(layerTexture);
             DrawLayer(srv, destRect, cropRect, opacity);
         }
+    }
+
+    private ID3D11ShaderResourceView GetOrCreateSrv(ID3D11Texture2D texture)
+    {
+        var ptr = texture.NativePointer;
+        if (!_srvCache.TryGetValue(ptr, out var srv))
+        {
+            srv = _deviceManager.Device.CreateShaderResourceView(texture);
+            _srvCache[ptr] = srv;
+        }
+
+        return srv;
+    }
+
+    private void ClearSrvCache()
+    {
+        foreach (var srv in _srvCache.Values)
+        {
+            srv.Dispose();
+        }
+
+        _srvCache.Clear();
     }
 
     /// <summary>
@@ -557,6 +582,7 @@ public sealed partial class D3D11SceneCompositor : IDisposable
             _disposed = true;
             _deviceManager.DeviceRestored -= OnDeviceRestored;
 
+            ClearSrvCache();
             _canvasRtv?.Dispose();
             _canvasSrv?.Dispose();
             _canvasTexture?.Dispose();

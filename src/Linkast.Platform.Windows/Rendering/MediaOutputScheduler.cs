@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using System.Diagnostics;
 using Linkast.Core.Camera;
+using Linkast.Core.Rendering;
 using Microsoft.Extensions.Logging;
 using Vortice.Mathematics;
 
@@ -27,6 +28,7 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
 
     private long _framesRendered;
     private long _framesDropped;
+    private byte[]? _blackFrame;
 
     public MediaOutputScheduler(
         D3D11SceneCompositor compositor,
@@ -122,11 +124,14 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
             {
                 // A single frame failing (e.g. a transient device-removed during loss recovery) must not
                 // kill the render thread and tear down the stream. Log, pause briefly to avoid a hot loop,
+                // keep the video pipe alive with a black fallback frame so FFmpeg doesn't see EOF,
                 // and resync the clock so the next frame starts fresh.
                 if (_logger is not null)
                 {
                     LogRenderFrameFailed(_logger, ex);
                 }
+
+                PumpBlackFrame();
 
                 if (_cts.Token.WaitHandle.WaitOne(TimeSpan.FromMilliseconds(100)))
                 {
@@ -153,30 +158,89 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
         _compositor.BeginFrame(new Color4(0.05f, 0.05f, 0.08f, 1.0f));
 
         // 2. Render game or screen capture layer if active
-        if (layout.ShowCapture && sources.TryGetValue("capture", out var captureSource))
+        if (layout.ShowCapture)
         {
-            var (tex, _, _) = _frameCache.Acquire("capture");
-            if (tex is not null)
+            if (sources.TryGetValue("capture", out var defaultCapture))
             {
-                _compositor.DrawLayer(tex, layout.BasePlacement, layout.BaseCrop);
+                RenderCaptureSource("capture", defaultCapture, layout.BasePlacement, layout.BaseCrop);
+            }
+            else
+            {
+                foreach (var (key, src) in sources)
+                {
+                    if (!layout.CameraPlacements.ContainsKey(key) && src.State != SceneSourceState.Lost)
+                    {
+                        RenderCaptureSource(key, src, layout.BasePlacement, layout.BaseCrop);
+                        break;
+                    }
+                }
             }
         }
 
         // 3. Render camera layers according to layout
         foreach (var (cameraId, placement) in layout.CameraPlacements)
         {
-            if (sources.TryGetValue(cameraId, out _))
+            if (sources.TryGetValue(cameraId, out var camSource))
             {
-                var (camTex, _, _) = _frameCache.Acquire(cameraId);
-                if (camTex is not null)
-                {
-                    _compositor.DrawLayer(camTex, placement, NormalizedRect.Full);
-                }
+                RenderCameraSource(cameraId, camSource, placement);
             }
         }
 
         // 4. Convert composited frame to NV12 and write to video pipe stream
         _compositor.ConvertToNv12(_videoPipeStream);
+    }
+
+    private void RenderCaptureSource(string key, ID3D11SceneSource source, NormalizedRect placement, NormalizedRect crop)
+    {
+        var task = source.AcquireFrameAsync();
+        var acquired = task.IsCompletedSuccessfully ? task.Result : task.AsTask().GetAwaiter().GetResult();
+        if (acquired is not null)
+        {
+            _frameCache.Store(key, acquired, Stopwatch.GetTimestamp());
+        }
+
+        var (tex, _, _) = _frameCache.Acquire(key);
+        if (tex is not null && source.State != SceneSourceState.Lost)
+        {
+            _compositor.DrawLayer(tex, placement, crop);
+        }
+    }
+
+    private void RenderCameraSource(string key, ID3D11SceneSource source, NormalizedRect placement)
+    {
+        var task = source.AcquireFrameAsync();
+        var acquired = task.IsCompletedSuccessfully ? task.Result : task.AsTask().GetAwaiter().GetResult();
+        if (acquired is not null)
+        {
+            _frameCache.Store(key, acquired, Stopwatch.GetTimestamp());
+        }
+
+        var (camTex, _, _) = _frameCache.Acquire(key);
+        if (camTex is not null && source.State != SceneSourceState.Lost)
+        {
+            _compositor.DrawLayer(camTex, placement, NormalizedRect.Full);
+        }
+    }
+
+    private void PumpBlackFrame()
+    {
+        int requiredSize = (int)_compositor.Nv12ByteSize;
+        if (_blackFrame is null || _blackFrame.Length != requiredSize)
+        {
+            _blackFrame = new byte[requiredSize];
+            int ySize = _compositor.CanvasWidth * _compositor.CanvasHeight;
+            _blackFrame.AsSpan(0, ySize).Fill(16); // BT.709 black Y
+            _blackFrame.AsSpan(ySize).Fill(128);   // BT.709 neutral UV
+        }
+
+        try
+        {
+            _videoPipeStream.Write(_blackFrame);
+        }
+        catch
+        {
+            // If the pipe is broken or disconnected, the outer cancellation/stop flow handles it
+        }
     }
 
     public async ValueTask DisposeAsync()
