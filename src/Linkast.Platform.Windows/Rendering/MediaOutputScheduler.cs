@@ -17,6 +17,7 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
     private readonly SourceFrameCache _frameCache;
     private readonly Func<SceneLayout> _layoutProvider;
     private readonly Func<IReadOnlyDictionary<string, ID3D11SceneSource>> _sourcesProvider;
+    private readonly Func<IReadOnlyDictionary<string, NormalizedRect>>? _cropsProvider;
     private readonly Stream _videoPipeStream;
     private readonly int _targetFps;
     private readonly ILogger? _logger;
@@ -37,7 +38,8 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
         Func<IReadOnlyDictionary<string, ID3D11SceneSource>> sourcesProvider,
         Stream videoPipeStream,
         int targetFps = 60,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        Func<IReadOnlyDictionary<string, NormalizedRect>>? cropsProvider = null)
     {
         _compositor = compositor ?? throw new ArgumentNullException(nameof(compositor));
         _frameCache = frameCache ?? throw new ArgumentNullException(nameof(frameCache));
@@ -46,6 +48,7 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
         _videoPipeStream = videoPipeStream ?? throw new ArgumentNullException(nameof(videoPipeStream));
         _targetFps = targetFps > 0 ? targetFps : 60;
         _logger = logger;
+        _cropsProvider = cropsProvider;
     }
 
     public long FramesRendered => Interlocked.Read(ref _framesRendered);
@@ -225,13 +228,14 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
         var (camTex, camSrv, _, _) = _frameCache.AcquireWithSrv(key);
         if (source.State != SceneSourceState.Lost)
         {
+            var crop = _cropsProvider?.Invoke() is { } crops && crops.TryGetValue(key, out var c) ? c : NormalizedRect.Full;
             if (camSrv is not null)
             {
-                _compositor.DrawLayer(camSrv, placement, NormalizedRect.Full);
+                _compositor.DrawLayer(camSrv, placement, crop);
             }
             else if (camTex is not null)
             {
-                _compositor.DrawLayer(camTex, placement, NormalizedRect.Full);
+                _compositor.DrawLayer(camTex, placement, crop);
             }
         }
     }

@@ -17,6 +17,7 @@ using Linkast.Engine.FFmpeg;
 using Linkast.Platform.Windows.Audio;
 using Linkast.Platform.Windows.Camera;
 using Linkast.Platform.Windows.Capture;
+using Linkast.Platform.Windows.Rendering;
 using Microsoft.Extensions.Logging;
 
 namespace Linkast.App.ViewModels;
@@ -36,7 +37,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private readonly DpapiSecretStore _secrets;
     private readonly DispatcherTimer _saveTimer;
     private readonly DispatcherTimer _snapshotTimer;
-    private FfmpegStreamEngine? _engine;
+    private D3D11StreamEngine? _engine;
     private IReadOnlyList<EncoderProbeResult> _probeResults = [];
     private LinkastSettings _loaded = new();
     private bool _loading = true;
@@ -48,6 +49,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private readonly HashSet<string> _restartOffered = [];
     private readonly AudioLevelMonitor _levelMonitor;
     private readonly AudioCaptureHub _audioHub;
+    private readonly ICameraService _cameras;
+    private readonly ISegmentationService _segmentation;
+    private readonly BackgroundImageCache _backgroundImages;
+    private readonly IFramingService _framing;
+    private readonly AudioLevelBus _audioLevels;
     private readonly DispatcherTimer _meterTimer;
     private readonly DispatcherTimer _webOverlayTimer;
     private readonly WebOverlayHost _webOverlays;
@@ -89,6 +95,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         SelectedDestinationKind = DestinationKinds[0];
 
         _audioHub = audioHub;
+        _cameras = cameras;
+        _segmentation = segmentation;
+        _backgroundImages = backgroundImages;
+        _framing = framing;
+        _audioLevels = audioLevels;
         _levelMonitor = new AudioLevelMonitor(audioHub, audioLevels);
         _meterTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(66), DispatcherPriority.Background, (_, _) => ReadStreamMeters(), _ui) { IsEnabled = false };
         Webcam = new WebcamStudioViewModel(cameras, _ui, segmentation, backgroundImages, framing, audioLevels);
@@ -1120,7 +1131,16 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 _ => $"{Encoders.Count(e => e.Kind == EncoderKind.Hardware)} hardware encoder(s) available.",
             };
 
-            _engine = new FfmpegStreamEngine(ffmpeg, _transport, _audioProvider, _loggerFactory.CreateLogger<FfmpegStreamEngine>(), layerProvider: _layerProvider, overlayProvider: _overlayProvider)
+            _engine = new D3D11StreamEngine(
+                ffmpeg,
+                _transport,
+                _audioHub,
+                _loggerFactory.CreateLogger<D3D11StreamEngine>(),
+                cameraService: _cameras,
+                segmentation: _segmentation,
+                backgroundImages: _backgroundImages,
+                framing: _framing,
+                audioLevels: _audioLevels)
             {
                 // A game window larger than the stream is scaled down on the GPU before FFmpeg copies it.
                 SourceSize = s => s is WindowSource w ? Linkast.Platform.Windows.Capture.VideoSourceCatalog.ClientSize(w.WindowHandle) : null,

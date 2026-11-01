@@ -9,6 +9,7 @@ using Linkast.Core.Camera;
 using Linkast.Core.Rendering;
 using Linkast.Engine.FFmpeg;
 using Linkast.Platform.Windows.Audio;
+using Linkast.Platform.Windows.Camera;
 using Linkast.Platform.Windows.Capture;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -33,6 +34,11 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
     private readonly D3D11DeviceManager _deviceManager;
     private readonly bool _ownsDeviceManager;
+    private readonly ICameraService? _cameraService;
+    private readonly ISegmentationService? _segmentation;
+    private readonly BackgroundImageCache? _backgroundImages;
+    private readonly IFramingService? _framing;
+    private readonly AudioLevelBus? _audioLevels;
     private D3D11SceneCompositor? _compositor;
     private SourceFrameCache? _frameCache;
     private MediaOutputScheduler? _scheduler;
@@ -58,7 +64,12 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
         ILogger? logger = null,
         D3D11DeviceManager? deviceManager = null,
         TimeProvider? timeProvider = null,
-        EngineOptions? options = null)
+        EngineOptions? options = null,
+        ICameraService? cameraService = null,
+        ISegmentationService? segmentation = null,
+        BackgroundImageCache? backgroundImages = null,
+        IFramingService? framing = null,
+        AudioLevelBus? audioLevels = null)
     {
         _ffmpeg = ffmpeg ?? throw new ArgumentNullException(nameof(ffmpeg));
         _transport = transport ?? throw new ArgumentNullException(nameof(transport));
@@ -66,6 +77,11 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
         _logger = logger;
         _time = timeProvider ?? TimeProvider.System;
         _options = options ?? new EngineOptions();
+        _cameraService = cameraService;
+        _segmentation = segmentation;
+        _backgroundImages = backgroundImages;
+        _framing = framing;
+        _audioLevels = audioLevels;
 
         if (deviceManager is not null)
         {
@@ -269,6 +285,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                     {
                         cameraMap[b.Layer.LayerId] = b.Placement;
                     }
+                    _layerCrops[b.Layer.LayerId] = b.Crop;
                 }
 
                 _currentLayout = new SceneLayout
@@ -364,7 +381,8 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 () => _sources,
                 videoPipe,
                 session.Encoder.Fps,
-                _logger);
+                _logger,
+                cropsProvider: () => _layerCrops);
 
             await using var mixer = new UnifiedAudioMixer(
                 _audioHub,
@@ -538,6 +556,32 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
             if (source is not null)
             {
                 _sources[b.Key] = source;
+            }
+        }
+
+        if (_cameraService is not null)
+        {
+            foreach (var b in session.CameraLayers)
+            {
+                if (_sources.ContainsKey(b.Layer.LayerId))
+                {
+                    continue;
+                }
+
+                var px = LayerGeometry.ToPixels(b.Placement, session.Encoder.Width, session.Encoder.Height);
+                var camSource = new CameraD3D11SceneSource(
+                    b.Layer.LayerId,
+                    _deviceManager,
+                    b.Layer,
+                    _cameraService,
+                    Math.Max(64, px.Width),
+                    Math.Max(64, px.Height),
+                    _segmentation,
+                    _backgroundImages,
+                    _framing,
+                    _audioLevels,
+                    _logger);
+                _sources[b.Layer.LayerId] = camSource;
             }
         }
     }

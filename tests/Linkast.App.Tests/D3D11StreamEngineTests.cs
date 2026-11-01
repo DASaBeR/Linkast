@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.IO;
 using Linkast.Core;
 using Linkast.Core.Camera;
+using Linkast.Core.Rendering;
 using Linkast.Engine.FFmpeg;
 using Linkast.Platform.Windows.Rendering;
 
@@ -172,6 +174,32 @@ public class D3D11StreamEngineTests
         Assert.Null(missingSrv);
     }
 
+    private sealed class MockCameraService : ICameraService, IDisposable
+    {
+        public readonly MockCameraFeed Feed = new(new CameraDevice("mock-cam", "Mock Camera"));
+        public event EventHandler? DevicesChanged { add { } remove { } }
+        public Task<IReadOnlyList<CameraDevice>> ListAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<CameraDevice>>([new CameraDevice("mock-cam", "Mock Camera")]);
+        public Task<IReadOnlyList<CameraFormat>> GetFormatsAsync(string deviceId, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<CameraFormat>>([]);
+        public ICameraFeed Open(CameraDevice device, CameraFormatRequest format) => Feed;
+        public void Dispose() => Feed.DisposeAsync().AsTask().GetAwaiter().GetResult();
+    }
+
+    private sealed class MockCameraFeed(CameraDevice device) : ICameraFeed
+    {
+        public CameraDevice Device => device;
+        public CameraState State => CameraState.Running;
+        public StreamError? LastError => null;
+        public CameraFormat? ActiveFormat => new(640, 480, 30, 1, "MJPG");
+        public double MeasuredFps => 30.0;
+        public LatestFrameExchange Frames { get; } = new();
+        public event EventHandler? StateChanged { add { } remove { } }
+        public IReadOnlyList<HardwareControlInfo> HardwareControls => [];
+        public Task<bool> SetHardwareControlAsync(HardwareControl control, double? value) => Task.FromResult(true);
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
     [Fact]
     public async Task D3D11StreamEngine_disposes_cleanly_without_throwing()
     {
@@ -183,5 +211,77 @@ public class D3D11StreamEngineTests
 
         await engine.DisposeAsync();
         Assert.Equal(StreamState.Idle, engine.State);
+    }
+
+    [Fact]
+    public async Task CameraD3D11SceneSource_acquires_frames_and_manages_lifecycle()
+    {
+        using var deviceManager = new D3D11DeviceManager();
+        using var mockService = new MockCameraService();
+        var layer = new LiveCameraLayer("layer-1")
+        {
+            Device = new CameraDevice("mock-cam", "Mock Camera"),
+            Enabled = true,
+        };
+
+        await using var source = new CameraD3D11SceneSource(
+            "layer-1",
+            deviceManager,
+            layer,
+            mockService,
+            320,
+            240);
+
+        Assert.Equal("layer-1", source.Id);
+        Assert.Equal(SceneSourceState.Capturing, source.State);
+
+        // Before publishing frame, returns null
+        var initial = await source.AcquireFrameAsync();
+        Assert.Null(initial);
+
+        // Publish a frame to the camera feed
+        var write = mockService.Feed.Frames.BeginWrite(320, 240);
+        Assert.NotNull(write);
+        Array.Fill(write.Pixels, (byte)128);
+        mockService.Feed.Frames.Publish(TimeSpan.Zero);
+
+        // Now frame is acquired as a D3D11 GPU texture
+        var acquired = await source.AcquireFrameAsync();
+        Assert.NotNull(acquired);
+        Assert.Equal(320u, acquired.Description.Width);
+        Assert.Equal(240u, acquired.Description.Height);
+    }
+
+    [Fact]
+    public void MediaOutputScheduler_passes_crops_to_compositor()
+    {
+        using var deviceManager = new D3D11DeviceManager();
+        using var compositor = new D3D11SceneCompositor(deviceManager, 1920, 1080);
+        using var frameCache = new SourceFrameCache(deviceManager);
+        using var ms = new MemoryStream();
+
+        var crops = new Dictionary<string, NormalizedRect>
+        {
+            ["cam-1"] = new NormalizedRect(0.1, 0.1, 0.8, 0.8)
+        };
+
+        var layout = new SceneLayout
+        {
+            CameraPlacements = new Dictionary<string, NormalizedRect>
+            {
+                ["cam-1"] = new NormalizedRect(0.7, 0.7, 0.25, 0.25)
+            }
+        };
+
+        var scheduler = new MediaOutputScheduler(
+            compositor,
+            frameCache,
+            () => layout,
+            () => new Dictionary<string, ID3D11SceneSource>(),
+            ms,
+            targetFps: 60,
+            cropsProvider: () => crops);
+
+        Assert.False(scheduler.IsRunning);
     }
 }
