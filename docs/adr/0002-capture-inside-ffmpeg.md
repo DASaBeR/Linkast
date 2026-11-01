@@ -1,6 +1,6 @@
 # ADR 0002: Video capture inside FFmpeg using Windows capture APIs
 
-**Status:** Accepted (Milestone 1)
+**Status:** Superseded by [ADR 0010](0010-d3d11-scene-compositor.md)
 
 ## Context
 

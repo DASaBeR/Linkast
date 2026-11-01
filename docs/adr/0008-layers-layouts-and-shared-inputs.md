@@ -1,6 +1,6 @@
 # ADR 0008: Camera layers, layouts and shared inputs
 
-**Status:** Accepted (Phase 4)
+**Status:** Superseded by [ADR 0010](0010-d3d11-scene-compositor.md)
 
 ## Context
 

@@ -9,3 +9,7 @@
 2026-10-31-2251,5bbe3c7,1.0.4,all,FAIL,405,3,31,1.8,"12th Gen Intel(R) Core(TM) i5-12400F",2026-10-31-2251-5bbe3c7.md
 2026-10-31-2253,5bbe3c7,1.0.4,unit,PASS,393,0,7,0.1,"12th Gen Intel(R) Core(TM) i5-12400F",2026-10-31-2253-5bbe3c7.md
 2026-11-01-0040,5bbe3c7,1.0.4,unit,PASS,395,0,7,0.1,"12th Gen Intel(R) Core(TM) i5-12400F",2026-11-01-0040-5bbe3c7.md
+2026-11-01-1229,ec01a4b,1.0.4,unit,PASS,398,0,7,0.1,"12th Gen Intel(R) Core(TM) i5-12400F",2026-11-01-1229-ec01a4b.md
+2026-11-01-1242,ec01a4b,1.0.4,unit,PASS,401,0,7,0.1,"12th Gen Intel(R) Core(TM) i5-12400F",2026-11-01-1242-ec01a4b.md
+2026-11-01-1300,ec01a4b,1.0.4,unit,PASS,413,0,7,0.1,"12th Gen Intel(R) Core(TM) i5-12400F",2026-11-01-1300-ec01a4b.md
+2026-11-01-1306,ec01a4b,1.0.4,unit,PASS,416,0,7,0.1,"12th Gen Intel(R) Core(TM) i5-12400F",2026-11-01-1306-ec01a4b.md

@@ -37,6 +37,48 @@ public class ArgumentBuilderTests
     [Fact]
     public void Progress_goes_to_stdout() => Assert.Equal("pipe:1", ValueAfter(FfmpegArgumentBuilder.Build(Job()), "-progress"));
 
+    [Fact]
+    public void BuildSinglePipe_generates_streamlined_dual_input_arguments()
+    {
+        var job = new SinglePipeFfmpegJob(
+            @"\\.\pipe\linkast-video-test",
+            1920,
+            1080,
+            60,
+            @"\\.\pipe\linkast-audio-test",
+            EncoderSettings.Default1080p60("h264_nvenc"),
+            Url,
+            "rtmp://live.example.com/live");
+
+        var args = FfmpegArgumentBuilder.BuildSinglePipe(job);
+
+        // Inputs
+        Assert.Equal("rawvideo", ValueAfter(args, "-f", 0));
+        Assert.Equal("nv12", ValueAfter(args, "-pix_fmt"));
+        Assert.Equal("1920x1080", ValueAfter(args, "-s"));
+        Assert.Equal("60", ValueAfter(args, "-r"));
+        Assert.Equal(@"\\.\pipe\linkast-video-test", ValueAfter(args, "-i", 0));
+
+        Assert.Equal("s16le", ValueAfter(args, "-f", 1));
+        Assert.Equal("48000", ValueAfter(args, "-ar"));
+        Assert.Equal("2", ValueAfter(args, "-ac"));
+        Assert.Equal(@"\\.\pipe\linkast-audio-test", ValueAfter(args, "-i", 1));
+
+        // Mapping
+        Assert.Equal("0:v", ValueAfter(args, "-map", 0));
+        Assert.Equal("1:a", ValueAfter(args, "-map", 1));
+
+        // Encoder
+        Assert.Equal("h264_nvenc", ValueAfter(args, "-c:v"));
+        Assert.Equal("aac", ValueAfter(args, "-c:a"));
+
+        // No filter complex in single pipe architecture
+        Assert.DoesNotContain("-filter_complex", args);
+
+        // Output
+        Assert.Equal(Url, args[^1]);
+    }
+
     [Theory]
     [InlineData(CaptureApi.WindowsGraphicsCapture, null, "gfxcapture=monitor_idx=1:max_framerate=60:capture_cursor=1")]
     [InlineData(CaptureApi.WindowsGraphicsCapture, 65537L, "gfxcapture=hmonitor=65537:max_framerate=60:capture_cursor=1")]

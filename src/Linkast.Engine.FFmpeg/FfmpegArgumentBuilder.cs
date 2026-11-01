@@ -160,6 +160,86 @@ public static class FfmpegArgumentBuilder
         return args;
     }
 
+    /// <summary>
+    /// Builds the streamlined argument vector for the D3D11 compositor architecture.
+    /// FFmpeg receives a single pre-composed NV12 video pipe and a single stereo audio pipe.
+    /// Zero filter_complex, zero ZMQ, zero live restarts on scene or window switches.
+    /// </summary>
+    public static IReadOnlyList<string> BuildSinglePipe(SinglePipeFfmpegJob job)
+    {
+        ArgumentNullException.ThrowIfNull(job);
+        var errors = new List<StreamError>();
+        SessionValidator.ValidateEncoder(job.Encoder, errors);
+        if (errors.Count > 0)
+        {
+            throw new StreamFailureException(errors[0]);
+        }
+
+        if (job.PublishUrl is null && job.RecordingPath is null)
+        {
+            throw new StreamFailureException(new StreamError(ErrorCategory.Configuration, "output.none", "There is no output: neither a stream nor a recording."));
+        }
+
+        if (job.PublishUrl is not null)
+        {
+            ValidatePublishUrl(job.PublishUrl);
+        }
+
+        if (job.TcUrl is not null)
+        {
+            ValidatePublishUrl(job.TcUrl);
+        }
+
+        if (job.RecordingPath is not null)
+        {
+            ValidateRecordingPath(job.RecordingPath);
+        }
+
+        ValidatePipePath(job.VideoPipePath);
+        ValidatePipePath(job.AudioPipePath);
+
+        var e = job.Encoder;
+        var args = new List<string>
+        {
+            "-hide_banner",
+            "-nostats",
+            "-loglevel", "level+warning",
+            "-progress", "pipe:1",
+            "-stats_period", "1",
+        };
+
+        // Input 0: Pre-composed NV12 video pipe
+        args.AddRange([
+            "-thread_queue_size", "64",
+            "-f", "rawvideo",
+            "-pix_fmt", "nv12",
+            "-s", $"{job.Width.ToString(Inv)}x{job.Height.ToString(Inv)}",
+            "-r", job.Fps.ToString(Inv),
+            "-i", job.VideoPipePath,
+        ]);
+
+        // Input 1: Pre-mixed stereo s16le PCM audio pipe
+        args.AddRange([
+            "-thread_queue_size", "1024",
+            "-f", "s16le",
+            "-ar", e.AudioSampleRate.ToString(Inv),
+            "-ac", "2",
+            "-i", job.AudioPipePath,
+        ]);
+
+        args.AddRange(["-map", "0:v", "-map", "1:a"]);
+        args.AddRange(VideoEncoderArgs(e));
+        args.AddRange([
+            "-c:a", "aac",
+            "-b:a", Kbps(e.AudioKbps),
+            "-ar", e.AudioSampleRate.ToString(Inv),
+            "-ac", "2",
+            "-max_muxing_queue_size", "1024",
+        ]);
+        args.AddRange(OutputArgs(job.PublishUrl, job.TcUrl, job.RecordingPath));
+        return args;
+    }
+
     public const int MaxLayers = 16;
 
     /// <summary>Each capture runs all the time (a hidden one too), so their number is kept small.</summary>

@@ -1,0 +1,609 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Linkast UI Inventory</title>
+<style>
+  @page { size: A4; margin: 16mm 14mm 16mm 14mm; }
+  :root {
+    --ink: #151936; --ink2: #414B70; --ink3: #626D91; --line: #DCE2F3; --soft: #F4F6FC; --accent: #2858D8;
+    --live: #C62838; --warn: #805000;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif; color: var(--ink); font-size: 10pt; line-height: 1.42; margin: 0; background: #fff; }
+  h1 { font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif; font-size: 24pt; margin: 0 0 4pt; }
+  h2 { font-size: 15pt; margin: 22pt 0 6pt; padding-bottom: 3pt; border-bottom: 2px solid var(--accent); break-after: avoid; }
+  h3 { font-size: 12pt; margin: 14pt 0 4pt; break-after: avoid; }
+  h4 { font-size: 10.5pt; margin: 10pt 0 3pt; color: var(--ink2); break-after: avoid; }
+  p { margin: 3pt 0 6pt; }
+  .lead { color: var(--ink2); font-size: 11pt; }
+  .meta { color: var(--ink3); font-size: 9pt; }
+  table { width: 100%; border-collapse: collapse; margin: 4pt 0 10pt; font-size: 9pt; }
+  th, td { border: 1px solid var(--line); padding: 3.5pt 5pt; vertical-align: top; text-align: left; }
+  th { background: var(--soft); font-weight: 600; }
+  tr { break-inside: avoid; }
+  td:first-child { font-weight: 600; width: 26%; }
+  td.t { width: 15%; color: var(--ink2); font-weight: 400; white-space: nowrap; }
+  code, .mono { font-family: "Cascadia Mono", Consolas, monospace; font-size: 8.5pt; }
+  .tag { display: inline-block; font-size: 7.5pt; font-weight: 600; padding: 0 5pt; border-radius: 99px; border: 1px solid var(--line); color: var(--ink2); white-space: nowrap; }
+  .tag.live { color: var(--live); border-color: var(--live); }
+  .tag.lock { color: var(--warn); border-color: var(--warn); }
+  .box { background: var(--soft); border: 1px solid var(--line); border-radius: 8pt; padding: 8pt 10pt; margin: 6pt 0 10pt; break-inside: avoid; }
+  .skeleton { font-family: "Cascadia Mono", Consolas, monospace; font-size: 8pt; line-height: 1.25; white-space: pre; background: #0B0D1B; color: #F4F6FF; border-radius: 8pt; padding: 10pt; margin: 6pt 0 10pt; break-inside: avoid; }
+  .swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4pt; margin: 4pt 0 10pt; }
+  .sw { border: 1px solid var(--line); border-radius: 6pt; overflow: hidden; font-size: 7.5pt; break-inside: avoid; }
+  .sw b { display: block; height: 18pt; }
+  .sw span { display: block; padding: 2pt 4pt; }
+  .logos { display: flex; flex-wrap: wrap; gap: 10pt; align-items: flex-end; margin: 6pt 0 10pt; }
+  .logos figure { margin: 0; text-align: center; font-size: 8pt; color: var(--ink3); }
+  .logos img { height: 54pt; max-width: 150pt; object-fit: contain; display: block; margin: 0 auto 3pt; }
+  .dark { background: #0B0D1B; padding: 6pt; border-radius: 6pt; }
+  ul { margin: 2pt 0 8pt 14pt; padding: 0; }
+  li { margin: 1pt 0; }
+  .toc { columns: 2; font-size: 9.5pt; }
+  .toc li { break-inside: avoid; }
+  .pb { break-before: page; }
+</style>
+</head>
+<body>
+
+<h1>Linkast — UI inventory</h1>
+<p class="lead">Every screen, section, tab and control in the Linkast desktop app, with a one-line note on what it does. Written as a starting point for a UI/UX refactor.</p>
+<p class="meta">App version 0.5.0-beta.6 · Windows desktop app (WPF, Windows 11 look) · Prepared 28 October 2026 from the app's source</p>
+
+<div class="box">
+<b>What Linkast is.</b> A lightweight, local-only live-streaming app for Windows (an OBS alternative for gamers). It captures a game, window or display, adds webcams with effects and overlays (alerts, logos), mixes sound, and streams to Twitch, YouTube, Kick, Facebook or any RTMP server. You can pick which network the stream uses (for example Wi-Fi vs. a phone hotspot). No account, no cloud, no telemetry.<br><br>
+<b>Key ideas behind the UI</b>
+<ul>
+<li><b>Sources are set up once, scenes decide what shows.</b> A scene says which game, cameras, overlays, background and sounds appear. Switching scenes while live is instant.</li>
+<li><b>Live vs. not live.</b> Some settings are locked while streaming <span class="tag lock">LOCKED LIVE</span>; others work instantly while live <span class="tag live">WORKS LIVE</span>. The UI should make this obvious.</li>
+<li><b>The Linkast window is often on stream itself</b>, so secrets (stream key, alert links) are masked or hidden after entry.</li>
+<li>Dark and light themes plus "Match Windows". Every colour comes from design tokens (section 3).</li>
+</ul>
+</div>
+
+<h3>Contents</h3>
+<ol class="toc">
+<li>Window structure</li>
+<li>Logo and brand assets</li>
+<li>Design tokens (colours, type, spacing, radii, motion)</li>
+<li>Component library</li>
+<li>Header bar</li>
+<li>Navigation rail</li>
+<li>Stream page: left column (preview, scenes, 7 tabs)</li>
+<li>Stream page: right status column</li>
+<li>Webcam Studio page (3 tabs)</li>
+<li>Settings page</li>
+<li>About page</li>
+<li>Dialogs, menus and system pickers</li>
+<li>Stream states</li>
+<li>Keyboard shortcuts</li>
+<li>Icons in use</li>
+<li>Notes for the redesign</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2>1. Window structure</h2>
+<p>One main window, default 1280 × 820, minimum 960 × 620, centred on screen. No secondary windows except standard Windows message boxes and file pickers.</p>
+<div class="skeleton">+------------------------------------------------------------------------------+
+| HEADER 56px  [icon] Linkast      [BRB] [MIC MUTED] [LIVE 00:12] [LOCAL ONLY] |
++------+-----------------------------------------------------------------------+
+| NAV  | PAGE (one at a time) - Stream page shown                              |
+| RAIL |                                                                       |
+| 72px | +------ main column (min 460px) -------+  +--- status (300px) ---+    |
+|      | | Output preview card                  |  | Stream status        |    |
+|Stream| |   scene strip + preview canvas       |  | [warning / error]    |    |
+|Webcam| | [capture warning]                    |  | Stream health        |    |
+|Setti.| | Tabs: Source  Audio  Scenes          |  | Activity (log)       |    |
+|About | |       Destination  Network  Quality  |  | version / update     |    |
+|      | |       Overlays                       |  |                      |    |
+|      | | (cards of the selected tab)          |  |                      |    |
+|      | +--------------------------------------+  +----------------------+    |
++------+-----------------------------------------------------------------------+</div>
+<p>Pages scroll vertically; nothing scrolls horizontally except the audio mixer strip. Webcam Studio and Settings are capped at 1100 px wide, About at 860 px.</p>
+
+<!-- ============================================================ -->
+<h2>2. Logo and brand assets</h2>
+<p><b>The mark:</b> an "L" whose stem is shared with a "k" (arm and leg), filled with one continuous gradient cyan → blue → violet. The <b>app icon</b> places the mark on a deep-navy rounded square. The vector source of truth is <code>src/Linkast.App/Themes/Brand.xaml</code>; a script renders the .ico and PNGs from it.</p>
+<div class="logos">
+  <figure><img src="../../src/Linkast.App/Assets/linkast-256.png" alt="App icon"><span>App icon (header, 32 px, rounded clip)</span></figure>
+  <figure><img src="../../src/Linkast.App/Assets/linkast-logo.png" alt="Logo"><span>Logo (About page, 96 px)</span></figure>
+  <figure><img src="../assets/linkast-mark.png" alt="Mark"><span>Mark only</span></figure>
+  <figure class="dark"><img src="../assets/linkast-logo-dark.png" alt="Logo for dark"><span style="color:#B5BCD9">Logo for dark bg (docs)</span></figure>
+  <figure><img src="../assets/linkast-logo-light.png" alt="Logo for light"><span>Logo for light bg (docs)</span></figure>
+</div>
+<table>
+<tr><th>Asset</th><th>Where it is used</th></tr>
+<tr><td>linkast.ico</td><td>Window/taskbar icon, installer</td></tr>
+<tr><td>linkast-256.png</td><td>Header, top-left, 32 × 32 with 7 px rounded corners</td></tr>
+<tr><td>linkast-logo.png</td><td>About page, 96 × 96</td></tr>
+<tr><td>linkast-1024.png, linkast-transparent.png, linkast-logo-without-text.png</td><td>Store/README/marketing sizes; not shown in the app UI</td></tr>
+<tr><td>docs/assets/linkast-logo-dark/light.png, linkast-mark.png</td><td>README and documentation</td></tr>
+<tr><td>"Linkast Camera" placeholder.png</td><td>Picture the virtual camera shows to other apps when nothing is ready</td></tr>
+</table>
+<p><b>Wordmark in the header:</b> "Linkast" (Display font, 17 px bold) with the tagline <b>STREAM · CONNECT · CREATE</b> (9.5 px, tertiary text).</p>
+
+<!-- ============================================================ -->
+<h2 class="pb">3. Design tokens</h2>
+<p>All colours are tokens with a dark and a light value (<code>Themes/Tokens.Dark.xaml</code>, <code>Tokens.Light.xaml</code>). Soft variants are the same colour at about 12–16 % opacity, used for tinted backgrounds.</p>
+
+<h4>Brand (same in both themes)</h4>
+<div class="swatches">
+<div class="sw"><b style="background:#18D2FF"></b><span>BrandCyan #18D2FF</span></div>
+<div class="sw"><b style="background:#2F6BFF"></b><span>BrandBlue #2F6BFF</span></div>
+<div class="sw"><b style="background:#A24CFF"></b><span>BrandViolet #A24CFF</span></div>
+<div class="sw"><b style="background:linear-gradient(#1D1B48,#090A1C)"></b><span>Navy #1D1B48 → #090A1C</span></div>
+</div>
+<p>Gradients: <b>GoLiveGradient</b> (cyan → blue → violet, used only on the Go live button), <b>NavMarkerGradient</b> (the 3 px bar beside the selected nav item).</p>
+
+<h4>Theme colours</h4>
+<table>
+<tr><th>Token</th><th>Dark</th><th>Light</th><th>Used for</th></tr>
+<tr><td>AppBg</td><td><span class="mono">#0B0D1B</span></td><td><span class="mono">#F4F6FC</span></td><td>Window background</td></tr>
+<tr><td>Surface1</td><td><span class="mono">#11142A</span></td><td><span class="mono">#FFFFFF</span></td><td>Header, nav rail, cards</td></tr>
+<tr><td>Surface2</td><td><span class="mono">#171B35</span></td><td><span class="mono">#F8F9FF</span></td><td>Panels inside cards, scene tiles, mixer channels, overlay cards</td></tr>
+<tr><td>Surface3</td><td><span class="mono">#202646</span></td><td><span class="mono">#EEF1FF</span></td><td>Selected nav item, thumbnails, badges</td></tr>
+<tr><td>SurfaceHover</td><td><span class="mono">#252B4B</span></td><td><span class="mono">#E8EDFF</span></td><td>Hover</td></tr>
+<tr><td>BorderSubtle / BorderStrong</td><td><span class="mono">#2A3154 / #3B4771</span></td><td><span class="mono">#DCE2F3 / #BBC7E8</span></td><td>Card borders / hover, preview frame</td></tr>
+<tr><td>TextPrimary / Secondary / Tertiary</td><td><span class="mono">#F4F6FF / #B5BCD9 / #8993B8</span></td><td><span class="mono">#151936 / #414B70 / #626D91</span></td><td>Text hierarchy</td></tr>
+<tr><td>Accent (+Hover, Pressed, Soft)</td><td><span class="mono">#6B8EFF</span></td><td><span class="mono">#2858D8</span></td><td>Primary buttons, selection, checked toggles</td></tr>
+<tr><td>OnAccent</td><td><span class="mono">#0B0D1B</span></td><td><span class="mono">#FFFFFF</span></td><td>Text on accent</td></tr>
+<tr><td>Focus</td><td><span class="mono">#18D2FF</span></td><td><span class="mono">#087EAA</span></td><td>Keyboard focus ring, selected colour swatch</td></tr>
+<tr><td>Live</td><td><span class="mono">#FF5964</span></td><td><span class="mono">#C62838</span></td><td>LIVE pill, End stream, ON AIR, delete actions, camera-active dot</td></tr>
+<tr><td>Warning</td><td><span class="mono">#FFC15A</span></td><td><span class="mono">#805000</span></td><td>Connecting/reconnecting, notes, BRB pill</td></tr>
+<tr><td>Success</td><td><span class="mono">#48D597</span></td><td><span class="mono">#087548</span></td><td>Audio meters, CAMERA ACTIVE, test OK</td></tr>
+<tr><td>Error</td><td><span class="mono">#FF765E</span></td><td><span class="mono">#B9381B</span></td><td>Error banner, MIC MUTED pill, record dot</td></tr>
+<tr><td>Idle</td><td><span class="mono">#9299B3</span></td><td><span class="mono">#626A83</span></td><td>OFFLINE pill</td></tr>
+</table>
+<p class="meta">Hard-coded colours outside the tokens: preview canvas background #05060E, camera-preview placeholder #07080F with text #8993B8 / #B5BCD9, the theme thumbnails in Settings, and "ON AIR" white text.</p>
+
+<h4>Typography</h4>
+<table>
+<tr><th>Role</th><th>Font</th><th>Size</th></tr>
+<tr><td>Body</td><td>Segoe UI Variable Text</td><td>13 (labels 12, captions 11)</td></tr>
+<tr><td>Card title</td><td>Body font, SemiBold</td><td>14</td></tr>
+<tr><td>Page title</td><td>Segoe UI Variable Display</td><td>22</td></tr>
+<tr><td>Status title ("Ready to stream")</td><td>Display</td><td>18</td></tr>
+<tr><td>Go live / End stream label</td><td>Display, Bold</td><td>19</td></tr>
+<tr><td>Timer</td><td>Tabular numerals</td><td>20</td></tr>
+<tr><td>Metric value</td><td>—</td><td>18</td></tr>
+<tr><td>About "Linkast"</td><td>Display, Bold</td><td>26</td></tr>
+<tr><td>Code / server URL / log / diagnostics</td><td>Cascadia Mono, Consolas</td><td>11</td></tr>
+<tr><td>Icons</td><td>Segoe Fluent Icons (MDL2 fallback)</td><td>16 (nav 20)</td></tr>
+</table>
+
+<h4>Spacing, radii, motion</h4>
+<table>
+<tr><td>Spacing scale</td><td>4 · 8 · 12 · 16 · 20 · 24 · 32. Page padding 22/18/22/22, card padding 16×14, control padding 12×7, gap between stacked cards 12.</td></tr>
+<tr><td>Corner radii</td><td>Small 6 · Control 8 · Tile 9 · Action (buttons) 10 · Card 12 · Preview 14 · Pill 999</td></tr>
+<tr><td>Control height</td><td>Text inputs min 34 px; Go live / End stream 48 px; nav items 56 px</td></tr>
+<tr><td>Motion</td><td>Hover 100 ms · Press 80 ms · Panel 180 ms · State change 220 ms</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 class="pb">4. Component library</h2>
+<p>Named styles in <code>Themes/Styles.xaml</code>. A redesign can restyle these in one place.</p>
+<table>
+<tr><th>Component</th><th class="t">Type</th><th>Look and logic</th></tr>
+<tr><td>Button · Primary</td><td class="t">Button</td><td>Accent fill. Main action of a card (Test connection, Find the best settings, Add picture, Update now).</td></tr>
+<tr><td>Button · Secondary</td><td class="t">Button</td><td>Neutral outlined. Ordinary actions.</td></tr>
+<tr><td>Button · Subtle</td><td class="t">Button</td><td>Transparent, secondary text. Low-priority actions in card headers (Refresh, Edit layout).</td></tr>
+<tr><td>Button · Icon</td><td class="t">Button</td><td>32 × 32 glyph-only, always with a tooltip (refresh cameras, remove overlay, clear hotkey).</td></tr>
+<tr><td>Button · GoLive</td><td class="t">Button</td><td>The only brand-gradient button. Full width, 48 px, 19 px bold white text.</td></tr>
+<tr><td>Button · Destructive</td><td class="t">Button</td><td>Solid red. End stream only.</td></tr>
+<tr><td>Button · DestructiveOutline</td><td class="t">Button</td><td>Red outline. Remove camera, Delete preset, Remove Linkast Camera.</td></tr>
+<tr><td>ToggleButton · Secondary</td><td class="t">Toggle</td><td>When on: accent-tinted background and border (Mute, Be right back, Show key).</td></tr>
+<tr><td>ToggleButton · Subtle</td><td class="t">Toggle</td><td>Transparent toggle (Show log).</td></tr>
+<tr><td>Nav item</td><td class="t">Radio button</td><td>Icon above label, 56 px. Selected: Surface3 background and a gradient bar on the left.</td></tr>
+<tr><td>Segmented</td><td class="t">List (single select)</td><td>A row of joined options. Used both as <b>tabs</b> (Stream tabs, Studio tabs, Inspector tabs) and as <b>value pickers</b> (platform, shape, background mode).</td></tr>
+<tr><td>Choice</td><td class="t">List (single select)</td><td>Larger selectable cards (network list, theme thumbnails, camera picker).</td></tr>
+<tr><td>Card</td><td class="t">Container</td><td>Surface1, 1 px subtle border, radius 12. Every section is a card.</td></tr>
+<tr><td>Card · Feature</td><td class="t">Container</td><td>Card with accent border. Used once: Network card.</td></tr>
+<tr><td>Issue · Warning / Error</td><td class="t">Banner</td><td>Tinted banner with icon (capture may be black, stream warnings, last error).</td></tr>
+<tr><td>Status pill (Idle/Live/Warning/Error/Success/Brand)</td><td class="t">Badge</td><td>Rounded label, uppercase: OFFLINE, ● LIVE, CONNECTING, ERROR, LOCAL ONLY, GPL-3.0-or-later…</td></tr>
+<tr><td>Metric tile</td><td class="t">Container</td><td>Label, large value, small caption (Stream health numbers).</td></tr>
+<tr><td>Value slider</td><td class="t">Custom</td><td>Label + slider + current value with unit (e.g. "1.50×", "40%"). If a default exists, a small reset button appears.</td></tr>
+<tr><td>Colour swatches</td><td class="t">List</td><td>Row of 26 px round chips; the selected one gets a focus-coloured ring.</td></tr>
+<tr><td>Expander</td><td class="t">Disclosure</td><td>Hides advanced options (Advanced capture, Advanced encoding, Manage presets, Technical details…).</td></tr>
+<tr><td>Field label / Hint / Body text</td><td class="t">Text</td><td>Label above inputs; Hint = small secondary helper text (used a lot, often long).</td></tr>
+<tr><td>Focus visual</td><td class="t">—</td><td>Keyboard focus ring in the Focus colour on every control.</td></tr>
+<tr><td>Standard controls</td><td class="t">—</td><td>Combo box (dropdown), text box, password box, check box, slider, progress bar, context menu, scroll bars: themed Windows 11 (Fluent) controls.</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2>5. Header bar (always visible)</h2>
+<table>
+<tr><th>Element</th><th class="t">Type</th><th>Logic</th></tr>
+<tr><td>App icon + "Linkast" + tagline</td><td class="t">Logo, text</td><td>Static branding, left.</td></tr>
+<tr><td>BE RIGHT BACK</td><td class="t">Pill (warning)</td><td>Shown only while the Be right back scene is on.</td></tr>
+<tr><td>MIC MUTED</td><td class="t">Pill (error)</td><td>Shown only while the microphone is muted in the stream.</td></tr>
+<tr><td>Stream state + elapsed time</td><td class="t">Pill + timer</td><td>Shown only while streaming/recording; same pill as the status card, so state is visible on every page.</td></tr>
+<tr><td>LOCAL ONLY</td><td class="t">Pill (neutral)</td><td>Always shown. Tooltip: "No account, no cloud, no telemetry".</td></tr>
+</table>
+
+<h2>6. Navigation rail (left, 72 px)</h2>
+<table>
+<tr><th>Item</th><th class="t">Type</th><th>Logic</th></tr>
+<tr><td>Stream (Alt+S)</td><td class="t">Nav radio</td><td>Default page. Preview, scenes, all stream settings, go live.</td></tr>
+<tr><td>Webcam (Alt+W)</td><td class="t">Nav radio</td><td>Webcam Studio: cameras, effects, layout, virtual camera.</td></tr>
+<tr><td>Settings (Alt+T)</td><td class="t">Nav radio</td><td>Appearance, updates, hotkeys, OBS import, diagnostics.</td></tr>
+<tr><td>About (Alt+B)</td><td class="t">Nav radio</td><td>Version, licence, open-source notices.</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 class="pb">7. Stream page — main column</h2>
+<p>Page title "Stream", subtitle "Preview your output, choose your network, then go live."</p>
+
+<h3>7.1 Output preview card</h3>
+<table>
+<tr><th>Element</th><th class="t">Type</th><th>Logic</th></tr>
+<tr><td>"Output preview" title + resolution pill</td><td class="t">Text, pill</td><td>Pill shows the canvas, e.g. "1920×1080".</td></tr>
+<tr><td>Edit layout</td><td class="t">Subtle button</td><td>Jumps to Webcam Studio → Layout.</td></tr>
+<tr><td><b>Scene strip</b></td><td class="t">Tile list (wrap)</td><td>One 112 × 64 tile per scene: icon, name, number badge (1–9 = hotkey). Click = switch scene (instant while live). Active scene: accent border and soft-accent fill. While live, active tile turns red with an <b>ON AIR</b> badge.</td></tr>
+<tr><td>Scene tile right-click menu</td><td class="t">Context menu</td><td>Duplicate · Move earlier · Move later · Delete. Right-click does not switch scene (that would go on air).</td></tr>
+<tr><td>+ (Add scene)</td><td class="t">Icon button → menu</td><td>Menu of templates: Gaming: game with camera · Just chatting: large camera · Starting soon · Be right back · Ending: thanks for watching · Empty scene. Disabled at the scene limit.</td></tr>
+<tr><td><b>Preview canvas</b> (scene editor)</td><td class="t">Interactive canvas</td><td>Shows exactly what viewers see, max 340 px tall. Drag an overlay, camera or the game picture to move; drag a corner to resize (keeps shape); drag an edge to resize one side; <b>Alt</b> + drag an edge to trim (crop). Only the hovered/selected item shows outline and handles; the selected item is tinted and labelled with name and size. While the Overlays tab is open every overlay shows its outline and name. The game snapshot refreshes every 2 s. Items with no picture (camera off, page loading, missing file) show as a named box.</td></tr>
+<tr><td>Hint under preview</td><td class="t">Hint text</td><td>Explains drag / resize / Alt-trim.</td></tr>
+</table>
+
+<h3>7.2 Capture warning banner (conditional)</h3>
+<table>
+<tr><td>"The game may capture as black"</td><td class="t">Warning banner</td><td>Shown when the chosen game is likely to capture black (fullscreen exclusive etc.). Text explains why.</td></tr>
+<tr><td>Capture this display instead…</td><td class="t">Secondary button</td><td>Switches to full-display capture after a confirmation dialog (privacy warning). Works while live.</td></tr>
+</table>
+
+<h3>7.3 Stream settings tabs</h3>
+<p>A segmented control with 7 tabs: <b>Source · Audio · Scenes · Destination · Network · Quality · Overlays</b>. One tab's cards are shown at a time.</p>
+
+<h4>Tab: Source — card "Capture for &lt;scene name&gt;"</h4>
+<table>
+<tr><th>Element</th><th class="t">Type</th><th>Logic</th></tr>
+<tr><td>Refresh</td><td class="t">Subtle button</td><td>Reloads displays, windows and audio devices.</td></tr>
+<tr><td>Video source</td><td class="t">Dropdown</td><td>Entire display · Single window or game · No game (cameras and overlays only) · Test pattern. Per scene. <span class="tag live">WORKS LIVE</span> (short pause).</td></tr>
+<tr><td>Display</td><td class="t">Dropdown</td><td>Shown when source = display. Pick monitor.</td></tr>
+<tr><td>Window</td><td class="t">Dropdown</td><td>Shown when source = window. Pick game/window.</td></tr>
+<tr><td>Scene capture note</td><td class="t">Warning text</td><td>Conditional, e.g. the window is gone.</td></tr>
+<tr><td>Display privacy hint</td><td class="t">Hint</td><td>"Everything on this display is captured…" (display only).</td></tr>
+<tr><td>Advanced capture</td><td class="t">Expander</td><td>☐ Use Desktop Duplication instead of Windows Graphics Capture (displays only) · ☐ Capture the mouse cursor.</td></tr>
+</table>
+
+<h4>Tab: Audio — card "Audio"</h4>
+<table>
+<tr><th>Element</th><th class="t">Type</th><th>Logic</th></tr>
+<tr><td>System audio (what you hear)</td><td class="t">Checkbox + dropdown</td><td>On/off and output device to capture. <span class="tag lock">LOCKED LIVE</span></td></tr>
+<tr><td>Microphone</td><td class="t">Checkbox + dropdown</td><td>On/off and input device. <span class="tag lock">LOCKED LIVE</span></td></tr>
+<tr><td>Mute / Muted</td><td class="t">Toggle button</td><td>Mutes the mic in the stream. <span class="tag live">WORKS LIVE</span> Same toggle exists in the status card.</td></tr>
+<tr><td>Remove background noise (fans, hum)</td><td class="t">Checkbox</td><td>Noise suppression on the mic. <span class="tag live">WORKS LIVE</span></td></tr>
+<tr><td>Game sound on its own fader</td><td class="t">Checkbox</td><td>Captured window's app gets its own fader (its sound is also in desktop audio).</td></tr>
+<tr><td>"Mixer · &lt;scene&gt;" label</td><td class="t">Text</td><td>The mixer always shows the active scene.</td></tr>
+<tr><td><b>Mixer channel</b> (repeated, horizontal scroll)</td><td class="t">Channel strip</td><td>One per sound (desktop, mic, game, each alert overlay, background video). Contains: icon + name; vertical <b>level meter</b> (green); vertical <b>volume fader</b> 0–200 % (100 % = unchanged); value text (% and dB); 3 small buttons: <b>Mute</b> (all scenes), <b>Silent in this scene</b>, <b>Reset to 100 %</b>; optional <b>Test sound</b> button (alerts only — plays a chime; viewers hear it if live) and its result text; "Silent in this scene" warning; optional note. <span class="tag live">WORKS LIVE</span></td></tr>
+<tr><td>Empty state</td><td class="t">Text</td><td>"Turn on Desktop audio or the microphone to hear them in your stream."</td></tr>
+</table>
+
+<h4>Tab: Scenes — card "This scene"</h4>
+<table>
+<tr><th>Element</th><th class="t">Type</th><th>Logic</th></tr>
+<tr><td>← / → (move earlier/later)</td><td class="t">Icon buttons</td><td>Reorder the active scene in the strip.</td></tr>
+<tr><td>Duplicate · Delete</td><td class="t">Subtle buttons</td><td>Copy / delete the active scene (Delete in red; disabled for the last scene).</td></tr>
+<tr><td>Name</td><td class="t">Text input</td><td>Scene name, max 40 chars.</td></tr>
+<tr><td>Show the game or screen</td><td class="t">Checkbox</td><td>Hide capture for chatting/starting/ending scenes (keeps running, so switching back is instant).</td></tr>
+<tr><td>Background</td><td class="t">Segmented</td><td>None · Linkast card · Picture · Video (loops).</td></tr>
+<tr><td>Title / Message</td><td class="t">Text inputs</td><td>Only for "Linkast card": text drawn on the card (60 / 100 chars).</td></tr>
+<tr><td>File name + Change…</td><td class="t">Text + subtle button</td><td>Only for Picture/Video: shows file, opens file picker.</td></tr>
+<tr><td>Silent in this scene</td><td class="t">Checkbox list</td><td>One checkbox per mixer sound (same as the mixer's middle button).</td></tr>
+<tr><td>Overlays in this scene</td><td class="t">Checkbox list</td><td>One checkbox per overlay: shown in this scene or not.</td></tr>
+</table>
+<p><b>Card "Going live and ending"</b></p>
+<table>
+<tr><td>Go live starts on</td><td class="t">Dropdown</td><td>Scene to start every stream on (e.g. Starting soon).</td></tr>
+<tr><td>End stream first shows</td><td class="t">Dropdown</td><td>Scene shown before ending (e.g. Ending).</td></tr>
+<tr><td>For (seconds)</td><td class="t">Number input</td><td>3–120 s; then the stream ends by itself.</td></tr>
+<tr><td>Hotkeys hint</td><td class="t">Hint</td><td>Lists Ctrl+Alt+1–9, Ctrl+Alt+←/→, Ctrl+Alt+B.</td></tr>
+</table>
+
+<h4>Tab: Destination — card "Where to stream" <span class="tag lock">LOCKED LIVE</span></h4>
+<table>
+<tr><th>Element</th><th class="t">Type</th><th>Logic</th></tr>
+<tr><td>"Key is masked and never logged"</td><td class="t">Icon + hint</td><td>Reassurance, header right.</td></tr>
+<tr><td>Platform</td><td class="t">Segmented</td><td>Twitch · YouTube · Kick · Facebook · Custom.</td></tr>
+<tr><td>Server: &lt;url&gt;</td><td class="t">Read-only text</td><td>Preset platforms: server filled in automatically.</td></tr>
+<tr><td>Where do I find my key?</td><td class="t">Subtle link button</td><td>Opens the platform's stream-key page in the browser.</td></tr>
+<tr><td>Delivery type (Custom only)</td><td class="t">Segmented</td><td>Direct to a platform · Through a restream service; explanation text below.</td></tr>
+<tr><td>Server URL (Custom only)</td><td class="t">Text input</td><td>rtmp:// or rtmps:// address, with example hint.</td></tr>
+<tr><td>Stream key</td><td class="t">Password input</td><td>Masked. Saved encrypted for the Windows account. Clear to forget.</td></tr>
+<tr><td>Show / Hide</td><td class="t">Toggle button</td><td>Reveals the key as plain text.</td></tr>
+</table>
+
+<h4>Tab: Network — card "Network for your stream" (feature card) <span class="tag lock">LOCKED LIVE</span></h4>
+<table>
+<tr><th>Element</th><th class="t">Type</th><th>Logic</th></tr>
+<tr><td>Refresh</td><td class="t">Subtle button</td><td>Looks for network adapters again.</td></tr>
+<tr><td>Explanation hint</td><td class="t">Hint</td><td>Only Linkast's stream uses the chosen network; Windows settings never change.</td></tr>
+<tr><td>Network list</td><td class="t">Choice list</td><td>One card per option: icon in a 34 px square (Wi-Fi, mobile, USB tethering, VPN, Ethernet), name, details. Includes an automatic/default option.</td></tr>
+<tr><td>Test connection</td><td class="t">Primary button</td><td>Connects to the server via the chosen network (no video sent) and shows which network really was used.</td></tr>
+<tr><td>Test result</td><td class="t">Status text</td><td>Green when OK, red when failed.</td></tr>
+</table>
+
+<h4>Tab: Quality — card "Quality" <span class="tag lock">LOCKED LIVE</span></h4>
+<table>
+<tr><th>Element</th><th class="t">Type</th><th>Logic</th></tr>
+<tr><td>"Not sure what to pick?" panel</td><td class="t">Inset panel</td><td>Auto setup.</td></tr>
+<tr><td>Find the best settings</td><td class="t">Primary button</td><td>Tests encoders and upload (~30 s), then suggests resolution, frame rate, bitrate.</td></tr>
+<tr><td>Your upload speed (Mbps) + Measure it in your browser</td><td class="t">Input + link button</td><td>Only for platforms where upload can't be measured automatically (not Twitch). Link opens speed.cloudflare.com.</td></tr>
+<tr><td>Progress / status text</td><td class="t">Text</td><td>Auto setup progress.</td></tr>
+<tr><td>Suggested … + Apply</td><td class="t">Text + primary button</td><td>Shows recommendation; Apply fills the fields.</td></tr>
+<tr><td>Encoder · Resolution · Frame rate</td><td class="t">Dropdowns</td><td>Hardware encoder (NVENC, etc.) or x264; output size; FPS.</td></tr>
+<tr><td>Bitrate (kbps)</td><td class="t">Number input</td><td>Video bitrate; hints about Twitch's 6000 limit and upload ×1.5 rule.</td></tr>
+<tr><td>Also record when I go live</td><td class="t">Checkbox</td><td>Saves every stream to a file too.</td></tr>
+<tr><td>Recordings folder + Change… + Open</td><td class="t">Read-only input + buttons</td><td>Where recordings go; folder picker; open in Explorer.</td></tr>
+<tr><td>Make an MP4 copy when a recording ends</td><td class="t">Checkbox</td><td>Recordings are MKV (crash-safe); this adds an MP4 copy.</td></tr>
+<tr><td>Advanced encoding</td><td class="t">Expander</td><td>Keyframe interval (s) · Audio bitrate (kbps) · Encoder preset (text).</td></tr>
+</table>
+
+<h4>Tab: Overlays — card "Overlays in &lt;scene name&gt;" <span class="tag live">WORKS LIVE</span></h4>
+<table>
+<tr><th>Element</th><th class="t">Type</th><th>Logic</th></tr>
+<tr><td>Add picture</td><td class="t">Primary button</td><td>File picker; adds a logo/picture to the active scene (max 8 overlays in total).</td></tr>
+<tr><td>Add alerts or web page</td><td class="t">Primary button</td><td>Adds a web overlay (alert box link from Streamlabs, StreamElements, Reymit…).</td></tr>
+<tr><td>From another scene + Add to this scene</td><td class="t">Dropdown + button</td><td>Reuse an overlay from another scene, with that scene's position/size/trim.</td></tr>
+<tr><td>Empty state</td><td class="t">Inset text</td><td>"This scene has no overlays yet…"</td></tr>
+<tr><td><b>Overlay card</b> (repeated)</td><td class="t">Selectable card</td><td>Click anywhere = select it in the preview (card gets accent border). Contains:</td></tr>
+<tr><td>· Thumbnail</td><td class="t">Image 96×54</td><td>Picture preview, or "Missing file" in warning colour.</td></tr>
+<tr><td>· Name</td><td class="t">Text input</td><td>Editable, 40 chars.</td></tr>
+<tr><td>· Change picture</td><td class="t">Subtle button</td><td>Pictures only.</td></tr>
+<tr><td>· Show in preview</td><td class="t">Icon button (pin)</td><td>Flashes the overlay in the preview.</td></tr>
+<tr><td>· Remove</td><td class="t">Icon button (red)</td><td>Removes from this scene (deleted when no scene has it).</td></tr>
+<tr><td>· Link (web, first time)</td><td class="t">Text input + Save link</td><td>Enter https:// link once.</td></tr>
+<tr><td>· "Link saved and hidden" + Change link + Reload</td><td class="t">Status + subtle buttons</td><td>After saving, the link is hidden because it contains an account token and the window may be on stream. Reload re-fetches the page.</td></tr>
+<tr><td>· Problem</td><td class="t">Warning text</td><td>e.g. page failed to load.</td></tr>
+<tr><td>· Position</td><td class="t">Dropdown</td><td>Full screen · Top left/center/right · Middle left · Center · Middle right · Bottom left/center/right · Custom (dragged in the preview).</td></tr>
+<tr><td>· Size</td><td class="t">Value slider</td><td>5–100 % of stream width.</td></tr>
+<tr><td>· Page width / Page height</td><td class="t">Number inputs</td><td>Web only, 100–3840 (like OBS browser source). <span class="tag lock">LOCKED LIVE</span></td></tr>
+<tr><td>· "On stream: …"</td><td class="t">Hint</td><td>Final position and size in pixels.</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 class="pb">8. Stream page — right status column (300 px)</h2>
+<h4>Card "Stream status"</h4>
+<table>
+<tr><th>Element</th><th class="t">Type</th><th>Logic</th></tr>
+<tr><td>State pill</td><td class="t">Pill</td><td>OFFLINE / PREPARING / CONNECTING / ● LIVE / RECONNECTING / STOPPING / ERROR (see section 13).</td></tr>
+<tr><td>Status title</td><td class="t">Large text</td><td>"Ready to stream", "Not ready yet", "Streaming normally", "Reconnecting…"…</td></tr>
+<tr><td>Elapsed time</td><td class="t">Timer</td><td>Running time.</td></tr>
+<tr><td><b>Go live</b></td><td class="t">GoLive button</td><td>Starts streaming (Ctrl+Enter). Visible only when not live. Same slot as End stream.</td></tr>
+<tr><td><b>End stream</b></td><td class="t">Destructive button</td><td>Visible only while live. If an end scene is set, it shows that first with a countdown ("The stream ends in N s. Press End stream again to end now.").</td></tr>
+<tr><td>Record / Stop recording</td><td class="t">Secondary button</td><td>Record to file without going live (red dot icon). Hidden while live.</td></tr>
+<tr><td>Readiness text</td><td class="t">Hint</td><td>"Checking FFmpeg and encoders…", "Ready", or the problem.</td></tr>
+<tr><td>Last recording</td><td class="t">Hint</td><td>Where the last recording was saved.</td></tr>
+<tr><td>Mute / Muted</td><td class="t">Toggle button</td><td>Quick mic mute. <span class="tag live">WORKS LIVE</span></td></tr>
+<tr><td>Be right back</td><td class="t">Toggle button</td><td>Switches to the BRB scene and back to where you were. <span class="tag live">WORKS LIVE</span></td></tr>
+</table>
+<h4>Banners (conditional)</h4>
+<table>
+<tr><td>Warning banner</td><td class="t">Warning</td><td>Non-fatal stream warnings.</td></tr>
+<tr><td>Error banner</td><td class="t">Error</td><td>Category title (Capture / Audio / Encoding / Network / Settings / FFmpeg problem), message, <b>Test connection</b> button (network errors only), <b>Technical details</b> expander with copyable text.</td></tr>
+</table>
+<h4>Card "Stream health" — "Measured on the real connection"</h4>
+<table>
+<tr><td>Before live</td><td class="t">Summary rows</td><td>"Live numbers appear here when you go live." Output (e.g. 1080p · 60 FPS · 6000 kbps), Encoder, Network.</td></tr>
+<tr><td>While live</td><td class="t">6 metric tiles (2×3)</td><td>Frame rate (encoded / target) · Upload (measured on socket) · Encoder speed (1× = real time) · Dropped / dup. frames · Reconnects (this stream) · Network used (verified on socket).</td></tr>
+</table>
+<h4>Card "Activity"</h4>
+<table>
+<tr><td>Show log / Hide log</td><td class="t">Subtle toggle</td><td>Expands the log list (chevron flips).</td></tr>
+<tr><td>Activity log</td><td class="t">List (mono)</td><td>Timestamped events, max 260 px tall.</td></tr>
+<tr><td>Copy report</td><td class="t">Secondary button</td><td>Copies diagnostics to clipboard (never the stream key).</td></tr>
+<tr><td>Open logs</td><td class="t">Secondary button</td><td>Opens the log folder.</td></tr>
+</table>
+<h4>Footer</h4>
+<table>
+<tr><td>Version + update status</td><td class="t">Subtle button</td><td>e.g. "0.5.0-beta.6 · Up to date"; update text turns accent + bold when a new version exists. Click → Settings.</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 class="pb">9. Webcam Studio page</h2>
+<p>Title "Webcam Studio", subtitle "Shape your cameras, add effects and place them on your stream." Top segmented tabs with icons: <b>Camera &amp; effects · Layout · Linkast Camera</b>.</p>
+
+<h4>Cameras bar (shown on Camera &amp; effects and Layout)</h4>
+<table>
+<tr><th>Element</th><th class="t">Type</th><th>Logic</th></tr>
+<tr><td>Camera picker</td><td class="t">Choice list (chips)</td><td>One chip per camera layer (up to 4). Red dot = camera running; "· hidden in this layout" when not shown in the current scene.</td></tr>
+<tr><td>Add camera</td><td class="t">Subtle button</td><td>Adds a camera layer.</td></tr>
+<tr><td>Remove</td><td class="t">Destructive outline</td><td>Removes the selected layer.</td></tr>
+<tr><td>Notice</td><td class="t">Warning text</td><td>e.g. limit reached.</td></tr>
+</table>
+
+<h3>9.1 Tab: Camera &amp; effects</h3>
+<p>Two columns: camera card (left, flexible) and inspector (right, 360 px). Shows the selected camera only.</p>
+<h4>Camera card</h4>
+<table>
+<tr><td>Camera name</td><td class="t">Card title</td><td>Layer name.</td></tr>
+<tr><td>● CAMERA ACTIVE</td><td class="t">Pill (success)</td><td>While the camera is running.</td></tr>
+<tr><td>Camera on</td><td class="t">Checkbox</td><td>Off releases the camera and hides it from the stream.</td></tr>
+<tr><td>Device · Resolution</td><td class="t">Dropdowns</td><td>Which camera, which format.</td></tr>
+<tr><td>Refresh</td><td class="t">Icon button</td><td>Look for cameras again.</td></tr>
+<tr><td>Camera preview</td><td class="t">Image (min 220 px)</td><td>Live picture with effects. Placeholder: camera icon + status; if none found, suggests phone apps (Iriun, DroidCam).</td></tr>
+<tr><td>Diagnostics text</td><td class="t">Hint</td><td>FPS / processing info.</td></tr>
+<tr><td>Camera error</td><td class="t">Warning banner</td><td>Conditional.</td></tr>
+</table>
+<h4>Inspector — segmented tabs: Look · Background · Framing · Effects</h4>
+<table>
+<tr><th>Element</th><th class="t">Type</th><th>Logic</th></tr>
+<tr><td colspan="3" style="background:#F8F9FF"><b>Look</b></td></tr>
+<tr><td>Preset + Reset</td><td class="t">Dropdown + button</td><td>Built-ins: Gaming, Just Chatting, Professional, Low Light, Minimal (+ user presets). Shows "Custom look" when edited by hand. Reset = back to the preset.</td></tr>
+<tr><td>Manage presets</td><td class="t">Expander</td><td>Preset name input; Save as new · Update preset · Duplicate · Rename; Delete preset (red). Built-ins are locked.</td></tr>
+<tr><td>Shape</td><td class="t">Segmented</td><td>Rectangle · Rounded · Circle.</td></tr>
+<tr><td>Aspect ratio</td><td class="t">Dropdown</td><td>16:9 wide · 4:3 classic · 1:1 square · 9:16 portrait (disabled for circle).</td></tr>
+<tr><td>Zoom · Corner radius · Border</td><td class="t">Value sliders</td><td>1–4× · 0–50 % (rounded only) · 0–10 %.</td></tr>
+<tr><td>Border colour</td><td class="t">Swatches</td><td>Colour chips.</td></tr>
+<tr><td>Mirror</td><td class="t">Checkbox</td><td>Flip horizontally.</td></tr>
+<tr><td>IMAGE: Brightness · Contrast · Saturation + Reset image</td><td class="t">Value sliders</td><td>Picture adjustments.</td></tr>
+<tr><td>Advanced image and camera settings</td><td class="t">Expander</td><td>Sharpen · Noise reduction · Low-light boost · Crop left/right · Crop up/down; CAMERA HARDWARE: a slider + "Auto" checkbox per hardware control the camera supports (exposure, focus, white balance…).</td></tr>
+<tr><td colspan="3" style="background:#F8F9FF"><b>Background</b></td></tr>
+<tr><td>Mode</td><td class="t">Segmented</td><td>Original · Blur · Remove · Image.</td></tr>
+<tr><td>Blur strength</td><td class="t">Value slider</td><td>Blur only.</td></tr>
+<tr><td>Background image + Choose image…</td><td class="t">Text + button</td><td>Image mode only.</td></tr>
+<tr><td>Edge softness</td><td class="t">Value slider</td><td>Any effect.</td></tr>
+<tr><td>PERFORMANCE: Quality</td><td class="t">Dropdown</td><td>Performance (fastest) · Balanced (recommended) · Quality (sharpest edges).</td></tr>
+<tr><td>Use the graphics card (recommended)</td><td class="t">Checkbox</td><td>GPU vs CPU.</td></tr>
+<tr><td>Status</td><td class="t">Status text</td><td>Red if there's a problem.</td></tr>
+<tr><td colspan="3" style="background:#F8F9FF"><b>Framing</b></td></tr>
+<tr><td>Keep my face in frame</td><td class="t">Checkbox</td><td>Auto-framing on/off.</td></tr>
+<tr><td>Face size · Headroom · Maximum zoom · Speed</td><td class="t">Value sliders</td><td>Shown when on.</td></tr>
+<tr><td>Status</td><td class="t">Status text</td><td>Face found / problem.</td></tr>
+<tr><td colspan="3" style="background:#F8F9FF"><b>Effects</b></td></tr>
+<tr><td>Border animation + Speed</td><td class="t">Dropdown + slider</td><td>None · Pulse · Colour cycle.</td></tr>
+<tr><td>Glow</td><td class="t">Value slider</td><td>Soft glow in border colour.</td></tr>
+<tr><td>React to my voice</td><td class="t">Checkbox</td><td>Border/glow reacts to speech.</td></tr>
+<tr><td>Style</td><td class="t">Dropdown</td><td>Border grows with your voice · Glow ring lights up · Border changes colour while you speak.</td></tr>
+<tr><td>Threshold (dB) · Intensity</td><td class="t">Value sliders</td><td>Sensitivity and strength.</td></tr>
+<tr><td>Speaking colour</td><td class="t">Swatches</td><td>Only for the colour-change style.</td></tr>
+<tr><td>Voice level + SPEAKING</td><td class="t">Progress bar + pill</td><td>Live mic level; pill when speaking detected.</td></tr>
+</table>
+
+<h3>9.2 Tab: Layout</h3>
+<table>
+<tr><th>Element</th><th class="t">Type</th><th>Logic</th></tr>
+<tr><td>Layout (scene) picker</td><td class="t">Segmented</td><td>The same scenes as the Stream page strip (short names). Each remembers its own positions; landscape or vertical (9:16 for Shorts/TikTok).</td></tr>
+<tr><td>Gameplay: Fit · Fill</td><td class="t">Segmented</td><td>Fit = whole picture, may show bars; Fill = no bars, edges cropped.</td></tr>
+<tr><td>Snap</td><td class="t">Checkbox</td><td>Snap to grid, edges, centre (guides shown).</td></tr>
+<tr><td>Output pill</td><td class="t">Pill</td><td>"Output 1920×1080".</td></tr>
+<tr><td>Layout editor</td><td class="t">Interactive canvas</td><td>Same editor as the preview but larger and with all handles: click to select, drag, corner-resize, Alt-trim, arrow keys nudge.</td></tr>
+<tr><td>Layers card ("Last is drawn on top")</td><td class="t">List</td><td>Rows per camera with running dot and "Shown" checkbox; selected row highlighted.</td></tr>
+<tr><td>Bring forward · Send back</td><td class="t">Secondary buttons</td><td>Change stacking order (applies at next go-live).</td></tr>
+<tr><td>Selected camera card</td><td class="t">Card</td><td>Name; "Show &lt;name&gt; in this layout" checkbox; position/size in pixels (mono).</td></tr>
+<tr><td>QUICK PLACEMENT</td><td class="t">6 tile buttons</td><td>Top left · Top right · Center · Bottom left · Bottom right · Full screen. Each tile draws a tiny frame with the position.</td></tr>
+</table>
+
+<h3>9.3 Tab: Linkast Camera (virtual camera)</h3>
+<table>
+<tr><th>Element</th><th class="t">Type</th><th>Logic</th></tr>
+<tr><td>"Linkast Camera for Zoom, Teams and Discord"</td><td class="t">Card title</td><td>Use the Linkast look in video calls.</td></tr>
+<tr><td>On</td><td class="t">Checkbox</td><td>Sends the camera to apps using Linkast Camera (needs install).</td></tr>
+<tr><td>Shows</td><td class="t">Dropdown</td><td>Which camera layer is sent.</td></tr>
+<tr><td>Status</td><td class="t">Status text</td><td>Installed / in use / problem (red).</td></tr>
+<tr><td>Set up Linkast Camera…</td><td class="t">Primary button</td><td>Installs (one admin prompt). Shown when not installed.</td></tr>
+<tr><td>Repair or update · Remove from this PC</td><td class="t">Secondary · Destructive outline</td><td>Shown when installed.</td></tr>
+<tr><td>"How to use it" panel</td><td class="t">Inset panel</td><td>2 steps + "Needs Windows 11".</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 class="pb">10. Settings page</h2>
+<p>Two columns of cards. Subtitle "Appearance, updates, hotkeys, importing from OBS and diagnostics."</p>
+<table>
+<tr><th>Element</th><th class="t">Type</th><th>Logic</th></tr>
+<tr><td colspan="3" style="background:#F8F9FF"><b>Appearance</b></td></tr>
+<tr><td>Theme</td><td class="t">Choice cards (3)</td><td>Dark · Light · Match Windows. Each is a mini window thumbnail (rail + page colours).</td></tr>
+<tr><td colspan="3" style="background:#F8F9FF"><b>Updates</b></td></tr>
+<tr><td>Version + update status</td><td class="t">Text</td><td>Status turns accent/bold when an update exists. No pop-ups, never forced.</td></tr>
+<tr><td>Check for updates</td><td class="t">Secondary button</td><td>Checks GitHub (also checked once at start).</td></tr>
+<tr><td>Update now</td><td class="t">Primary button</td><td>Only when an update exists; downloads and restarts. Not while live.</td></tr>
+<tr><td colspan="3" style="background:#F8F9FF"><b>Hotkeys</b></td></tr>
+<tr><td>Reset to defaults</td><td class="t">Subtle button</td><td>Restores defaults.</td></tr>
+<tr><td>Use hotkeys, even while a game… is in front</td><td class="t">Checkbox</td><td>Global hotkeys on/off.</td></tr>
+<tr><td>Hotkey row (×16)</td><td class="t">Label + capture box + ✕</td><td>Go live / End stream · Mute / unmute microphone · Cameras off / on · Be right back on / off · Start / stop recording · Next scene · Previous scene · Scene 1–9. Click the box, press keys; ✕ clears. Conflict shows a warning under the row.</td></tr>
+<tr><td colspan="3" style="background:#F8F9FF"><b>Import from OBS</b> <span class="tag lock">LOCKED LIVE</span></td></tr>
+<tr><td>Find OBS settings</td><td class="t">Primary button</td><td>Auto-detects OBS Studio settings.</td></tr>
+<tr><td>Choose folder…</td><td class="t">Secondary button</td><td>Portable OBS / exported profile.</td></tr>
+<tr><td>Message</td><td class="t">Status text</td><td>Result of the search.</td></tr>
+<tr><td>Found items</td><td class="t">Checkbox list</td><td>Each with title + detail (server/key, quality, capture, cameras, alerts, audio, recordings, network…).</td></tr>
+<tr><td>Not imported (N)</td><td class="t">Expander</td><td>What can't be brought over.</td></tr>
+<tr><td>Import ticked settings</td><td class="t">Primary button</td><td>Applies the ticked items.</td></tr>
+<tr><td colspan="3" style="background:#F8F9FF"><b>Diagnostics</b></td></tr>
+<tr><td>FFmpeg in use</td><td class="t">Mono text</td><td>Path/version.</td></tr>
+<tr><td>Copy diagnostics · Open logs</td><td class="t">Secondary buttons</td><td>Same actions as in the Activity card.</td></tr>
+<tr><td colspan="3" style="background:#F8F9FF"><b>Privacy</b></td></tr>
+<tr><td>Privacy statement</td><td class="t">Body text</td><td>No account, no cloud, no telemetry.</td></tr>
+</table>
+
+<h2>11. About page</h2>
+<table>
+<tr><td>Hero card</td><td class="t">Logo + text</td><td>Logo 96 px, "Linkast" (26 px), version, one-line description.</td></tr>
+<tr><td>Licence card</td><td class="t">Card + pill</td><td>GPL-3.0-or-later pill, copyright, licence and warranty text, <b>Licence (GPL)</b> button.</td></tr>
+<tr><td>Open-source components card</td><td class="t">Card</td><td>Text about FFmpeg / RobustVideoMatting; buttons <b>Third-party notices</b> · <b>FFmpeg build and source</b> · <b>Source code</b> (open files/links).</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2>12. Dialogs, menus and system pickers</h2>
+<p>All dialogs are standard Windows message boxes (not custom-styled).</p>
+<table>
+<tr><th>Dialog</th><th class="t">Type</th><th>When</th></tr>
+<tr><td>"Show the new overlay"</td><td class="t">Yes/No</td><td>A new overlay added while live needs a few-second stream restart.</td></tr>
+<tr><td>"Switch scene"</td><td class="t">Yes/No</td><td>A scene needs a restart (changes landscape ↔ vertical, or adds a camera not in the stream).</td></tr>
+<tr><td>"Capture this display instead"</td><td class="t">Yes/No, warning</td><td>Privacy confirmation before full-display capture.</td></tr>
+<tr><td>"Linkast" unexpected error</td><td class="t">OK, error</td><td>Crash guard; points to the log folder.</td></tr>
+<tr><td>Add scene menu</td><td class="t">Dropdown menu</td><td>From the + tile.</td></tr>
+<tr><td>Scene tile menu</td><td class="t">Context menu</td><td>Right-click a scene tile.</td></tr>
+<tr><td>File pickers</td><td class="t">Windows dialog</td><td>Overlay picture, scene background picture/video, camera background image.</td></tr>
+<tr><td>Folder pickers</td><td class="t">Windows dialog</td><td>Recordings folder, OBS settings folder.</td></tr>
+<tr><td>Windows admin prompt (UAC)</td><td class="t">System</td><td>Installing/removing Linkast Camera.</td></tr>
+</table>
+
+<h2>13. Stream states</h2>
+<table>
+<tr><th>State</th><th class="t">Pill</th><th>Status title · what the user can do</th></tr>
+<tr><td>Idle</td><td class="t">OFFLINE (grey)</td><td>"Ready to stream" or "Not ready yet". Go live, Record available; all settings editable.</td></tr>
+<tr><td>Preparing</td><td class="t">PREPARING (amber)</td><td>"Getting ready…"</td></tr>
+<tr><td>Connecting</td><td class="t">CONNECTING (amber)</td><td>"Connecting…"</td></tr>
+<tr><td>Live</td><td class="t">● LIVE (red)</td><td>"Streaming normally". End stream shown; locked settings greyed out; header shows timer.</td></tr>
+<tr><td>Reconnecting</td><td class="t">RECONNECTING (amber)</td><td>"Reconnecting…" (automatic).</td></tr>
+<tr><td>Stopping</td><td class="t">STOPPING (amber)</td><td>"Ending stream…" (and end-scene countdown).</td></tr>
+<tr><td>Failed</td><td class="t">ERROR (red-orange)</td><td>"Stopped with an error"; error banner shown.</td></tr>
+<tr><td>Recording only</td><td class="t">—</td><td>"Record" button becomes "Stop recording".</td></tr>
+</table>
+
+<h2>14. Keyboard shortcuts</h2>
+<table>
+<tr><td>Ctrl+Enter</td><td>Go live (in the window)</td></tr>
+<tr><td>Alt+S / W / T / B</td><td>Stream / Webcam / Settings / About pages</td></tr>
+<tr><td>Ctrl+Alt+1…9</td><td>Switch to scene 1–9 (global, works in games)</td></tr>
+<tr><td>Ctrl+Alt+← / →</td><td>Previous / next scene</td></tr>
+<tr><td>Ctrl+Alt+B</td><td>Be right back</td></tr>
+<tr><td>Configurable</td><td>Go live/End, mute mic, cameras off/on, record (Settings → Hotkeys)</td></tr>
+<tr><td>Arrow keys</td><td>Nudge the selected item in the layout editor; move between options in segmented controls</td></tr>
+<tr><td>Alt + drag</td><td>Trim (crop) in the preview / layout editor</td></tr>
+<tr><td>Underlined letters</td><td>Many buttons and labels have Alt access keys (e.g. <u>G</u>o live, <u>E</u>nd stream, <u>R</u>efresh)</td></tr>
+</table>
+
+<h2>15. Icons in use (Segoe Fluent Icons)</h2>
+<p>All icons are glyphs from the Windows icon font; codes for reference.</p>
+<table>
+<tr><th>Meaning</th><th>Code</th><th>Meaning</th><th>Code</th></tr>
+<tr><td>Stream (nav)</td><td class="mono">E93E</td><td>Webcam (nav, studio tab, placeholder)</td><td class="mono">E960</td></tr>
+<tr><td>Settings (nav)</td><td class="mono">E713</td><td>About (nav)</td><td class="mono">E946</td></tr>
+<tr><td>Go live (play)</td><td class="mono">E768</td><td>End stream (stop)</td><td class="mono">E71A</td></tr>
+<tr><td>Record (dot)</td><td class="mono">E7C8</td><td>Be right back (pause)</td><td class="mono">E769</td></tr>
+<tr><td>Mute / mic</td><td class="mono">E74F</td><td>Silent in this scene</td><td class="mono">E7F4</td></tr>
+<tr><td>Lock (local only, key, link hidden)</td><td class="mono">E72E</td><td>Refresh / reset</td><td class="mono">E72C</td></tr>
+<tr><td>Add (+)</td><td class="mono">E710</td><td>Edit layout</td><td class="mono">E70F</td></tr>
+<tr><td>Warning</td><td class="mono">E7BA</td><td>Error</td><td class="mono">E783</td></tr>
+<tr><td>Open link / external</td><td class="mono">E8A7</td><td>Find best settings</td><td class="mono">E9D9</td></tr>
+<tr><td>Copy</td><td class="mono">E8C8</td><td>Open folder</td><td class="mono">E8B7</td></tr>
+<tr><td>Web overlay (globe)</td><td class="mono">E774</td><td>Show in preview (pin)</td><td class="mono">E707</td></tr>
+<tr><td>Delete</td><td class="mono">E74D</td><td>Clear (✕)</td><td class="mono">E711</td></tr>
+<tr><td>Download / update / import</td><td class="mono">E896</td><td>Search (find OBS)</td><td class="mono">E721</td></tr>
+<tr><td>Layout tab</td><td class="mono">E740</td><td>Choose image</td><td class="mono">EB9F</td></tr>
+<tr><td>Test sound (speaker)</td><td class="mono">E767</td><td>Move left / right</td><td class="mono">E76B / E76C</td></tr>
+<tr><td>Bring forward / Send back</td><td class="mono">E74A / E74B</td><td>Expand log (chevron)</td><td class="mono">E70D</td></tr>
+<tr><td>Network: Wi-Fi / mobile / USB / VPN / Ethernet</td><td class="mono" colspan="3">E701 / EC05 / E8EA / E705 / E839</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 class="pb">16. Notes for the redesign</h2>
+<p>Things we noticed while listing the UI. They are not decisions, just places to look.</p>
+<ul>
+<li><b>Stream page is dense.</b> 7 tabs plus a status column. Some tabs (Scenes, Overlays) are scene editing; others (Destination, Network, Quality) are one-time setup. They could be split differently.</li>
+<li><b>One control, two jobs.</b> The segmented control is used both as tabs and as value pickers (platform, shape, background mode), so it's hard to tell navigation from settings.</li>
+<li><b>"Scene" vs "Layout".</b> The Webcam Studio Layout tab lists the same scenes as the Stream page strip but calls them layouts.</li>
+<li><b>Duplicates.</b> Mic mute (Audio tab + status card); scene reorder/duplicate/delete (context menu + Scenes tab); silent-in-this-scene (mixer button + Scenes tab checkboxes); Copy diagnostics / Open logs (Activity card + Settings).</li>
+<li><b>Live-locked controls</b> are only greyed out; there is no label saying why or what still works live.</li>
+<li><b>Lots of long hint text</b> under controls; much of it explains interactions (drag, Alt-trim) that could be shown visually or once.</li>
+<li><b>Checkboxes used as on/off switches</b> ("On", "Camera on", "Keep my face in frame"); a toggle switch might read better.</li>
+<li><b>System message boxes</b> for confirmations do not match the app's look.</li>
+<li><b>Hard-coded colours</b> outside the token system (preview backgrounds, placeholder text, theme thumbnails).</li>
+<li><b>Fixed widths</b>: status column 300 px, inspector 360 px, layout side panel 290 px; at the 960 px minimum window width the main column gets tight.</li>
+<li><b>Privacy matters visually</b>: the window is often captured on stream, so keys and alert links must stay hidden by default in any new design.</li>
+</ul>
+
+</body>
+</html>
