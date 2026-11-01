@@ -387,6 +387,13 @@ public sealed partial class MainViewModel
     partial void OnSeparateGameAudioChanged(bool value)
     {
         RefreshMixerChannels();
+
+        // The games' sounds are in the stream already: their fader turns them up or down live.
+        foreach (var game in GameWindows())
+        {
+            ApplyLiveGain(GameChannel(game), GainOf(GameChannel(game)));
+        }
+
         ScheduleSave();
         OnPropertyChanged(nameof(GameSoundOnly));
     }
@@ -394,8 +401,8 @@ public sealed partial class MainViewModel
     /// <summary>
     /// The stream hears only the captured game, the microphone and the alerts: the game gets its own
     /// fader, and Desktop audio, which carries every other program (a browser, Discord, notifications),
-    /// is muted. Off again, Desktop audio carries everything, the game included. Works while live: muting
-    /// is instant, adding or removing the game's own sound restarts the pipeline (a short pause).
+    /// is muted. Off again, Desktop audio carries everything, the game included. Works instantly while
+    /// live: the game's own sound is always in the stream, silent until its fader is up.
     /// Windows can leave only one program out of Desktop audio, and that is Linkast itself (so alerts are
     /// not heard twice), which is why the game is taken on its own instead.
     /// </summary>
@@ -475,6 +482,15 @@ public sealed partial class MainViewModel
         foreach (var channel in Mixer.Channels)
         {
             channel.Note = channel.Kind == MixerChannelKind.SceneVideo ? "Plays while its scene is on" : null;
+        }
+
+        if (wanted.Count > SessionValidator.MaxAudioSources)
+        {
+            WarningText = $"At most {SessionValidator.MaxAudioSources} audio sources can be used at once ({wanted.Count} configured). Turn off a sound on the Audio tab.";
+        }
+        else if (WarningText?.StartsWith("At most", StringComparison.Ordinal) == true)
+        {
+            WarningText = null;
         }
 
         ApplySceneMutes(Webcam.ActiveLayout);
@@ -564,8 +580,10 @@ public sealed partial class MainViewModel
             return 0;
         }
 
-        // A game is heard only in the scene that captures it.
-        if (key.StartsWith("game_", StringComparison.Ordinal) && (key != ActiveGameChannel || Webcam.ActiveLayout.Mutes(AudioChannels.Game)))
+        // A game is heard only with its own fader (Desktop audio carries it otherwise), and only in the
+        // scene that captures it.
+        if (key.StartsWith("game_", StringComparison.Ordinal)
+            && (!SeparateGameAudio || key != ActiveGameChannel || Webcam.ActiveLayout.Mutes(AudioChannels.Game)))
         {
             return 0;
         }
@@ -692,6 +710,7 @@ public sealed partial class MainViewModel
             _soundTestChannel = channel.Key;
             if (_engine is { } engine && IsActive)
             {
+                NoteLiveGain(channel.Key, 1);
                 await engine.SetGainAsync(channel.Key, 1);
             }
 
@@ -769,12 +788,16 @@ public sealed partial class MainViewModel
             });
         }
 
-        if (SeparateGameAudio)
+        // Each captured game's own sound is always in the stream, silent while it has no fader, so "Only the
+        // game's sound" and the game's fader work live. Adding it then restarted the stream, and the server
+        // refused the quick reconnect for half a minute (tester, 1.0.4). Optional: a game whose sound can't
+        // be captured (Windows 10 before 2004, some anti-cheat) doesn't stop the stream.
+        if (Environment.OSVersion.Version.Build >= 19041)
         {
             foreach (var game in GameWindows())
             {
                 var channel = GameChannel(game);
-                audio.Add(new ProcessAudioSource(game.ProcessId, game.ProcessName ?? "Game") { Channel = channel, Gain = GainOf(channel) });
+                audio.Add(new ProcessAudioSource(game.ProcessId, game.ProcessName ?? "Game") { Channel = channel, Gain = GainOf(channel), Optional = true });
             }
         }
 

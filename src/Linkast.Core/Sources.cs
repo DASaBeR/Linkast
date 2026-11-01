@@ -47,6 +47,13 @@ public abstract record AudioSourceSpec
     /// Null takes the type's own channel: "mic" for a microphone, "sys" for system audio.
     /// </summary>
     public string? Channel { get; init; }
+
+    /// <summary>
+    /// The stream goes on without it: when it can't be opened, or it fails while live, its channel is
+    /// silent and the Activity list says why. For a sound kept in the stream at zero, ready to turn up
+    /// (a captured game's own sound), which must not stop the stream of someone who never uses it.
+    /// </summary>
+    public bool Optional { get; init; }
 }
 
 /// <param name="DeviceId">WASAPI endpoint ID, or null for the default communications/console microphone.</param>

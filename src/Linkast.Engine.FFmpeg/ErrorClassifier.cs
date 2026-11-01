@@ -47,6 +47,8 @@ public static class ErrorClassifier
             [@"\\.\pipe\linkast-", "pipe\\linkast-"]),
 
         // Network (as seen from FFmpeg; the relay usually reports a more precise reason)
+        new(ErrorCategory.Network, "network.closed.early", "The server is still closing the previous connection with this stream key. Linkast will retry in a moment.",
+            ["Already publishing", "Server error: Already publishing", "Publishing already in progress"]),
         new(ErrorCategory.Network, "network.refused", "The server refused the connection. Check the server URL.",
             ["Connection refused", "Error number -10061"]),
         new(ErrorCategory.Network, "network.timeout", "The connection to the server timed out.",
@@ -59,6 +61,10 @@ public static class ErrorClassifier
             ["Connection reset", "Error number -10054", "Error number -10053", "Broken pipe", "End of file", "Error in the push function",
              "av_interleaved_write_frame", "Error writing trailer", "Error muxing a packet", "I/O error", "Cannot open connection",
              "Error opening output", "Input/output error"]),
+
+        // Process / Resources
+        new(ErrorCategory.Process, "process.memory", "FFmpeg ran out of memory. Try lowering stream resolution or closing background applications.",
+            ["Cannot allocate memory"]),
 
         // Configuration
         new(ErrorCategory.Configuration, "config.ffmpeg", "FFmpeg rejected an option. This is a Linkast bug; please report it.",

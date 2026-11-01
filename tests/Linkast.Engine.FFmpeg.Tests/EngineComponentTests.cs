@@ -31,6 +31,7 @@ public class ArgumentBuilderTests
         Assert.Equal(Url, args[^1]);
         Assert.Equal("flv", ValueAfter(args, "-f", 3)); // after the canvas, the capture and the silent track
         Assert.Equal("rtmp://live.example.com/live", ValueAfter(args, "-rtmp_tcurl"));
+        Assert.Equal("1024", ValueAfter(args, "-max_muxing_queue_size"));
     }
 
     [Fact]
@@ -422,6 +423,28 @@ public class ArgumentBuilderTests
     }
 
     [Fact]
+    public void Upload_warning_names_the_real_upload_and_a_bitrate_that_fits()
+    {
+        // The tester's hotspot: about 4.85 Mbps up for a 7.2 Mbps stream.
+        var message = BufferedOutputLease.BacklogWarning(19, 7180, 4854);
+
+        Assert.Contains("about 19 s", message);
+        Assert.Contains("about 4.9 Mbps", message);
+        Assert.Contains("needs 7.2", message);
+        Assert.Contains("3500 kbps or lower", message); // 85 % of the upload, less audio, in 500 kbps steps
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(0.0)]
+    public void Upload_warning_without_a_measured_upload_only_says_to_lower_it(double? upload) =>
+        Assert.EndsWith("Lower the bitrate.", BufferedOutputLease.BacklogWarning(9, 6000, upload));
+
+    [Fact]
+    public void Upload_warning_never_suggests_less_than_1000_kbps() =>
+        Assert.Contains("1000 kbps or lower", BufferedOutputLease.BacklogWarning(30, 6000, 400));
+
+    [Fact]
     public void Rejects_foreign_pipe_paths() =>
         Assert.Throws<StreamFailureException>(() => FfmpegArgumentBuilder.Build(Job(audio:
             [new PipeAudioJobInput(@"C:\Windows\win.ini", new PcmFormat(48000, 2, PcmSampleFormat.F32), 1)])));
@@ -497,6 +520,8 @@ public class ErrorClassifierTests
     [InlineData("[h264_nvenc @ 0000020] [error] No NVENC capable devices found", ErrorCategory.Encoder, "encoder.nvenc.unavailable")]
     [InlineData("[tcp @ 000001] [error] Connection to tcp://127.0.0.1:1935 failed: Connection refused", ErrorCategory.Network, "network.refused")]
     [InlineData("[rtmp @ 000001] [error] Server error: Invalid stream key", ErrorCategory.Network, "network.rejected")]
+    [InlineData("[rtmp @ 000001] [error] Server error: Already publishing", ErrorCategory.Network, "network.closed.early")]
+    [InlineData("[in#8/rawvideo @ 000001] [error] Error during demuxing: Cannot allocate memory", ErrorCategory.Process, "process.memory")]
     [InlineData("[out#0/flv @ 0001] [error] Error muxing a packet", ErrorCategory.Network, "network.reset")]
     [InlineData("[Parsed_ddagrab_0 @ 01] [error] DuplicateOutput failed", ErrorCategory.Capture, "capture.dda")]
     [InlineData("[Parsed_ddagrab_0 @ 01] [error] AcquireNextFrame failed: 887a0026", ErrorCategory.Capture, "capture.dda.lost")]

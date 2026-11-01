@@ -180,13 +180,13 @@ internal sealed partial class BufferedOutputLease : IOutputLease
                 received += read;
                 var buffered = Interlocked.Add(ref _buffered, read);
                 _queue.Writer.TryWrite(new ArraySegment<byte>(chunk, 0, read));
+                _upload.Sample(rate.Elapsed, _inner.Snapshot().BytesSent);
                 if (buffered >= _warnAt)
                 {
                     var kbps = received * 8 / 1000.0 / Math.Max(1, rate.Elapsed.TotalSeconds);
                     var seconds = buffered * 8 / 1000.0 / Math.Max(1, kbps);
                     LogBacklog(buffered / 1e6, seconds);
-                    _senderLine(string.Create(CultureInfo.InvariantCulture,
-                        $"[warning] The upload is not keeping up: about {seconds:0} s of the stream is waiting to be sent, so viewers fall behind. Lower the bitrate."));
+                    _senderLine(BacklogWarning(seconds, kbps, _upload.Kbps));
                     _warnAt *= 2;
                 }
 
@@ -201,6 +201,64 @@ internal sealed partial class BufferedOutputLease : IOutputLease
             _queue.Writer.TryComplete();
         }
     }
+
+    /// <summary>
+    /// What to tell the streamer: how far behind viewers are, what the connection really sends and what the
+    /// stream needs, and a bitrate that fits with 15 % to spare (audio and the stream's own overhead
+    /// included), rounded down to 500 kbps. Without a measured upload only the delay is known.
+    /// </summary>
+    internal static string BacklogWarning(double secondsBehind, double streamKbps, double? uploadKbps)
+    {
+        var inv = CultureInfo.InvariantCulture;
+        if (uploadKbps is not { } up || up <= 0)
+        {
+            return string.Create(inv, $"[warning] The upload is not keeping up: about {secondsBehind:0} s of the stream is waiting to be sent, so viewers fall behind. Lower the bitrate.");
+        }
+
+        var suggested = Math.Max(1000, Math.Floor(((up * 0.85) - 200) / 500) * 500);
+        return string.Create(inv,
+            $"[warning] The upload is not keeping up: about {secondsBehind:0} s of the stream is waiting to be sent, so viewers fall behind. The connection sends about {up / 1000:0.0} Mbps; the stream needs {streamKbps / 1000:0.0}. Set the bitrate to {suggested:0} kbps or lower.");
+    }
+
+    /// <summary>The upload over the last 20 s, from the bytes the server was sent (one sample a second).</summary>
+    private sealed class UploadRate
+    {
+        private static readonly TimeSpan Window = TimeSpan.FromSeconds(20);
+        private readonly Queue<(TimeSpan At, long Bytes)> _samples = new();
+
+        public void Sample(TimeSpan at, long bytesSent)
+        {
+            if (_samples.Count > 0 && at - _samples.Last().At < TimeSpan.FromSeconds(1))
+            {
+                return;
+            }
+
+            _samples.Enqueue((at, bytesSent));
+            while (_samples.Count > 2 && at - _samples.Peek().At > Window)
+            {
+                _samples.Dequeue();
+            }
+        }
+
+        /// <summary>Kilobits a second, or null before 5 s of samples.</summary>
+        public double? Kbps
+        {
+            get
+            {
+                if (_samples.Count < 2)
+                {
+                    return null;
+                }
+
+                var (firstAt, firstBytes) = _samples.Peek();
+                var (lastAt, lastBytes) = _samples.Last();
+                var span = (lastAt - firstAt).TotalSeconds;
+                return span < 5 ? null : (lastBytes - firstBytes) * 8 / 1000.0 / span;
+            }
+        }
+    }
+
+    private readonly UploadRate _upload = new();
 
     private async Task DrainAsync(NetworkStream to, CancellationToken ct)
     {

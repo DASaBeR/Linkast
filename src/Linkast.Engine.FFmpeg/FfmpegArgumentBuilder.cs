@@ -154,6 +154,7 @@ public static class FfmpegArgumentBuilder
             "-b:a", Kbps(e.AudioKbps),
             "-ar", e.AudioSampleRate.ToString(Inv),
             "-ac", "2",
+            "-max_muxing_queue_size", "1024",
         ]);
         args.AddRange(OutputArgs(job.PublishUrl, job.TcUrl, job.RecordingPath));
         return args;

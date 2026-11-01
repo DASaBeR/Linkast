@@ -309,8 +309,10 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
 
                 // Refused right after our own connection (a quick restart, a source switch): the key is fine,
                 // the server just hasn't let go of the previous session yet. Wait longer and say so.
-                var keyStillHeld = error.Code == ClosedEarlyCode && Interlocked.Read(ref _lastServerConnectionEnd) is var ended and not 0
-                    && _time.GetElapsedTime(ended) < KeyStillHeldWindow;
+                var isAlreadyPublishing = error.Detail?.Contains("Already publishing", StringComparison.OrdinalIgnoreCase) == true;
+                var keyStillHeld = (error.Code == ClosedEarlyCode || isAlreadyPublishing)
+                    && ((Interlocked.Read(ref _lastServerConnectionEnd) is var ended and not 0 && _time.GetElapsedTime(ended) < KeyStillHeldWindow)
+                        || isAlreadyPublishing);
                 if (keyStillHeld)
                 {
                     error = error with { UserMessage = "The server is still closing the previous connection with this stream key. Linkast tries again in a few seconds." };
@@ -412,12 +414,28 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
 
                 if (_audioProvider is null || !_audioProvider.CanOpen(spec))
                 {
+                    if (spec.Optional)
+                    {
+                        jobAudio.Add(SilentInPlaceOf(spec, "it isn't supported on this system"));
+                        continue;
+                    }
+
                     return new StreamError(ErrorCategory.Audio, "audio.unsupported", $"Audio source type {spec.GetType().Name} is not supported on this system.");
                 }
 
                 var input = _audioProvider.Open(spec);
+                try
+                {
+                    await input.StartAsync(ct).ConfigureAwait(false);
+                }
+                catch (StreamFailureException ex) when (spec.Optional)
+                {
+                    await input.DisposeAsync().ConfigureAwait(false);
+                    jobAudio.Add(SilentInPlaceOf(spec, ex.Error.Detail ?? ex.Error.UserMessage));
+                    continue;
+                }
+
                 audioInputs.Add(input);
-                await input.StartAsync(ct).ConfigureAwait(false);
                 jobAudio.Add(LiveAudioInput(spec, input));
             }
 
@@ -648,7 +666,14 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
         var gameSlowest = double.MaxValue;
         var lastFrameAdvance = attemptStart;
         var lastBytesAdvance = attemptStart;
-        var audioFault = FirstFault(audioInputs.Select(a => a.Completion));
+        // An optional sound that stops (a game's own sound when the game closes) only goes quiet.
+        var audioFault = FirstFault(audioInputs.Where(a => !a.Source.Optional).Select(a => a.Completion));
+        foreach (var optional in audioInputs.Where(a => a.Source.Optional))
+        {
+            _ = optional.Completion.ContinueWith(
+                t => DiagnosticLine?.Invoke(this, $"[warning] {Describe(optional.Source)} stopped; its fader is silent until the next start."),
+                CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+        }
         var sourceSwitch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Volatile.Write(ref _sourceSwitch, sourceSwitch);
         if (Volatile.Read(ref _pendingSources) is not null)
@@ -1064,6 +1089,27 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
     /// The FFmpeg view of one audio source: named so it can be changed live, with this session's live
     /// changes (mute, volume, noise removal) applied so they survive a reconnect.
     /// </summary>
+    /// <summary>
+    /// Silence with the channel's name, for an optional sound that can't be captured: its fader can still
+    /// be moved live (to no effect), and the Activity list says why.
+    /// </summary>
+    private ToneAudioJobInput SilentInPlaceOf(AudioSourceSpec spec, string why)
+    {
+        var channel = spec.Channel ?? (spec is MicrophoneSource ? AudioChannels.Microphone : AudioChannels.System);
+        var line = _redactor.Redact($"[warning] {Describe(spec)} can't be captured ({why}); the stream goes on without it.");
+        LogFfmpegLine(line);
+        DiagnosticLine?.Invoke(this, line);
+        return new ToneAudioJobInput(0) { Name = channel };
+    }
+
+    private static string Describe(AudioSourceSpec spec) => spec switch
+    {
+        ProcessAudioSource p => $"The sound of {p.DisplayName}",
+        MicrophoneSource m => $"The microphone {m.DisplayName}",
+        SystemAudioSource s => $"Desktop audio ({s.DisplayName})",
+        _ => "A sound",
+    };
+
     private PipeAudioJobInput LiveAudioInput(AudioSourceSpec spec, IAudioInput input)
     {
         var channel = spec.Channel ?? (spec is MicrophoneSource ? AudioChannels.Microphone : AudioChannels.System);

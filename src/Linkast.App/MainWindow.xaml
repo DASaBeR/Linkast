@@ -578,7 +578,7 @@
                                                     <CheckBox Style="{StaticResource Linkast.ToggleSwitch}" Content="Only the game's sound" IsChecked="{Binding GameSoundOnly}"
                                                               ToolTip="Viewers hear the game, your microphone and your alerts, nothing else. Works while live." />
                                                     <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,4,0,0" TextWrapping="Wrap"
-                                                               Text="Mutes Desktop audio, which carries every other program (a browser, Discord, notifications), and gives the game its own fader. Turning it on or off while live may pause the stream for a second." />
+                                                               Text="Mutes Desktop audio, which carries every other program (a browser, Discord, notifications), and gives the game its own fader. It switches instantly while live." />
                                                 </StackPanel>
                                                 <TextBlock Style="{StaticResource Linkast.Text.Body}" Margin="0,0,0,8"
                                                            Visibility="{Binding Mixer.Channels.Count, Converter={x:Static vm:Converters.ZeroToVisibility}}"

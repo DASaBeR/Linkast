@@ -806,14 +806,43 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    /// <summary>Volume and mute apply to a running stream at once, and to its reconnects.</summary>
+    /// <summary>How often a moving fader reaches the stream: often enough to sound smooth, rarely enough not to flood it.</summary>
+    private static readonly TimeSpan LiveGainInterval = TimeSpan.FromMilliseconds(40);
+
+    private readonly LiveGainSender _liveGains = new();
+    private DispatcherTimer? _liveGainTimer;
+
+    /// <summary>
+    /// Volume and mute apply to a running stream (and its reconnects). A dragged fader sends only its
+    /// newest position, at most every <see cref="LiveGainInterval"/>, and only when it changed (see
+    /// <see cref="LiveGainSender"/>).
+    /// </summary>
     private void ApplyLiveGain(string channel, double gain)
     {
-        if (_engine is { } engine && IsActive && channel != _soundTestChannel)
+        if (_engine is null || !IsActive || channel == _soundTestChannel || !_liveGains.Request(channel, gain))
         {
-            _ = engine.SetGainAsync(channel, gain);
+            return;
+        }
+
+        _liveGainTimer ??= new DispatcherTimer(LiveGainInterval, DispatcherPriority.Normal, (_, _) => SendPendingGains(), _ui);
+        _liveGainTimer.IsEnabled = true;
+    }
+
+    private void SendPendingGains()
+    {
+        _liveGainTimer!.IsEnabled = false;
+        var changes = _liveGains.TakeChanges(_soundTestChannel);
+        if (_engine is { } engine && IsActive)
+        {
+            foreach (var (channel, gain) in changes)
+            {
+                _ = engine.SetGainAsync(channel, gain);
+            }
         }
     }
+
+    /// <summary>A gain sent to the stream outside the mixer (a test sound's 100 %), so the next fader move is sent.</summary>
+    private void NoteLiveGain(string channel, double gain) => _liveGains.Note(channel, gain);
 
     // ---- Platform ----------------------------------------------------------------------------
 
@@ -1199,6 +1228,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         if (e.PropertyName is nameof(State))
         {
             UpdateWindowWatch();
+            if (!IsActive)
+            {
+                _liveGains.Reset();
+            }
         }
 
         // The constructor sets defaults before the studio exists.
@@ -1882,7 +1915,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _liveHasScenesMedia = true;
         Webcam.Notice = null;
 
-        return new StreamSession(
+        var session = new StreamSession(
             video,
             audio,
             encoder,
@@ -1902,6 +1935,15 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 ? new RecordingSpec(RecordingFolder) { RemuxToMp4 = RemuxRecordingsToMp4 }
                 : null,
         };
+
+        var validationErrors = SessionValidator.Validate(session);
+        if (validationErrors.Count > 0)
+        {
+            error = validationErrors[0];
+            return null;
+        }
+
+        return session;
     }
 
     private void OnStateChanged(StreamStateChangedEventArgs e)
