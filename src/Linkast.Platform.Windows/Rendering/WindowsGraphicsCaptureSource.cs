@@ -225,7 +225,10 @@ public sealed partial class WindowsGraphicsCaptureSource : ID3D11SceneSource
                 }
 
                 using var surfaceTexture = WindowsGraphicsInterop.GetTextureFromSurface(frame.Surface);
-                _deviceManager.Context.CopyResource(_retainedTexture, surfaceTexture);
+                lock (_deviceManager.ContextLock)
+                {
+                    _deviceManager.Context.CopyResource(_retainedTexture, surfaceTexture);
+                }
 
                 _lastFrameTimestampQpc = Stopwatch.GetTimestamp();
                 _frameSequence++;

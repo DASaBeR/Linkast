@@ -122,12 +122,54 @@ public class D3D11StreamEngineTests
             new TestOutputTransport(),
             deviceManager: deviceManager);
 
-        // While not active (no mixer created yet), returns false safely
+        // While not active (no mixer created yet), gain returns false safely
         var gainSet = await engine.SetGainAsync(AudioChannels.Microphone, 0.5);
         Assert.False(gainSet);
 
+        // Noise suppression persists and succeeds so it takes effect upon launch
         var noiseSet = await engine.SetNoiseSuppressionAsync(true);
-        Assert.False(noiseSet);
+        Assert.True(noiseSet);
+    }
+
+    [Fact]
+    public void SourceFrameCache_recreates_srv_when_texture_instance_changes()
+    {
+        using var manager = new D3D11DeviceManager();
+        using var cache = new SourceFrameCache(manager);
+
+        var desc = new Vortice.Direct3D11.Texture2DDescription
+        {
+            Width = 32,
+            Height = 32,
+            MipLevels = 1,
+            ArraySize = 1,
+            Format = Vortice.DXGI.Format.B8G8R8A8_UNorm,
+            SampleDescription = new Vortice.DXGI.SampleDescription(1, 0),
+            Usage = Vortice.Direct3D11.ResourceUsage.Default,
+            BindFlags = Vortice.Direct3D11.BindFlags.ShaderResource
+        };
+
+        using var tex1 = manager.Device.CreateTexture2D(desc);
+        using var tex2 = manager.Device.CreateTexture2D(desc);
+
+        cache.Store("sourceA", tex1, 100);
+        var (acquired1, srv1, ts1, fresh1) = cache.AcquireWithSrv("sourceA");
+        Assert.Same(tex1, acquired1);
+        Assert.NotNull(srv1);
+        Assert.True(fresh1);
+
+        // Store new texture for sourceA (simulating window resize or device restoration)
+        cache.Store("sourceA", tex2, 200);
+        var (acquired2, srv2, ts2, fresh2) = cache.AcquireWithSrv("sourceA");
+        Assert.Same(tex2, acquired2);
+        Assert.NotNull(srv2);
+        Assert.NotSame(srv1, srv2);
+
+        // Evicting or clearing source disposes views cleanly
+        cache.Remove("sourceA");
+        var (missing, missingSrv, _, _) = cache.AcquireWithSrv("sourceA");
+        Assert.Null(missing);
+        Assert.Null(missingSrv);
     }
 
     [Fact]

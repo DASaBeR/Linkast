@@ -256,7 +256,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
             }
 
             _compositor ??= new D3D11SceneCompositor(_deviceManager, session.Encoder.Width, session.Encoder.Height);
-            _frameCache ??= new SourceFrameCache();
+            _frameCache ??= new SourceFrameCache(_deviceManager);
 
             SetupSources(session);
 
@@ -388,6 +388,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 }
             }
 
+            _ = mixer.SetNoiseSuppressionAsync(_noiseSuppression, ct);
             scheduler.Start();
             mixer.Start();
 
@@ -730,13 +731,16 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
         return Task.FromResult(false);
     }
 
+    private volatile bool _noiseSuppression;
+
     public Task<bool> SetNoiseSuppressionAsync(bool enabled, CancellationToken cancellationToken = default)
     {
+        _noiseSuppression = enabled;
         if (_audioMixer is not null)
         {
             return _audioMixer.SetNoiseSuppressionAsync(enabled, cancellationToken);
         }
-        return Task.FromResult(false);
+        return Task.FromResult(true);
     }
 
     private void PublishTelemetry(StreamSession session, EncoderProgress? progress, NetworkSnapshot? net, TimeSpan? connectionUptime)

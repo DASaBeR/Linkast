@@ -37,6 +37,9 @@ public sealed partial class D3D11DeviceManager : IDisposable
         InitializeDevice();
     }
 
+    /// <summary>Mutual exclusion lock for coordinating multi-step immediate context operations across threads.</summary>
+    public Lock ContextLock { get; } = new();
+
     /// <summary>The primary Direct3D 11 device for resource allocation.</summary>
     public ID3D11Device Device
     {
@@ -215,8 +218,9 @@ public sealed partial class D3D11DeviceManager : IDisposable
         _device = device ?? throw new InvalidOperationException("Failed to obtain Direct3D 11 device.");
         _context = _device.ImmediateContext;
 
-        // Enable multithread protection on the immediate context for safe cross-thread texture allocation.
-        _multithread = _device.QueryInterfaceOrNull<ID3D11Multithread>();
+        // Enable multithread protection on the immediate context for safe cross-thread texture copy and draw.
+        // ID3D11Multithread is implemented by the immediate context, not the device.
+        _multithread = _context.QueryInterfaceOrNull<ID3D11Multithread>();
         _multithread?.SetMultithreadProtected(true);
     }
 

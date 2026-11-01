@@ -199,10 +199,17 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
             _frameCache.Store(key, acquired, Stopwatch.GetTimestamp());
         }
 
-        var (tex, _, _) = _frameCache.Acquire(key);
-        if (tex is not null && source.State != SceneSourceState.Lost)
+        var (tex, srv, _, _) = _frameCache.AcquireWithSrv(key);
+        if (source.State != SceneSourceState.Lost)
         {
-            _compositor.DrawLayer(tex, placement, crop);
+            if (srv is not null)
+            {
+                _compositor.DrawLayer(srv, placement, crop);
+            }
+            else if (tex is not null)
+            {
+                _compositor.DrawLayer(tex, placement, crop);
+            }
         }
     }
 
@@ -215,10 +222,17 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
             _frameCache.Store(key, acquired, Stopwatch.GetTimestamp());
         }
 
-        var (camTex, _, _) = _frameCache.Acquire(key);
-        if (camTex is not null && source.State != SceneSourceState.Lost)
+        var (camTex, camSrv, _, _) = _frameCache.AcquireWithSrv(key);
+        if (source.State != SceneSourceState.Lost)
         {
-            _compositor.DrawLayer(camTex, placement, NormalizedRect.Full);
+            if (camSrv is not null)
+            {
+                _compositor.DrawLayer(camSrv, placement, NormalizedRect.Full);
+            }
+            else if (camTex is not null)
+            {
+                _compositor.DrawLayer(camTex, placement, NormalizedRect.Full);
+            }
         }
     }
 

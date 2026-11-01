@@ -2,6 +2,7 @@
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using Linkast.Core;
 using Linkast.Core.Audio;
@@ -12,6 +13,8 @@ namespace Linkast.Platform.Windows.Audio;
 /// <summary>
 /// Hardware audio mixer combining multiple WASAPI capture sessions (desktop audio, mic, game audio)
 /// into a single continuous 48kHz stereo 16-bit PCM (s16le) stream.
+/// Includes format normalization (int16/float32, mono upmixing, 44.1kHz->48kHz resampling)
+/// and real-time microphone noise suppression.
 /// Timeline is locked to the same monotonic master clock as the video scheduler to eliminate A/V drift.
 /// </summary>
 public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioControl
@@ -40,6 +43,7 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
     private long _totalBytesWritten;
     private long _lastDataTimestamp;
     private volatile bool _isRunning;
+    private volatile bool _noiseSuppressionEnabled;
     private bool _disposed;
 
     public UnifiedAudioMixer(
@@ -60,6 +64,8 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
 
     public bool IsRunning => _isRunning;
 
+    public bool NoiseSuppressionEnabled => _noiseSuppressionEnabled;
+
     /// <summary>
     /// Adds or attaches a captured audio source to the mixer.
     /// </summary>
@@ -68,7 +74,7 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
         ArgumentNullException.ThrowIfNull(source);
         ArgumentException.ThrowIfNullOrWhiteSpace(channelName);
 
-        var state = new ChannelState(channelName, initialGain);
+        var state = new ChannelState(channelName, initialGain, this);
         if (!_channels.TryAdd(channelName, state))
         {
             return;
@@ -94,6 +100,25 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
             }
             _channels.TryRemove(channelName, out _);
             throw;
+        }
+    }
+
+    /// <summary>Internal helper for unit testing channel data without a physical WASAPI device.</summary>
+    internal void AddTestChannel(string channelName, double initialGain = 1.0, PcmFormat? format = null)
+    {
+        var state = new ChannelState(channelName, initialGain, this)
+        {
+            OverrideFormat = format
+        };
+        _channels[channelName] = state;
+    }
+
+    /// <summary>Internal helper for feeding raw bytes directly to a channel in unit tests.</summary>
+    internal void EnqueueTestChannelData(string channelName, ReadOnlySpan<byte> data, bool silent = false)
+    {
+        if (_channels.TryGetValue(channelName, out var state))
+        {
+            state.EnqueueData(data, silent);
         }
     }
 
@@ -217,8 +242,8 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
 
     public Task<bool> SetNoiseSuppressionAsync(bool enabled, CancellationToken cancellationToken = default)
     {
-        // Future expansion: hook into WebRTC or RNNoise DSP filter in software
-        return Task.FromResult(false);
+        _noiseSuppressionEnabled = enabled;
+        return Task.FromResult(true);
     }
 
     public async ValueTask DisposeAsync()
@@ -245,21 +270,85 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
         _cts.Dispose();
     }
 
+    private sealed class NoiseSuppressor
+    {
+        // 85 Hz 1st-order IIR high-pass filter: alpha = 1 / (1 + 2*pi*85/48000) = ~0.989
+        private const float AlphaHp = 0.989f;
+        private float _hpPrevInL;
+        private float _hpPrevInR;
+        private float _hpPrevOutL;
+        private float _hpPrevOutR;
+
+        // Adaptive noise gate parameters
+        private const float Threshold = 0.012f; // ~ -38 dB
+        private const float MinGain = 0.03f;    // ~ -30 dB attenuation of background noise/hum
+        private const float AttackRate = 0.2f;  // Fast ~5ms attack
+        private const float ReleaseRate = 0.01f;// Smooth ~150ms release
+        private float _currentGain = 1.0f;
+        private float _envelope;
+
+        public void Process(Span<float> stereoBuffer)
+        {
+            for (int i = 0; i < stereoBuffer.Length; i += 2)
+            {
+                float inL = stereoBuffer[i];
+                float inR = stereoBuffer[i + 1];
+
+                // High-pass filter
+                float hpL = AlphaHp * (_hpPrevOutL + inL - _hpPrevInL);
+                float hpR = AlphaHp * (_hpPrevOutR + inR - _hpPrevInR);
+                _hpPrevInL = inL;
+                _hpPrevInR = inR;
+                _hpPrevOutL = hpL;
+                _hpPrevOutR = hpR;
+
+                // Level detection
+                float level = Math.Max(Math.Abs(hpL), Math.Abs(hpR));
+                _envelope = Math.Max(level, _envelope * 0.999f);
+
+                // Gate target gain
+                float targetGain = _envelope > Threshold ? 1.0f : MinGain;
+                float rate = targetGain > _currentGain ? AttackRate : ReleaseRate;
+                _currentGain += (targetGain - _currentGain) * rate;
+
+                stereoBuffer[i] = hpL * _currentGain;
+                stereoBuffer[i + 1] = hpR * _currentGain;
+            }
+        }
+    }
+
     private sealed class ChannelState : IDisposable
     {
         private readonly Lock _gate = new();
         private readonly Queue<float> _buffer = new(TargetSampleRate); // Holds up to 1 second
         private volatile float _gain;
+        private readonly bool _isMicrophone;
+        private readonly UnifiedAudioMixer _mixer;
+        private readonly NoiseSuppressor? _noiseSuppressor;
 
-        public ChannelState(string name, double initialGain)
+        private float _lastSampleL;
+        private float _lastSampleR;
+        private double _resamplePhase;
+
+        public ChannelState(string name, double initialGain, UnifiedAudioMixer mixer)
         {
             Name = name;
             _gain = (float)Math.Clamp(initialGain, 0.0, 4.0);
+            _mixer = mixer;
+            _isMicrophone = string.Equals(name, AudioChannels.Microphone, StringComparison.OrdinalIgnoreCase);
+            if (_isMicrophone)
+            {
+                _noiseSuppressor = new NoiseSuppressor();
+            }
         }
 
         public string Name { get; }
 
         public AudioTap? Tap { get; set; }
+
+        public PcmFormat? OverrideFormat { get; set; }
+
+        public PcmFormat Format => OverrideFormat ?? Tap?.Format ?? new PcmFormat(TargetSampleRate, TargetChannels, PcmSampleFormat.F32);
 
         public float Gain
         {
@@ -274,22 +363,77 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
                 return;
             }
 
-            int floatCount = data.Length / sizeof(float);
+            var format = Format;
+            int inChannels = format.Channels > 0 ? format.Channels : TargetChannels;
+            int inSampleRate = format.SampleRate > 0 ? format.SampleRate : TargetSampleRate;
+            bool isFloat = format.SampleFormat == PcmSampleFormat.F32;
+
+            int bytesPerInputSample = isFloat ? 4 : 2;
+            int frameBytes = inChannels * bytesPerInputSample;
+            int inFrameCount = data.Length / frameBytes;
+            if (inFrameCount <= 0)
+            {
+                return;
+            }
+
             lock (_gate)
             {
                 if (silent || _gain == 0)
                 {
-                    for (int i = 0; i < floatCount; i++)
+                    int outFrameCount = inSampleRate == TargetSampleRate
+                        ? inFrameCount
+                        : (int)Math.Round((double)inFrameCount * TargetSampleRate / inSampleRate);
+
+                    int samplesToAdd = outFrameCount * TargetChannels;
+                    for (int i = 0; i < samplesToAdd; i++)
                     {
                         _buffer.Enqueue(0f);
                     }
                 }
                 else
                 {
-                    var floatSpan = MemoryMarshal.Cast<byte, float>(data);
-                    for (int i = 0; i < floatSpan.Length; i++)
+                    double step = (double)inSampleRate / TargetSampleRate;
+
+                    for (int f = 0; f < inFrameCount; f++)
                     {
-                        _buffer.Enqueue(floatSpan[i]);
+                        int offset = f * frameBytes;
+                        float sampleL;
+                        float sampleR;
+
+                        if (isFloat)
+                        {
+                            var floatSpan = MemoryMarshal.Cast<byte, float>(data[offset..]);
+                            sampleL = floatSpan[0];
+                            sampleR = inChannels > 1 ? floatSpan[1] : sampleL;
+                        }
+                        else
+                        {
+                            var shortSpan = MemoryMarshal.Cast<byte, short>(data[offset..]);
+                            sampleL = shortSpan[0] / 32768.0f;
+                            sampleR = inChannels > 1 ? shortSpan[1] / 32768.0f : sampleL;
+                        }
+
+                        if (inSampleRate == TargetSampleRate)
+                        {
+                            _buffer.Enqueue(sampleL);
+                            _buffer.Enqueue(sampleR);
+                        }
+                        else
+                        {
+                            while (_resamplePhase < 1.0)
+                            {
+                                float fraction = (float)_resamplePhase;
+                                float outL = _lastSampleL + fraction * (sampleL - _lastSampleL);
+                                float outR = _lastSampleR + fraction * (sampleR - _lastSampleR);
+                                _buffer.Enqueue(outL);
+                                _buffer.Enqueue(outR);
+                                _resamplePhase += step;
+                            }
+
+                            _resamplePhase -= 1.0;
+                            _lastSampleL = sampleL;
+                            _lastSampleR = sampleR;
+                        }
                     }
                 }
 
@@ -312,9 +456,21 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
                     return false;
                 }
 
+                Span<float> slice = stackalloc float[SamplesPerSlice];
                 for (int i = 0; i < SamplesPerSlice; i++)
                 {
-                    destination[i] += _buffer.Dequeue() * currentGain;
+                    slice[i] = _buffer.Dequeue() * currentGain;
+                }
+
+                // Apply real-time noise suppression on microphone channel when enabled
+                if (_isMicrophone && _mixer.NoiseSuppressionEnabled && _noiseSuppressor is not null)
+                {
+                    _noiseSuppressor.Process(slice);
+                }
+
+                for (int i = 0; i < SamplesPerSlice; i++)
+                {
+                    destination[i] += slice[i];
                 }
 
                 return true;
@@ -336,16 +492,13 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
         public void Dispose()
         {
             Tap?.Dispose();
-            lock (_gate)
-            {
-                _buffer.Clear();
-            }
+            Tap = null;
         }
     }
 
-    [LoggerMessage(LogLevel.Error, "Failed to add audio source for channel {ChannelName}.")]
-    private static partial void LogAddSourceFailed(ILogger logger, string channelName, Exception ex);
-
-    [LoggerMessage(LogLevel.Error, "Audio mix loop error occurred.")]
+    [LoggerMessage(LogLevel.Error, "Audio mixer loop failed with exception.")]
     private static partial void LogMixLoopFailed(ILogger logger, Exception ex);
+
+    [LoggerMessage(LogLevel.Warning, "Failed to attach audio source for channel '{Channel}'.")]
+    private static partial void LogAddSourceFailed(ILogger logger, string channel, Exception ex);
 }

@@ -121,7 +121,6 @@ public sealed partial class D3D11SceneCompositor : IDisposable
     private readonly Lock _renderGate = new();
     private readonly D3D11DeviceManager _deviceManager;
     private readonly ILogger? _logger;
-    private readonly Dictionary<IntPtr, ID3D11ShaderResourceView> _srvCache = new();
 
     private int _canvasWidth;
     private int _canvasHeight;
@@ -238,7 +237,6 @@ public sealed partial class D3D11SceneCompositor : IDisposable
     {
         var device = _deviceManager.Device;
 
-        ClearSrvCache();
         _canvasRtv?.Dispose();
         _canvasSrv?.Dispose();
         _canvasTexture?.Dispose();
@@ -327,6 +325,7 @@ public sealed partial class D3D11SceneCompositor : IDisposable
     public void BeginFrame(Color4 clearColor)
     {
         lock (_renderGate)
+        lock (_deviceManager.ContextLock)
         {
             if (_disposed || _canvasRtv is null)
             {
@@ -348,7 +347,7 @@ public sealed partial class D3D11SceneCompositor : IDisposable
 
     /// <summary>
     /// Draws a quad layer textured with <paramref name="layerTexture"/> over the canvas.
-    /// Shader resource views are cached per texture pointer to eliminate per-frame allocations.
+    /// When rendering high-frequency frame loops, prefer passing a pre-allocated ID3D11ShaderResourceView.
     /// </summary>
     public void DrawLayer(
         ID3D11Texture2D layerTexture,
@@ -365,31 +364,9 @@ public sealed partial class D3D11SceneCompositor : IDisposable
                 return;
             }
 
-            var srv = GetOrCreateSrv(layerTexture);
+            using var srv = _deviceManager.Device.CreateShaderResourceView(layerTexture);
             DrawLayer(srv, destRect, cropRect, opacity);
         }
-    }
-
-    private ID3D11ShaderResourceView GetOrCreateSrv(ID3D11Texture2D texture)
-    {
-        var ptr = texture.NativePointer;
-        if (!_srvCache.TryGetValue(ptr, out var srv))
-        {
-            srv = _deviceManager.Device.CreateShaderResourceView(texture);
-            _srvCache[ptr] = srv;
-        }
-
-        return srv;
-    }
-
-    private void ClearSrvCache()
-    {
-        foreach (var srv in _srvCache.Values)
-        {
-            srv.Dispose();
-        }
-
-        _srvCache.Clear();
     }
 
     /// <summary>
@@ -404,6 +381,7 @@ public sealed partial class D3D11SceneCompositor : IDisposable
         ArgumentNullException.ThrowIfNull(layerSrv);
 
         lock (_renderGate)
+        lock (_deviceManager.ContextLock)
         {
             if (_disposed || _canvasRtv is null)
             {
@@ -440,6 +418,7 @@ public sealed partial class D3D11SceneCompositor : IDisposable
     public int ConvertToNv12(Span<byte> destination)
     {
         lock (_renderGate)
+        lock (_deviceManager.ContextLock)
         {
             if (_disposed || _canvasSrv is null || _nv12Uav is null || _nv12StagingBuffer is null)
             {
@@ -501,6 +480,7 @@ public sealed partial class D3D11SceneCompositor : IDisposable
         ArgumentNullException.ThrowIfNull(stream);
 
         lock (_renderGate)
+        lock (_deviceManager.ContextLock)
         {
             if (_disposed || _canvasSrv is null || _nv12Uav is null || _nv12StagingBuffer is null)
             {
@@ -582,7 +562,6 @@ public sealed partial class D3D11SceneCompositor : IDisposable
             _disposed = true;
             _deviceManager.DeviceRestored -= OnDeviceRestored;
 
-            ClearSrvCache();
             _canvasRtv?.Dispose();
             _canvasSrv?.Dispose();
             _canvasTexture?.Dispose();
