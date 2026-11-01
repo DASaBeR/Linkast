@@ -17,12 +17,13 @@ namespace Linkast.App.ViewModels;
 public sealed partial class MainViewModel
 {
     /// <summary>Lets a combo box settle (and a refreshed window list re-select) before restarting.</summary>
-    private static readonly TimeSpan LiveSourceSettle = TimeSpan.FromMilliseconds(600);
+    private static readonly TimeSpan LiveSourceSettle = TimeSpan.FromMilliseconds(1000);
 
     private DispatcherTimer? _liveSourceTimer;
     private DispatcherTimer? _windowWatch;
     private IReadOnlyList<CaptureBinding> _liveCaptures = [];
     private IReadOnlyList<AudioSourceSpec> _liveAudio = [];
+    private SceneCapture? _pendingCapture;
 
     /// <summary>What a scene without its own capture uses: the last capture chosen on the card.</summary>
     private SceneCapture _defaultCapture = SceneCapture.Nothing;
@@ -96,6 +97,10 @@ public sealed partial class MainViewModel
                 {
                     SceneCaptureNote = $"{c.WindowProcess ?? c.WindowTitle ?? "This scene's game"} isn't running. Start it, then press Refresh, or pick another window.";
                 }
+                else if (!VideoSourceCatalog.IsWindowCapturable(window.Handle))
+                {
+                    SceneCaptureNote = $"{window.Title} is minimized. Restore it to stream.";
+                }
             }
         }
         finally
@@ -113,9 +118,36 @@ public sealed partial class MainViewModel
         }
 
         var capture = CardCapture();
+        if (!IsActive)
+        {
+            _pendingCapture = null;
+            _defaultCapture = capture;
+            SceneCaptureNote = null;
+            Webcam.UpdateActiveSceneQuietly(s => s with { Capture = capture });
+            RefreshMixerChannels();
+            return;
+        }
+
+        var current = CaptureOf(Webcam.ActiveLayout);
+        if (_pendingCapture is not null && _pendingCapture == capture)
+        {
+            return;
+        }
+
+        // If user navigated back to the currently active stream capture, cancel any pending switch.
+        if (capture == current)
+        {
+            _pendingCapture = null;
+            _defaultCapture = capture;
+            SceneCaptureNote = null;
+            _liveSourceTimer?.Stop();
+            RefreshMixerChannels();
+            return;
+        }
+
+        _pendingCapture = capture;
         _defaultCapture = capture;
         SceneCaptureNote = null;
-        Webcam.UpdateActiveSceneQuietly(s => s with { Capture = capture });
         RefreshMixerChannels();
         ScheduleLiveSourceSwitch();
     }
@@ -127,12 +159,17 @@ public sealed partial class MainViewModel
     private MonitorInfo? FindMonitor(SceneCapture c) =>
         Monitors.FirstOrDefault(m => m.DeviceName == c.MonitorDeviceName) ?? Monitors.FirstOrDefault(m => m.IsPrimary) ?? Monitors.FirstOrDefault();
 
-    /// <summary>The capture a scene asks for, if it can run now (its window is open). Null for no capture.</summary>
+    /// <summary>The capture a scene asks for, if it can run now (its window is open and capturable). Null for no capture.</summary>
     private ResolvedCapture? Resolve(SceneCapture c)
     {
         switch (c.Kind)
         {
             case SceneCaptureKind.Window when FindWindow(c) is { } w && VideoSourceCatalog.WindowExists(w.Handle):
+                if (!VideoSourceCatalog.IsWindowCapturable(w.Handle))
+                {
+                    SceneCaptureNote = $"{w.Title} is minimized. Restore it to stream.";
+                    return null;
+                }
                 return new ResolvedCapture("w" + w.Handle.ToString(System.Globalization.CultureInfo.InvariantCulture), w.ToSource() with { CaptureCursor = c.CaptureCursor }, w);
             case SceneCaptureKind.Display when FindMonitor(c) is { } m:
                 var api = c.DesktopDuplication ? CaptureApi.DesktopDuplication : CaptureApi.WindowsGraphicsCapture;
@@ -223,7 +260,13 @@ public sealed partial class MainViewModel
     private void ApplyLiveSourceSwitch()
     {
         _liveSourceTimer?.Stop();
-        if (_engine is null || !IsActive || State == StreamState.Stopping)
+        if (_pendingCapture is { } pending)
+        {
+            _pendingCapture = null;
+            Webcam?.UpdateActiveSceneQuietly(s => s with { Capture = pending });
+        }
+
+        if (_engine is null || !IsActive || State == StreamState.Stopping || Webcam is null)
         {
             return;
         }
@@ -287,15 +330,37 @@ public sealed partial class MainViewModel
         }
     }
 
-    /// <summary>While live, a captured game that closes is dropped from the stream (FFmpeg can't keep capturing it).</summary>
+    /// <summary>While live, a captured game that closes or restores is monitored so the stream follows.</summary>
     private void UpdateWindowWatch()
     {
-        _windowWatch ??= new DispatcherTimer(TimeSpan.FromSeconds(3), DispatcherPriority.Background, (_, _) =>
+        _windowWatch ??= new DispatcherTimer(TimeSpan.FromSeconds(2), DispatcherPriority.Background, (_, _) =>
         {
             if (_liveCaptures.Any(c => c.Source is WindowSource w && !VideoSourceCatalog.WindowExists(w.WindowHandle)))
             {
                 AppendLog("A captured game or window closed; the stream continues without it.");
                 ApplyLiveSourceSwitch();
+                return;
+            }
+
+            // Check if active scene was waiting for a window that was minimized or unavailable, and is now capturable.
+            if (Webcam is not null && CaptureOf(Webcam.ActiveLayout) is { Kind: SceneCaptureKind.Window } req && FindWindow(req) is { } targetWindow)
+            {
+                var wasCapturing = _liveCaptures.Any(c => c.Source is WindowSource w && w.WindowHandle == targetWindow.Handle);
+                var isCapturable = VideoSourceCatalog.IsWindowCapturable(targetWindow.Handle);
+                if (!wasCapturing && isCapturable)
+                {
+                    SceneCaptureNote = null;
+                    AppendLog($"'{targetWindow.Title}' is now available; restoring capture.");
+                    ApplyLiveSourceSwitch();
+                }
+                else if (wasCapturing && !isCapturable && VideoSourceCatalog.IsWindowMinimized(targetWindow.Handle))
+                {
+                    SceneCaptureNote = $"{targetWindow.Title} is minimized. Restore it to stream.";
+                }
+                else if (wasCapturing && isCapturable && SceneCaptureNote is not null)
+                {
+                    SceneCaptureNote = null;
+                }
             }
         }, _ui);
         _windowWatch.IsEnabled = IsActive;

@@ -1127,7 +1127,17 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             };
             _engine.StateChanged += (_, e) => _ui.InvokeAsync(() => OnStateChanged(e));
             _engine.TelemetryUpdated += (_, t) => _ui.InvokeAsync(() => OnTelemetry(t));
-            _engine.DiagnosticLine += (_, line) => _ui.InvokeAsync(() => AppendLog(line));
+            _engine.DiagnosticLine += (_, line) => _ui.InvokeAsync(() =>
+            {
+                AppendLog(line);
+                if (line.Contains("The upload is not keeping up:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var msg = line.Contains("[warning] ", StringComparison.OrdinalIgnoreCase)
+                        ? line[(line.IndexOf("[warning] ", StringComparison.OrdinalIgnoreCase) + 10)..]
+                        : line;
+                    WarningText = msg;
+                }
+            });
             _engine.RecordingSaved += (_, path) => _ui.InvokeAsync(() => OnRecordingSavedAsync(path));
 
             IsReady = SelectedEncoder is not null;
@@ -1995,9 +2005,21 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         UpdateCaptureBlack(t.CaptureLooksBlack);
-        WarningText = t.State == StreamState.Live && t.EncoderOverloaded
-            ? "Encoding is falling behind. Lower the resolution or frame rate, or choose a hardware encoder."
-            : null;
+        if (t.State == StreamState.Live && t.EncoderOverloaded)
+        {
+            WarningText = "Encoding is falling behind. Lower the resolution or frame rate, or choose a hardware encoder.";
+        }
+        else if (t.State == StreamState.Live && t.Network is { BufferedBytes: > 4 * 1024 * 1024 } net && WarningText is null)
+        {
+            var backlogSec = (t.Encoder is { BitrateKbps: > 0 } enc)
+                ? (net.BufferedBytes * 8.0 / 1000.0) / enc.BitrateKbps
+                : (net.BufferedBytes / (500.0 * 1024.0));
+            WarningText = $"The upload connection is falling behind (about {backlogSec:0} s waiting to send). Lower the bitrate in Settings.";
+        }
+        else if (t.State != StreamState.Live || (t.Network is { BufferedBytes: < 1024 * 1024 } && !t.EncoderOverloaded && WarningText?.StartsWith("The upload", StringComparison.Ordinal) == true))
+        {
+            WarningText = null;
+        }
     }
 
     private void AppendLog(string line)

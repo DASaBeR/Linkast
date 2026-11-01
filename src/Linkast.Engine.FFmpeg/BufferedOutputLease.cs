@@ -23,7 +23,7 @@ internal sealed partial class BufferedOutputLease : IOutputLease
     /// More than this waiting (about 80 s at 6000 kbps) means the upload can't carry the stream; the encoder
     /// then waits for the network again rather than filling the memory.
     /// </summary>
-    internal const long MaxBufferedBytes = 64L << 20;
+    internal const long MaxBufferedBytes = 16L << 20;
 
     private const int ChunkSize = 64 * 1024;
 
@@ -40,7 +40,7 @@ internal sealed partial class BufferedOutputLease : IOutputLease
     private Task? _run;
     private long _buffered;
     /// <summary>First warning at 8 MB (8–11 s of a 6000–8000 kbps stream; a server's slow answer is a few s), then each doubling.</summary>
-    private long _warnAt = 8 << 20;
+    private long _warnAt = 4 << 20;
 
     private BufferedOutputLease(IOutputLease inner, ILogger logger)
     {
@@ -61,7 +61,7 @@ internal sealed partial class BufferedOutputLease : IOutputLease
     /// <summary>Bytes the encoder has written that the server has not been sent yet.</summary>
     public long BufferedBytes => Interlocked.Read(ref _buffered);
 
-    public NetworkSnapshot Snapshot() => _inner.Snapshot();
+    public NetworkSnapshot Snapshot() => _inner.Snapshot() with { BufferedBytes = BufferedBytes };
 
     /// <summary>Opens the buffer in front of <paramref name="inner"/> and starts the sending FFmpeg.</summary>
     public static BufferedOutputLease Start(FfmpegInstallation ffmpeg, IOutputLease inner, ILogger logger, Action<string> senderLine)

@@ -122,6 +122,13 @@ public static partial class VideoSourceCatalog
 
     public static bool WindowExists(long handle) => IsWindow((nint)handle);
 
+    /// <summary>True when the window is minimized (iconic).</summary>
+    public static bool IsWindowMinimized(long handle) => IsIconic((nint)handle);
+
+    /// <summary>True when the window exists, is not minimized, and has a positive client area for capture.</summary>
+    public static bool IsWindowCapturable(long handle) =>
+        WindowExists(handle) && !IsWindowMinimized(handle) && ClientSize(handle) is { Width: > 0, Height: > 0 };
+
     /// <summary>The size of a window's picture (its client area) in pixels, or null when it can't be read or is minimized.</summary>
     public static (int Width, int Height)? ClientSize(long handle) =>
         GetClientRect((nint)handle, out var r) && r.Right - r.Left > 0 && r.Bottom - r.Top > 0
@@ -171,6 +178,10 @@ public static partial class VideoSourceCatalog
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool IsWindow(nint hwnd);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool IsIconic(nint hwnd);
 
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
