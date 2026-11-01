@@ -147,60 +147,7 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
         {
             while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
             {
-                var now = Stopwatch.GetTimestamp();
-                var elapsed = Stopwatch.GetElapsedTime(_streamStartTimestamp, now);
-
-                // Check if audio has run ahead of monotonic clock
-                if (_padder.IsAhead(elapsed, Interlocked.Read(ref _totalBytesWritten), TimeSpan.FromMilliseconds(50)))
-                {
-                    // Drop this slice to stay locked to master clock
-                    DrainOneSliceFromAllChannels();
-                    continue;
-                }
-
-                Array.Clear(mixFloatBuffer, 0, mixFloatBuffer.Length);
-                bool hasAudio = false;
-
-                // Mix all active channels
-                foreach (var channel in _channels.Values)
-                {
-                    if (channel.TryReadSlice(mixFloatBuffer))
-                    {
-                        hasAudio = true;
-                    }
-                }
-
-                if (hasAudio)
-                {
-                    Volatile.Write(ref _lastDataTimestamp, now);
-
-                    // Convert float32 [-1.0, 1.0] to int16 s16le with soft clamping
-                    for (int i = 0; i < SamplesPerSlice; i++)
-                    {
-                        int s16 = (int)Math.Round(mixFloatBuffer[i] * 32767.0f);
-                        short clamped = (short)Math.Clamp(s16, short.MinValue, short.MaxValue);
-
-                        int byteIndex = i * 2;
-                        outByteBuffer[byteIndex] = (byte)(clamped & 0xFF);
-                        outByteBuffer[byteIndex + 1] = (byte)((clamped >> 8) & 0xFF);
-                    }
-
-                    await _audioPipeStream.WriteAsync(outByteBuffer.AsMemory(0, BytesPerSlice), ct).ConfigureAwait(false);
-                    Interlocked.Add(ref _totalBytesWritten, BytesPerSlice);
-                }
-                else
-                {
-                    // Check if silence padding is required to preserve monotonic clock continuity
-                    var last = Volatile.Read(ref _lastDataTimestamp);
-                    var sinceData = last == 0 ? elapsed : Stopwatch.GetElapsedTime(last, now);
-                    var pad = _padder.SilenceToWrite(elapsed, Interlocked.Read(ref _totalBytesWritten), sinceData);
-
-                    if (pad > 0)
-                    {
-                        await _audioPipeStream.WriteAsync(silenceBuffer.AsMemory(0, pad), ct).ConfigureAwait(false);
-                        Interlocked.Add(ref _totalBytesWritten, pad);
-                    }
-                }
+                await MixOneSliceAsync(mixFloatBuffer, outByteBuffer, silenceBuffer, ct).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -218,6 +165,75 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
         {
             _isRunning = false;
             _workerFinished.TrySetResult();
+        }
+    }
+
+    internal async ValueTask<int> MixOneSliceAsync(
+        float[]? mixFloatBuffer = null,
+        byte[]? outByteBuffer = null,
+        byte[]? silenceBuffer = null,
+        CancellationToken ct = default)
+    {
+        mixFloatBuffer ??= new float[SamplesPerSlice];
+        outByteBuffer ??= new byte[BytesPerSlice];
+        silenceBuffer ??= new byte[BytesPerSec];
+
+        var now = Stopwatch.GetTimestamp();
+        var elapsed = Stopwatch.GetElapsedTime(_streamStartTimestamp, now);
+
+        // Check if audio has run ahead of monotonic clock
+        if (_padder.IsAhead(elapsed, Interlocked.Read(ref _totalBytesWritten), TimeSpan.FromMilliseconds(50)))
+        {
+            // Drop this slice to stay locked to master clock
+            DrainOneSliceFromAllChannels();
+            return 0;
+        }
+
+        Array.Clear(mixFloatBuffer, 0, mixFloatBuffer.Length);
+        bool hasAudio = false;
+
+        // Mix all active channels
+        foreach (var channel in _channels.Values)
+        {
+            if (channel.TryReadSlice(mixFloatBuffer))
+            {
+                hasAudio = true;
+            }
+        }
+
+        if (hasAudio)
+        {
+            Volatile.Write(ref _lastDataTimestamp, now);
+
+            // Convert float32 [-1.0, 1.0] to int16 s16le with soft clamping
+            for (int i = 0; i < SamplesPerSlice; i++)
+            {
+                int s16 = (int)Math.Round(mixFloatBuffer[i] * 32767.0f);
+                short clamped = (short)Math.Clamp(s16, short.MinValue, short.MaxValue);
+
+                int byteIndex = i * 2;
+                outByteBuffer[byteIndex] = (byte)(clamped & 0xFF);
+                outByteBuffer[byteIndex + 1] = (byte)((clamped >> 8) & 0xFF);
+            }
+
+            await _audioPipeStream.WriteAsync(outByteBuffer.AsMemory(0, BytesPerSlice), ct).ConfigureAwait(false);
+            Interlocked.Add(ref _totalBytesWritten, BytesPerSlice);
+            return BytesPerSlice;
+        }
+        else
+        {
+            // Check if silence padding is required to preserve monotonic clock continuity
+            var last = Volatile.Read(ref _lastDataTimestamp);
+            var sinceData = last == 0 ? elapsed : Stopwatch.GetElapsedTime(last, now);
+            var pad = _padder.SilenceToWrite(elapsed, Interlocked.Read(ref _totalBytesWritten), sinceData);
+
+            if (pad > 0)
+            {
+                await _audioPipeStream.WriteAsync(silenceBuffer.AsMemory(0, pad), ct).ConfigureAwait(false);
+                Interlocked.Add(ref _totalBytesWritten, pad);
+                return pad;
+            }
+            return 0;
         }
     }
 

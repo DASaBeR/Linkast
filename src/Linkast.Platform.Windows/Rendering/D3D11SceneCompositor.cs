@@ -139,7 +139,10 @@ public sealed partial class D3D11SceneCompositor : IDisposable
     private ID3D11ShaderResourceView? _canvasSrv;
     private ID3D11Buffer? _nv12GpuBuffer;
     private ID3D11UnorderedAccessView? _nv12Uav;
-    private ID3D11Buffer? _nv12StagingBuffer;
+    private readonly ID3D11Buffer?[] _nv12StagingBuffers = new ID3D11Buffer?[2];
+    private int _stagingWriteIndex;
+    private int _stagingReadIndex = -1;
+    private byte[]? _readbackBuffer;
 
     private bool _disposed;
 
@@ -242,11 +245,21 @@ public sealed partial class D3D11SceneCompositor : IDisposable
         _canvasTexture?.Dispose();
         _nv12Uav?.Dispose();
         _nv12GpuBuffer?.Dispose();
-        _nv12StagingBuffer?.Dispose();
+        _nv12StagingBuffers[0]?.Dispose();
+        _nv12StagingBuffers[0] = null;
+        _nv12StagingBuffers[1]?.Dispose();
+        _nv12StagingBuffers[1] = null;
 
         _canvasWidth = width;
         _canvasHeight = height;
         _nv12TotalBytes = (uint)(width * height * 1.5);
+        _stagingWriteIndex = 0;
+        _stagingReadIndex = -1;
+
+        if (_readbackBuffer is null || _readbackBuffer.Length < _nv12TotalBytes)
+        {
+            _readbackBuffer = new byte[_nv12TotalBytes];
+        }
 
         // Canvas texture (RGBA RenderTarget + ShaderResource)
         var texDesc = new Texture2DDescription
@@ -288,7 +301,7 @@ public sealed partial class D3D11SceneCompositor : IDisposable
         };
         _nv12Uav = device.CreateUnorderedAccessView(_nv12GpuBuffer, uavDesc);
 
-        // NV12 staging buffer (CPU readback)
+        // NV12 staging buffers (CPU double-buffered readback)
         var stagingDesc = new BufferDescription
         {
             ByteWidth = _nv12TotalBytes,
@@ -296,7 +309,8 @@ public sealed partial class D3D11SceneCompositor : IDisposable
             CPUAccessFlags = CpuAccessFlags.Read,
             BindFlags = BindFlags.None
         };
-        _nv12StagingBuffer = device.CreateBuffer(stagingDesc);
+        _nv12StagingBuffers[0] = device.CreateBuffer(stagingDesc);
+        _nv12StagingBuffers[1] = device.CreateBuffer(stagingDesc);
 
         // Update NV12 params constant buffer
         uint[] paramsData = [(uint)width, (uint)height, 0, 0];
@@ -418,9 +432,8 @@ public sealed partial class D3D11SceneCompositor : IDisposable
     public int ConvertToNv12(Span<byte> destination)
     {
         lock (_renderGate)
-        lock (_deviceManager.ContextLock)
         {
-            if (_disposed || _canvasSrv is null || _nv12Uav is null || _nv12StagingBuffer is null)
+            if (_disposed || _canvasSrv is null || _nv12Uav is null || _nv12StagingBuffers[0] is null || _nv12StagingBuffers[1] is null)
             {
                 return 0;
             }
@@ -430,42 +443,52 @@ public sealed partial class D3D11SceneCompositor : IDisposable
                 throw new ArgumentException($"Destination buffer size ({destination.Length}) is smaller than required NV12 frame size ({_nv12TotalBytes}).", nameof(destination));
             }
 
-            var context = _deviceManager.Context;
-
-            // Unbind canvas from OM before binding as compute SRV
-            context.OMSetRenderTargets([], (ID3D11DepthStencilView?)null);
-
-            // Run NV12 conversion compute shader
-            context.CSSetShader(_nv12ComputeShader);
-            context.CSSetShaderResource(0, _canvasSrv);
-            context.CSSetUnorderedAccessView(0, _nv12Uav);
-            context.CSSetConstantBuffer(0, _nv12ConstantBuffer);
-
-            // Each 8x8 thread group covers 32 px wide (4 per thread) by 16 px tall (2 per thread).
-            // Round up so the last partial group is dispatched; the shader guards out-of-range texels.
-            context.Dispatch((uint)((_canvasWidth + 31) / 32), (uint)((_canvasHeight + 15) / 16), 1);
-
-            // Unbind CS inputs/outputs
-            context.CSSetShader(null);
-            context.CSSetShaderResource(0, (ID3D11ShaderResourceView)null!);
-            context.CSSetUnorderedAccessView(0, (ID3D11UnorderedAccessView)null!);
-
-            // Copy to staging for CPU reading
-            context.CopyResource(_nv12StagingBuffer, _nv12GpuBuffer!);
-
-            var mapped = context.Map(_nv12StagingBuffer, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
-            try
+            lock (_deviceManager.ContextLock)
             {
-                unsafe
+                var context = _deviceManager.Context;
+
+                // Unbind canvas from OM before binding as compute SRV
+                context.OMSetRenderTargets([], (ID3D11DepthStencilView?)null);
+
+                // Run NV12 conversion compute shader
+                context.CSSetShader(_nv12ComputeShader);
+                context.CSSetShaderResource(0, _canvasSrv);
+                context.CSSetUnorderedAccessView(0, _nv12Uav);
+                context.CSSetConstantBuffer(0, _nv12ConstantBuffer);
+
+                // Each 8x8 thread group covers 32 px wide (4 per thread) by 16 px tall (2 per thread).
+                // Round up so the last partial group is dispatched; the shader guards out-of-range texels.
+                context.Dispatch((uint)((_canvasWidth + 31) / 32), (uint)((_canvasHeight + 15) / 16), 1);
+
+                // Unbind CS inputs/outputs
+                context.CSSetShader(null);
+                context.CSSetShaderResource(0, (ID3D11ShaderResourceView)null!);
+                context.CSSetUnorderedAccessView(0, (ID3D11UnorderedAccessView)null!);
+
+                // Copy newest GPU buffer to current write staging buffer
+                var writeBuffer = _nv12StagingBuffers[_stagingWriteIndex]!;
+                context.CopyResource(writeBuffer, _nv12GpuBuffer!);
+
+                // Read from alternate staging buffer (which finished GPU processing during prior frame).
+                // On the very first frame, map write buffer directly so output is immediate.
+                var readBuffer = _stagingReadIndex >= 0 ? _nv12StagingBuffers[_stagingReadIndex]! : writeBuffer;
+                _stagingReadIndex = _stagingWriteIndex;
+                _stagingWriteIndex = 1 - _stagingWriteIndex;
+
+                var mapped = context.Map(readBuffer, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
+                try
                 {
-                    var sourceSpan = new ReadOnlySpan<byte>((void*)mapped.DataPointer, (int)_nv12TotalBytes);
-                    sourceSpan.CopyTo(destination);
+                    unsafe
+                    {
+                        var sourceSpan = new ReadOnlySpan<byte>((void*)mapped.DataPointer, (int)_nv12TotalBytes);
+                        sourceSpan.CopyTo(destination);
+                    }
+                    return (int)_nv12TotalBytes;
                 }
-                return (int)_nv12TotalBytes;
-            }
-            finally
-            {
-                context.Unmap(_nv12StagingBuffer, 0);
+                finally
+                {
+                    context.Unmap(readBuffer, 0);
+                }
             }
         }
     }
@@ -479,52 +502,71 @@ public sealed partial class D3D11SceneCompositor : IDisposable
     {
         ArgumentNullException.ThrowIfNull(stream);
 
+        int bytesRead = 0;
         lock (_renderGate)
-        lock (_deviceManager.ContextLock)
         {
-            if (_disposed || _canvasSrv is null || _nv12Uav is null || _nv12StagingBuffer is null)
+            lock (_deviceManager.ContextLock)
             {
-                return 0;
-            }
-
-            var context = _deviceManager.Context;
-
-            // Unbind canvas from OM
-            context.OMSetRenderTargets([], (ID3D11DepthStencilView?)null);
-
-            // Run compute shader
-            context.CSSetShader(_nv12ComputeShader);
-            context.CSSetShaderResource(0, _canvasSrv);
-            context.CSSetUnorderedAccessView(0, _nv12Uav);
-            context.CSSetConstantBuffer(0, _nv12ConstantBuffer);
-
-            // Each 8x8 thread group covers 32 px wide (4 per thread) by 16 px tall (2 per thread).
-            // Round up so the last partial group is dispatched; the shader guards out-of-range texels.
-            context.Dispatch((uint)((_canvasWidth + 31) / 32), (uint)((_canvasHeight + 15) / 16), 1);
-
-            // Unbind CS
-            context.CSSetShader(null);
-            context.CSSetShaderResource(0, (ID3D11ShaderResourceView)null!);
-            context.CSSetUnorderedAccessView(0, (ID3D11UnorderedAccessView)null!);
-
-            // Copy to staging
-            context.CopyResource(_nv12StagingBuffer, _nv12GpuBuffer!);
-
-            var mapped = context.Map(_nv12StagingBuffer, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
-            try
-            {
-                unsafe
+                if (_disposed || _canvasSrv is null || _nv12Uav is null || _nv12StagingBuffers[0] is null || _nv12StagingBuffers[1] is null)
                 {
-                    var sourceSpan = new ReadOnlySpan<byte>((void*)mapped.DataPointer, (int)_nv12TotalBytes);
-                    stream.Write(sourceSpan);
+                    return 0;
                 }
-                return (int)_nv12TotalBytes;
+
+                var context = _deviceManager.Context;
+
+                // Unbind canvas from OM
+                context.OMSetRenderTargets([], (ID3D11DepthStencilView?)null);
+
+                // Run compute shader
+                context.CSSetShader(_nv12ComputeShader);
+                context.CSSetShaderResource(0, _canvasSrv);
+                context.CSSetUnorderedAccessView(0, _nv12Uav);
+                context.CSSetConstantBuffer(0, _nv12ConstantBuffer);
+
+                // Each 8x8 thread group covers 32 px wide (4 per thread) by 16 px tall (2 per thread).
+                // Round up so the last partial group is dispatched; the shader guards out-of-range texels.
+                context.Dispatch((uint)((_canvasWidth + 31) / 32), (uint)((_canvasHeight + 15) / 16), 1);
+
+                // Unbind CS
+                context.CSSetShader(null);
+                context.CSSetShaderResource(0, (ID3D11ShaderResourceView)null!);
+                context.CSSetUnorderedAccessView(0, (ID3D11UnorderedAccessView)null!);
+
+                // Copy to staging
+                var writeBuffer = _nv12StagingBuffers[_stagingWriteIndex]!;
+                context.CopyResource(writeBuffer, _nv12GpuBuffer!);
+
+                var readBuffer = _stagingReadIndex >= 0 ? _nv12StagingBuffers[_stagingReadIndex]! : writeBuffer;
+                _stagingReadIndex = _stagingWriteIndex;
+                _stagingWriteIndex = 1 - _stagingWriteIndex;
+
+                var mapped = context.Map(readBuffer, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
+                try
+                {
+                    unsafe
+                    {
+                        var sourceSpan = new ReadOnlySpan<byte>((void*)mapped.DataPointer, (int)_nv12TotalBytes);
+                        if (_readbackBuffer is not null)
+                        {
+                            sourceSpan.CopyTo(_readbackBuffer);
+                            bytesRead = (int)_nv12TotalBytes;
+                        }
+                    }
+                }
+                finally
+                {
+                    context.Unmap(readBuffer, 0);
+                }
             }
-            finally
+
+            // Write to destination pipe OUTSIDE ContextLock to prevent pipe I/O from blocking D3D11 context
+            if (bytesRead > 0 && _readbackBuffer is not null)
             {
-                context.Unmap(_nv12StagingBuffer, 0);
+                stream.Write(_readbackBuffer.AsSpan(0, bytesRead));
             }
         }
+
+        return bytesRead;
     }
 
     private void OnDeviceRestored(object? sender, EventArgs e)
@@ -567,7 +609,10 @@ public sealed partial class D3D11SceneCompositor : IDisposable
             _canvasTexture?.Dispose();
             _nv12Uav?.Dispose();
             _nv12GpuBuffer?.Dispose();
-            _nv12StagingBuffer?.Dispose();
+            _nv12StagingBuffers[0]?.Dispose();
+            _nv12StagingBuffers[0] = null;
+            _nv12StagingBuffers[1]?.Dispose();
+            _nv12StagingBuffers[1] = null;
 
             _layerConstantBuffer?.Dispose();
             _nv12ConstantBuffer?.Dispose();

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using Linkast.Core;
@@ -21,8 +22,12 @@ public class UnifiedAudioMixerTests
         mixer.Start();
         Assert.True(mixer.IsRunning);
 
-        // Wait ~60 ms for timer ticks
-        await Task.Delay(60);
+        // Wait for worker loop ticks with deterministic polling (avoids thread pool delay flakiness on CI)
+        var deadline = Stopwatch.StartNew();
+        while (mixer.TotalBytesWritten == 0 && deadline.Elapsed < TimeSpan.FromSeconds(3))
+        {
+            await Task.Delay(10);
+        }
 
         await mixer.DisposeAsync();
         Assert.False(mixer.IsRunning);
@@ -89,8 +94,9 @@ public class UnifiedAudioMixerTests
 
         mixer.EnqueueTestChannelData("mono44k", bytes);
 
-        mixer.Start();
-        await Task.Delay(60);
+        // Process a slice directly to verify format normalization & resampling deterministically
+        var written = await mixer.MixOneSliceAsync();
+        Assert.True(written > 0);
 
         await mixer.DisposeAsync();
 
