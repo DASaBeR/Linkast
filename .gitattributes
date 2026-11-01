@@ -1,4 +1,4 @@
-# Normalize text to LF in the repository; check out with the platform's native line endings.
+# Normalize text in the repository; check out with the platform's native line endings.
 * text=auto
 
 # Windows-specific files keep CRLF in working copies.
@@ -8,6 +8,11 @@
 *.def       text eol=crlf
 *.rc        text eol=crlf
 *.ps1       text eol=crlf
+*.cs        text eol=crlf
+*.xaml      text eol=crlf
+*.csproj    text eol=crlf
+*.json      text eol=crlf
+*.md        text eol=crlf
 
 # Shell scripts run under Git Bash or sh, which reject CRLF line endings.
 *.sh        text eol=lf
