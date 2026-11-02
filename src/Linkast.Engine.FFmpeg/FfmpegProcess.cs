@@ -27,6 +27,24 @@ public sealed class FfmpegProcess : IAsyncDisposable
 
     public int ProcessId => _process.Id;
 
+    public bool HasExited
+    {
+        get
+        {
+            try { return _process.HasExited; }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { return true; }
+        }
+    }
+
+    public int? ExitCode
+    {
+        get
+        {
+            try { return _process.HasExited ? _process.ExitCode : null; }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { return null; }
+        }
+    }
+
     /// <summary>Completes with the exit code once the process and its output pumps have finished.</summary>
     public Task<int> Exited => _exited.Task;
 

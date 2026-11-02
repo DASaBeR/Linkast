@@ -39,6 +39,7 @@ internal sealed partial class BufferedOutputLease : IOutputLease
     private Action<string> _senderLine = _ => { };
     private Task? _run;
     private long _buffered;
+    private bool _encoderConnected;
     /// <summary>First warning at 8 MB (8–11 s of a 6000–8000 kbps stream; a server's slow answer is a few s), then each doubling.</summary>
     private long _warnAt = 4 << 20;
 
@@ -111,6 +112,7 @@ internal sealed partial class BufferedOutputLease : IOutputLease
             var acceptEncoder = _encoderListener.AcceptTcpClientAsync(ct).AsTask();
             var acceptSender = _senderListener.AcceptTcpClientAsync(ct).AsTask();
             encoder = await acceptEncoder.ConfigureAwait(false);
+            Volatile.Write(ref _encoderConnected, true);
             _encoderListener.Stop();
             var fill = FillAsync(encoder.GetStream(), ct);
 
@@ -138,6 +140,10 @@ internal sealed partial class BufferedOutputLease : IOutputLease
         }
         finally
         {
+            if (_cts.IsCancellationRequested)
+            {
+                _sender?.Kill();
+            }
             encoder?.Dispose(); // the encoder's output closes, so it stops too
             sender?.Dispose();
         }
@@ -275,9 +281,14 @@ internal sealed partial class BufferedOutputLease : IOutputLease
     public async ValueTask DisposeAsync()
     {
         // Let a stop's last seconds reach the server: the encoder has finished by now.
-        if (_run is not null)
+        // An attempt whose encoder never connected has nothing to send, so there is nothing to wait for.
+        if (_run is not null && Volatile.Read(ref _encoderConnected))
         {
             await Task.WhenAny(_run, Task.Delay(TimeSpan.FromSeconds(6))).ConfigureAwait(false);
+        }
+        else
+        {
+            _sender?.Kill();
         }
 
         await _cts.CancelAsync().ConfigureAwait(false);

@@ -324,4 +324,126 @@ public class D3D11StreamEngineTests
         await overlaySrc.DisposeAsync();
         await mediaSrc.DisposeAsync();
     }
+
+    [Fact]
+    public async Task D3D11StreamEngine_fails_fast_when_ffmpeg_exits_early()
+    {
+        using var deviceManager = new D3D11DeviceManager();
+        var wherePath = Path.Combine(Environment.SystemDirectory, "where.exe");
+        var fakeFfmpeg = new FfmpegInstallation(wherePath, "test", "1.0", "test");
+        await using var engine = new D3D11StreamEngine(
+            fakeFfmpeg,
+            new TestOutputTransport(),
+            deviceManager: deviceManager,
+            options: new EngineOptions { ConnectTimeout = TimeSpan.FromSeconds(10) });
+
+        var session = ValidSession() with
+        {
+            Broadcast = false,
+            Recording = new RecordingSpec(Path.GetTempPath()),
+            Reconnect = ReconnectPolicy.Disabled
+        };
+
+        var states = new List<string>();
+        engine.StateChanged += (_, e) => states.Add($"{e.Current} (error: {e.Error?.Code})");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await engine.StartAsync(session);
+
+        while (engine.State != StreamState.Failed && sw.ElapsedMilliseconds < 3000)
+        {
+            await Task.Delay(50);
+        }
+
+        Assert.True(engine.State == StreamState.Failed, "States: " + string.Join(" -> ", states));
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5), $"Expected fast fail under 5s, took {sw.Elapsed.TotalSeconds}s");
+        Assert.NotNull(engine.LastError);
+        Assert.Equal("ffmpeg.early_exit", engine.LastError.Code);
+        Assert.Contains("Exit code", engine.LastError.Detail);
+    }
+
+    [Fact]
+    public async Task D3D11StreamEngine_reports_diagnostic_pipe_status_on_timeout()
+    {
+        using var deviceManager = new D3D11DeviceManager();
+        var cmdPath = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+        var fakeFfmpeg = new FfmpegInstallation(cmdPath, "test", "1.0", "test");
+        await using var engine = new D3D11StreamEngine(
+            fakeFfmpeg,
+            new TestOutputTransport(),
+            deviceManager: deviceManager,
+            options: new EngineOptions { ConnectTimeout = TimeSpan.FromMilliseconds(400) });
+
+        var session = ValidSession() with
+        {
+            Broadcast = false,
+            Recording = new RecordingSpec(Path.GetTempPath()),
+            Reconnect = ReconnectPolicy.Disabled
+        };
+
+        var states = new List<string>();
+        engine.StateChanged += (_, e) => states.Add($"{e.Current} (error: {e.Error?.Code})");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await engine.StartAsync(session);
+
+        while (engine.State != StreamState.Failed && sw.ElapsedMilliseconds < 3000)
+        {
+            await Task.Delay(50);
+        }
+
+        Assert.True(engine.State == StreamState.Failed, "States: " + string.Join(" -> ", states));
+        Assert.NotNull(engine.LastError);
+        Assert.Equal("pipe.connect_timeout", engine.LastError.Code);
+        Assert.Contains("Pipes: video=", engine.LastError.Detail);
+        Assert.Contains("audio=", engine.LastError.Detail);
+        Assert.Contains("Process:", engine.LastError.Detail);
+    }
+
+    [SkippableFact]
+    public async Task D3D11StreamEngine_staged_handshake_succeeds_with_real_ffmpeg()
+    {
+        FfmpegInstallation? ffmpeg = null;
+        try { ffmpeg = await FfmpegLocator.LocateAsync(); } catch { }
+        Skip.If(ffmpeg is null, "FFmpeg not available on machine.");
+
+        using var deviceManager = new D3D11DeviceManager();
+        var tempFolder = Path.Combine(Path.GetTempPath(), "linkast_test_" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(tempFolder);
+        try
+        {
+            await using var engine = new D3D11StreamEngine(
+                ffmpeg,
+                new TestOutputTransport(),
+                deviceManager: deviceManager,
+                options: new EngineOptions { ConnectTimeout = TimeSpan.FromSeconds(5) });
+
+            var session = ValidSession() with
+            {
+                Encoder = EncoderSettings.Default1080p60("libx264"),
+                Broadcast = false,
+                Recording = new RecordingSpec(tempFolder),
+                Reconnect = ReconnectPolicy.Disabled
+            };
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            await engine.StartAsync(session);
+
+            while (engine.State != StreamState.Live && engine.State != StreamState.Failed && sw.ElapsedMilliseconds < 5000)
+            {
+                await Task.Delay(50);
+            }
+
+            Assert.Equal(StreamState.Live, engine.State);
+            Assert.True(sw.Elapsed < TimeSpan.FromSeconds(4), $"Expected live under 4s, took {sw.Elapsed.TotalSeconds}s");
+
+            await engine.StopAsync();
+            Assert.Equal(StreamState.Stopped, engine.State);
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder))
+            {
+                try { Directory.Delete(tempFolder, true); } catch { }
+            }
+        }
+    }
 }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using System.Diagnostics;
+using System.IO;
 using Linkast.Core.Camera;
 using Linkast.Core.Rendering;
 using Microsoft.Extensions.Logging;
@@ -133,6 +134,17 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
             }
             catch (OperationCanceledException)
             {
+                break;
+            }
+            catch (IOException ex)
+            {
+                // The video pipe is gone: FFmpeg ended (a stop, or a reconnect that starts a new pipeline).
+                // A broken pipe never comes back, so this is the end of the loop, not an error.
+                if (_logger is not null)
+                {
+                    LogOutputClosed(_logger, ex.Message);
+                }
+
                 break;
             }
             catch (Exception ex)
@@ -367,6 +379,9 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
 
         _cts.Dispose();
     }
+
+    [LoggerMessage(LogLevel.Debug, "Video output closed; the render loop ends ({Reason}).")]
+    private static partial void LogOutputClosed(ILogger logger, string reason);
 
     [LoggerMessage(LogLevel.Error, "Render loop frame error occurred.")]
     private static partial void LogRenderFrameFailed(ILogger logger, Exception ex);

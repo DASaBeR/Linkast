@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.IO.Pipes;
 using Linkast.Core;
@@ -102,6 +103,8 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
     public StreamState State => _state.Current;
 
     public int FfmpegProcessId => Volatile.Read(ref _ffmpegProcessId);
+
+    public StreamError? LastError => _lastError;
 
     public FfmpegInstallation Installation => _ffmpeg;
 
@@ -404,22 +407,6 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
             Volatile.Write(ref _ffmpegProcessId, process.ProcessId);
 
-            using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            connectCts.CancelAfter(_options.ConnectTimeout);
-
-            try
-            {
-                await Task.WhenAll(
-                    videoPipe.WaitForConnectionAsync(connectCts.Token),
-                    audioPipe.WaitForConnectionAsync(connectCts.Token)).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                process.Kill();
-                return new StreamError(ErrorCategory.Process, "pipe.connect_timeout", "FFmpeg failed to connect to internal media pipes.");
-            }
-
-            var streamStart = _time.GetTimestamp();
             await using var scheduler = new MediaOutputScheduler(
                 _compositor,
                 _frameCache,
@@ -432,13 +419,79 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 placementsProvider: () => _layerPlacements,
                 stackOrderProvider: () => _stackOrder);
 
+            _scheduler = scheduler;
+
+            using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            connectCts.CancelAfter(_options.ConnectTimeout);
+
+            try
+            {
+                // Handshake step 1: Wait for videoPipe to connect, racing against FFmpeg early exit
+                var videoConnect = videoPipe.WaitForConnectionAsync(connectCts.Token);
+                var first = await Task.WhenAny(videoConnect, process.Exited).ConfigureAwait(false);
+                if (first == process.Exited)
+                {
+                    await connectCts.CancelAsync().ConfigureAwait(false);
+                    return EarlyExitError(process, recentLines);
+                }
+                await videoConnect.ConfigureAwait(false);
+
+                // Handshake step 2: Unblock FFmpeg's avformat_find_stream_info probe on Input 0 by pumping
+                // the initial composited frame, so FFmpeg can proceed to open Input 1 (audioPipe).
+                scheduler.RenderSingleFrame();
+
+                // Handshake step 3: Wait for audioPipe to connect, racing against FFmpeg early exit
+                var audioConnect = audioPipe.WaitForConnectionAsync(connectCts.Token);
+                first = await Task.WhenAny(audioConnect, process.Exited).ConfigureAwait(false);
+                if (first == process.Exited)
+                {
+                    await connectCts.CancelAsync().ConfigureAwait(false);
+                    return EarlyExitError(process, recentLines);
+                }
+                await audioConnect.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                bool videoConnected = videoPipe.IsConnected;
+                bool audioConnected = audioPipe.IsConnected;
+                bool isAlive = !process.HasExited;
+                int? exitCode = process.ExitCode;
+                string lastErrorText = string.Join(Environment.NewLine, recentLines);
+
+                process.Kill();
+
+                var detail = $"Pipes: video={(videoConnected ? "connected" : "waiting")}, audio={(audioConnected ? "connected" : "waiting")}. " +
+                    $"Process: {(isAlive ? $"running (PID {process.ProcessId})" : $"exited with code {exitCode}")}." +
+                    (string.IsNullOrWhiteSpace(lastErrorText) ? "" : $" Stderr: {lastErrorText}");
+
+                return new StreamError(ErrorCategory.Process, "pipe.connect_timeout", "FFmpeg failed to connect to internal media pipes.", detail);
+            }
+            catch (IOException ex)
+            {
+                await connectCts.CancelAsync().ConfigureAwait(false);
+                if (process.HasExited)
+                {
+                    return EarlyExitError(process, recentLines);
+                }
+
+                var winner = await Task.WhenAny(process.Exited, Task.Delay(500, CancellationToken.None)).ConfigureAwait(false);
+                if (winner == process.Exited)
+                {
+                    return EarlyExitError(process, recentLines);
+                }
+
+                return new StreamError(ErrorCategory.Process, "pipe.io_error", "Failed to communicate with FFmpeg media pipes.", ex.Message);
+            }
+
+            // The audio clock starts only now that FFmpeg is reading both pipes: a start before the
+            // handshake would make the mixer pad the handshake's duration as silence and put audio behind video.
+            var streamStart = _time.GetTimestamp();
             await using var mixer = new UnifiedAudioMixer(
                 _audioHub,
                 audioPipe,
                 streamStart,
                 _logger);
 
-            _scheduler = scheduler;
             _audioMixer = mixer;
 
             foreach (var a in session.Audio)
@@ -950,6 +1003,24 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
         public Task Completion { get; } = new TaskCompletionSource().Task;
         public NetworkSnapshot Snapshot() => new(0, 0, 0, null, null, null, false);
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private static StreamError EarlyExitError(FfmpegProcess process, ConcurrentQueue<string> recentLines)
+    {
+        var exitCode = process.ExitCode ?? -1;
+        var lines = recentLines.ToArray();
+        var classified = ErrorClassifier.ClassifyExit(exitCode, lines);
+        if (classified.Code != "process.exit")
+        {
+            return classified;
+        }
+
+        var stderr = string.Join(Environment.NewLine, lines);
+        return new StreamError(
+            ErrorCategory.Process,
+            "ffmpeg.early_exit",
+            "FFmpeg exited unexpectedly during startup.",
+            string.IsNullOrWhiteSpace(stderr) ? $"Exit code {exitCode}." : $"Exit code {exitCode}: {stderr}");
     }
 
     [LoggerMessage(LogLevel.Error, "Unexpected error occurred during D3D11 streaming session.")]

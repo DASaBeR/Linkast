@@ -210,6 +210,8 @@ public static class FfmpegArgumentBuilder
 
         // Input 0: Pre-composed NV12 video pipe
         args.AddRange([
+            "-probesize", "32",
+            "-analyzeduration", "0",
             "-thread_queue_size", "64",
             "-f", "rawvideo",
             "-pix_fmt", "nv12",
@@ -220,6 +222,8 @@ public static class FfmpegArgumentBuilder
 
         // Input 1: Pre-mixed stereo s16le PCM audio pipe
         args.AddRange([
+            "-probesize", "32",
+            "-analyzeduration", "0",
             "-thread_queue_size", "1024",
             "-f", "s16le",
             "-ar", e.AudioSampleRate.ToString(Inv),
