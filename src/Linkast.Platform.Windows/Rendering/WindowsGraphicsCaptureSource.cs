@@ -167,6 +167,7 @@ public sealed partial class WindowsGraphicsCaptureSource : ID3D11SceneSource
 
                 _session.StartCapture();
                 _state = SceneSourceState.Capturing;
+                _deviceManager.DeviceLost += OnDeviceLost;
                 _deviceManager.DeviceRestored += OnDeviceRestored;
             }
             catch (Exception ex)
@@ -256,6 +257,17 @@ public sealed partial class WindowsGraphicsCaptureSource : ID3D11SceneSource
         }
     }
 
+    private void OnDeviceLost(object? sender, EventArgs e)
+    {
+        lock (_syncLock)
+        {
+            _winrtDevice?.Dispose();
+            _winrtDevice = null;
+            _retainedTexture?.Dispose();
+            _retainedTexture = null;
+        }
+    }
+
     private void OnDeviceRestored(object? sender, EventArgs e)
     {
         lock (_syncLock)
@@ -327,6 +339,7 @@ public sealed partial class WindowsGraphicsCaptureSource : ID3D11SceneSource
             }
 
             _disposed = true;
+            _deviceManager.DeviceLost -= OnDeviceLost;
             _deviceManager.DeviceRestored -= OnDeviceRestored;
 
             if (_item is not null)

@@ -159,11 +159,16 @@ public sealed partial class D3D11SceneCompositor : IDisposable
 
         InitializeResources();
         _deviceManager.DeviceRestored += OnDeviceRestored;
+        _deviceManager.RegisterRenderGate(_renderGate);
     }
 
     public int CanvasWidth => _canvasWidth;
 
     public int CanvasHeight => _canvasHeight;
+
+    public D3D11DeviceManager DeviceManager => _deviceManager;
+
+    public Lock RenderGate => _renderGate;
 
     public uint Nv12ByteSize => _nv12TotalBytes;
 
@@ -172,7 +177,10 @@ public sealed partial class D3D11SceneCompositor : IDisposable
     private void InitializeResources()
     {
         lock (_renderGate)
+        lock (_deviceManager.ContextLock)
         {
+            DisposeResources();
+
             var device = _deviceManager.Device;
 
             // Compile shaders
@@ -323,6 +331,7 @@ public sealed partial class D3D11SceneCompositor : IDisposable
     public void ResizeCanvas(int width, int height)
     {
         lock (_renderGate)
+        lock (_deviceManager.ContextLock)
         {
             if (_disposed || (_canvasWidth == width && _canvasHeight == height))
             {
@@ -335,15 +344,16 @@ public sealed partial class D3D11SceneCompositor : IDisposable
 
     /// <summary>
     /// Clears the canvas with a background color and binds it as the active render target.
+    /// Returns true if the canvas is ready; false if disposed or device is being reinitialized.
     /// </summary>
-    public void BeginFrame(Color4 clearColor)
+    public bool BeginFrame(Color4 clearColor)
     {
         lock (_renderGate)
         lock (_deviceManager.ContextLock)
         {
             if (_disposed || _canvasRtv is null)
             {
-                return;
+                return false;
             }
 
             var context = _deviceManager.Context;
@@ -356,6 +366,7 @@ public sealed partial class D3D11SceneCompositor : IDisposable
             context.VSSetShader(_vertexShader);
             context.PSSetShader(_pixelShader);
             context.PSSetSampler(0, _linearSampler);
+            return true;
         }
     }
 
@@ -398,6 +409,11 @@ public sealed partial class D3D11SceneCompositor : IDisposable
         lock (_deviceManager.ContextLock)
         {
             if (_disposed || _canvasRtv is null)
+            {
+                return;
+            }
+
+            if (layerSrv.Device.NativePointer != _deviceManager.Device.NativePointer)
             {
                 return;
             }
@@ -592,9 +608,43 @@ public sealed partial class D3D11SceneCompositor : IDisposable
         }
     }
 
+    private void DisposeResources()
+    {
+        _canvasRtv?.Dispose();
+        _canvasRtv = null;
+        _canvasSrv?.Dispose();
+        _canvasSrv = null;
+        _canvasTexture?.Dispose();
+        _canvasTexture = null;
+        _nv12Uav?.Dispose();
+        _nv12Uav = null;
+        _nv12GpuBuffer?.Dispose();
+        _nv12GpuBuffer = null;
+        _nv12StagingBuffers[0]?.Dispose();
+        _nv12StagingBuffers[0] = null;
+        _nv12StagingBuffers[1]?.Dispose();
+        _nv12StagingBuffers[1] = null;
+
+        _layerConstantBuffer?.Dispose();
+        _layerConstantBuffer = null;
+        _nv12ConstantBuffer?.Dispose();
+        _nv12ConstantBuffer = null;
+        _alphaBlendState?.Dispose();
+        _alphaBlendState = null;
+        _linearSampler?.Dispose();
+        _linearSampler = null;
+        _vertexShader?.Dispose();
+        _vertexShader = null;
+        _pixelShader?.Dispose();
+        _pixelShader = null;
+        _nv12ComputeShader?.Dispose();
+        _nv12ComputeShader = null;
+    }
+
     public void Dispose()
     {
         lock (_renderGate)
+        lock (_deviceManager.ContextLock)
         {
             if (_disposed)
             {
@@ -603,24 +653,9 @@ public sealed partial class D3D11SceneCompositor : IDisposable
 
             _disposed = true;
             _deviceManager.DeviceRestored -= OnDeviceRestored;
+            _deviceManager.UnregisterRenderGate(_renderGate);
 
-            _canvasRtv?.Dispose();
-            _canvasSrv?.Dispose();
-            _canvasTexture?.Dispose();
-            _nv12Uav?.Dispose();
-            _nv12GpuBuffer?.Dispose();
-            _nv12StagingBuffers[0]?.Dispose();
-            _nv12StagingBuffers[0] = null;
-            _nv12StagingBuffers[1]?.Dispose();
-            _nv12StagingBuffers[1] = null;
-
-            _layerConstantBuffer?.Dispose();
-            _nv12ConstantBuffer?.Dispose();
-            _alphaBlendState?.Dispose();
-            _linearSampler?.Dispose();
-            _vertexShader?.Dispose();
-            _pixelShader?.Dispose();
-            _nv12ComputeShader?.Dispose();
+            DisposeResources();
         }
     }
 

@@ -1131,7 +1131,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 _ => $"{Encoders.Count(e => e.Kind == EncoderKind.Hardware)} hardware encoder(s) available.",
             };
 
-            _engine = new D3D11StreamEngine(
+            var engine = new D3D11StreamEngine(
                 ffmpeg,
                 _transport,
                 _audioHub,
@@ -1145,6 +1145,33 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 // A game window larger than the stream is scaled down on the GPU before FFmpeg copies it.
                 SourceSize = s => s is WindowSource w ? Linkast.Platform.Windows.Capture.VideoSourceCatalog.ClientSize(w.WindowHandle) : null,
             };
+
+            engine.OverlaySourceFactory = (overlay, width, height) =>
+            {
+                if (overlay.Source is WebOverlaySource web)
+                {
+                    return new WebOverlayD3D11SceneSource(
+                        overlay.LayerId,
+                        engine.DeviceManager,
+                        web.PageWidth,
+                        web.PageHeight,
+                        dest => _webOverlays.Get(overlay.LayerId)?.CopyLatest(dest) ?? false);
+                }
+
+                var frame = _ui.Invoke(() => OverlayInputProvider.Render(overlay.Source, width, height));
+                return new ImageD3D11SceneSource(overlay.LayerId, engine.DeviceManager, frame, width, height);
+            };
+
+            engine.MediaSourceFactory = (media, width, height) =>
+            {
+                if (!string.IsNullOrWhiteSpace(media.FilePath) && File.Exists(media.FilePath))
+                {
+                    return new ImageD3D11SceneSource(media.LayerId, engine.DeviceManager, media.FilePath, _backgroundImages);
+                }
+                return null;
+            };
+
+            _engine = engine;
             _engine.StateChanged += (_, e) => _ui.InvokeAsync(() => OnStateChanged(e));
             _engine.TelemetryUpdated += (_, t) => _ui.InvokeAsync(() => OnTelemetry(t));
             _engine.DiagnosticLine += (_, line) => _ui.InvokeAsync(() =>

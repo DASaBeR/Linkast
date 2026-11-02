@@ -46,6 +46,8 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
     private readonly ConcurrentDictionary<string, ID3D11SceneSource> _sources = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, NormalizedRect> _layerCrops = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, NormalizedRect> _layerPlacements = new(StringComparer.Ordinal);
+    private volatile IReadOnlyList<string> _stackOrder = [];
     private readonly Lock _layoutLock = new();
     private SceneLayout _currentLayout = new();
 
@@ -103,7 +105,13 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
     public FfmpegInstallation Installation => _ffmpeg;
 
+    public D3D11DeviceManager DeviceManager => _deviceManager;
+
     public Func<VideoSourceSpec, (int Width, int Height)?>? SourceSize { get; set; }
+
+    public Func<OverlayLayerBinding, int, int, ID3D11SceneSource?>? OverlaySourceFactory { get; set; }
+
+    public Func<MediaLayerBinding, int, int, ID3D11SceneSource?>? MediaSourceFactory { get; set; }
 
     public event EventHandler<StreamStateChangedEventArgs>? StateChanged;
 
@@ -175,16 +183,16 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
         _frameCache?.Dispose();
         _compositor?.Dispose();
 
-        if (_ownsDeviceManager)
-        {
-            _deviceManager.Dispose();
-        }
-
         foreach (var src in _sources.Values)
         {
             await src.DisposeAsync().ConfigureAwait(false);
         }
         _sources.Clear();
+
+        if (_ownsDeviceManager)
+        {
+            _deviceManager.Dispose();
+        }
     }
 
     private async Task RunSessionAsync(StreamSession session, CancellationToken ct)
@@ -278,14 +286,52 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
             lock (_layoutLock)
             {
+                _layerPlacements.Clear();
+                _layerCrops.Clear();
+                _stackOrder = session.Stack.Count > 0 ? [.. session.Stack] : [];
+
+                if (session.ShowCapture)
+                {
+                    _layerPlacements["capture"] = session.BasePlacement;
+                    _layerCrops["capture"] = session.BaseCrop;
+                }
+
+                foreach (var c in session.Captures)
+                {
+                    if (!c.StartHidden)
+                    {
+                        _layerPlacements[c.Key] = c.Placement;
+                    }
+                    _layerCrops[c.Key] = c.Crop;
+                }
+
+                foreach (var m in session.Media)
+                {
+                    if (!m.StartHidden)
+                    {
+                        _layerPlacements[m.LayerId] = NormalizedRect.Full;
+                    }
+                    _layerCrops[m.LayerId] = NormalizedRect.Full;
+                }
+
                 var cameraMap = new Dictionary<string, NormalizedRect>();
                 foreach (var b in session.CameraLayers)
                 {
                     if (!b.StartHidden)
                     {
                         cameraMap[b.Layer.LayerId] = b.Placement;
+                        _layerPlacements[b.Layer.LayerId] = b.Placement;
                     }
                     _layerCrops[b.Layer.LayerId] = b.Crop;
+                }
+
+                foreach (var o in session.Overlays)
+                {
+                    if (!o.StartHidden)
+                    {
+                        _layerPlacements[o.LayerId] = o.Placement;
+                    }
+                    _layerCrops[o.LayerId] = o.Crop;
                 }
 
                 _currentLayout = new SceneLayout
@@ -382,7 +428,9 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 videoPipe,
                 session.Encoder.Fps,
                 _logger,
-                cropsProvider: () => _layerCrops);
+                cropsProvider: () => _layerCrops,
+                placementsProvider: () => _layerPlacements,
+                stackOrderProvider: () => _stackOrder);
 
             await using var mixer = new UnifiedAudioMixer(
                 _audioHub,
@@ -584,6 +632,48 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 _sources[b.Layer.LayerId] = camSource;
             }
         }
+
+        foreach (var overlay in session.Overlays)
+        {
+            if (_sources.ContainsKey(overlay.LayerId))
+            {
+                continue;
+            }
+
+            var px = LayerGeometry.ToPixels(overlay.Placement, session.Encoder.Width, session.Encoder.Height);
+            int w = Math.Max(64, px.Width);
+            int h = Math.Max(64, px.Height);
+
+            var src = OverlaySourceFactory?.Invoke(overlay, w, h);
+            if (src is null && overlay.Source is ImageOverlaySource img)
+            {
+                src = new ImageD3D11SceneSource(overlay.LayerId, _deviceManager, img.Path, _backgroundImages, _logger);
+            }
+
+            if (src is not null)
+            {
+                _sources[overlay.LayerId] = src;
+            }
+        }
+
+        foreach (var media in session.Media)
+        {
+            if (_sources.ContainsKey(media.LayerId))
+            {
+                continue;
+            }
+
+            var src = MediaSourceFactory?.Invoke(media, session.Encoder.Width, session.Encoder.Height);
+            if (src is null && !string.IsNullOrWhiteSpace(media.FilePath))
+            {
+                src = new ImageD3D11SceneSource(media.LayerId, _deviceManager, media.FilePath, _backgroundImages, _logger);
+            }
+
+            if (src is not null)
+            {
+                _sources[media.LayerId] = src;
+            }
+        }
     }
 
     private WindowsGraphicsCaptureSource? CreateSceneSource(string key, VideoSourceSpec spec)
@@ -688,17 +778,38 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                         _sources[c.Key] = src;
                     }
                 }
+
+                lock (_layoutLock)
+                {
+                    if (!c.StartHidden)
+                    {
+                        _layerPlacements[c.Key] = c.Placement;
+                    }
+                    else
+                    {
+                        _layerPlacements.TryRemove(c.Key, out _);
+                    }
+                    _layerCrops[c.Key] = c.Crop;
+                }
             }
 
             foreach (var key in _sources.Keys.ToArray())
             {
-                if (!activeKeys.Contains(key) && key != "capture")
+                if (_sources.TryGetValue(key, out var oldSource) && oldSource is WindowsGraphicsCaptureSource)
                 {
-                    if (_sources.TryRemove(key, out var oldSource))
+                    if (!activeKeys.Contains(key) && key != "capture")
                     {
-                        _ = oldSource.DisposeAsync().AsTask();
+                        if (_sources.TryRemove(key, out _))
+                        {
+                            _ = oldSource.DisposeAsync().AsTask();
+                        }
+                        _frameCache?.Remove(key);
+                        lock (_layoutLock)
+                        {
+                            _layerPlacements.TryRemove(key, out _);
+                            _layerCrops.TryRemove(key, out _);
+                        }
                     }
-                    _frameCache?.Remove(key);
                 }
             }
 
@@ -715,6 +826,13 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                     {
                         // Source already registered or optional
                     }
+                }
+            }
+            if (stack is not null && stack.Count > 0)
+            {
+                lock (_layoutLock)
+                {
+                    _stackOrder = [.. stack];
                 }
             }
         }
@@ -735,6 +853,16 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 BaseCrop = crop,
                 BaseFit = fit,
             };
+
+            if (placement is { } p)
+            {
+                _layerPlacements[key] = p;
+                _layerCrops[key] = crop;
+            }
+            else
+            {
+                _layerPlacements.TryRemove(key, out _);
+            }
         }
         return Task.FromResult(true);
     }
@@ -747,6 +875,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
         lock (_layoutLock)
         {
             _currentLayout = _currentLayout.WithPlacement(layerId, placement);
+            _layerPlacements[layerId] = placement;
         }
         return Task.FromResult(true);
     }
@@ -756,6 +885,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
         lock (_layoutLock)
         {
             _currentLayout = _currentLayout.Without(layerId);
+            _layerPlacements.TryRemove(layerId, out _);
         }
         return Task.FromResult(true);
     }

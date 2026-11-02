@@ -284,4 +284,44 @@ public class D3D11StreamEngineTests
 
         Assert.False(scheduler.IsRunning);
     }
+
+    [Fact]
+    public async Task D3D11StreamEngine_configures_overlays_and_media_factories()
+    {
+        using var deviceManager = new D3D11DeviceManager();
+        var engine = new D3D11StreamEngine(
+            DummyFfmpeg(),
+            new TestOutputTransport(),
+            deviceManager: deviceManager);
+
+        Assert.NotNull(engine.DeviceManager);
+
+        bool overlayFactoryCalled = false;
+        engine.OverlaySourceFactory = (overlay, width, height) =>
+        {
+            overlayFactoryCalled = true;
+            return new ImageD3D11SceneSource(overlay.LayerId, engine.DeviceManager, new byte[width * height * 4], width, height);
+        };
+
+        bool mediaFactoryCalled = false;
+        engine.MediaSourceFactory = (media, width, height) =>
+        {
+            mediaFactoryCalled = true;
+            return new ImageD3D11SceneSource(media.LayerId, engine.DeviceManager, new byte[width * height * 4], width, height);
+        };
+
+        var overlayBinding = new OverlayLayerBinding("chat-overlay", new ImageOverlaySource("dummy.png"), NormalizedRect.Full);
+        var mediaBinding = new MediaLayerBinding("bg-media", "dummy.png", IsVideo: false, StartHidden: false);
+
+        var overlaySrc = engine.OverlaySourceFactory(overlayBinding, 64, 64);
+        var mediaSrc = engine.MediaSourceFactory(mediaBinding, 64, 64);
+
+        Assert.True(overlayFactoryCalled);
+        Assert.True(mediaFactoryCalled);
+        Assert.NotNull(overlaySrc);
+        Assert.NotNull(mediaSrc);
+
+        await overlaySrc.DisposeAsync();
+        await mediaSrc.DisposeAsync();
+    }
 }

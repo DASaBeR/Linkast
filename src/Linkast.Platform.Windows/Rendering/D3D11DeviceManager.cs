@@ -40,6 +40,36 @@ public sealed partial class D3D11DeviceManager : IDisposable
     /// <summary>Mutual exclusion lock for coordinating multi-step immediate context operations across threads.</summary>
     public Lock ContextLock { get; } = new();
 
+    private readonly List<Lock> _renderGates = [];
+
+    /// <summary>
+    /// Registers a lock held while a frame is being rendered. RecreateDevice takes it first, so the device is never
+    /// disposed under a frame in flight. Lock order is always render gate, then ContextLock, then the internal gate.
+    /// </summary>
+    public void RegisterRenderGate(Lock gate)
+    {
+        lock (_renderGates)
+        {
+            _renderGates.Add(gate);
+        }
+    }
+
+    public void UnregisterRenderGate(Lock gate)
+    {
+        lock (_renderGates)
+        {
+            _renderGates.Remove(gate);
+        }
+    }
+
+    private Lock[] RenderGatesSnapshot()
+    {
+        lock (_renderGates)
+        {
+            return [.. _renderGates];
+        }
+    }
+
     /// <summary>The primary Direct3D 11 device for resource allocation.</summary>
     public ID3D11Device Device
     {
@@ -115,6 +145,7 @@ public sealed partial class D3D11DeviceManager : IDisposable
     /// </summary>
     public bool CheckDeviceStatus()
     {
+        bool raiseLost = false;
         lock (_gate)
         {
             if (_disposed || _device is null)
@@ -132,12 +163,17 @@ public sealed partial class D3D11DeviceManager : IDisposable
             {
                 _isDeviceLost = true;
                 LogDeviceLost(_logger, reason.Description, reason.Code);
-                DeviceLost?.Invoke(this, EventArgs.Empty);
-                return false;
+                raiseLost = true;
             }
-
-            return true;
         }
+
+        if (raiseLost)
+        {
+            DeviceLost?.Invoke(this, EventArgs.Empty);
+            return false;
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -145,43 +181,73 @@ public sealed partial class D3D11DeviceManager : IDisposable
     /// </summary>
     public bool RecreateDevice()
     {
-        lock (_gate)
+        bool restored = false;
+        var gates = RenderGatesSnapshot();
+        foreach (var gate in gates)
         {
-            if (_disposed)
+            gate.Enter();
+        }
+
+        try
+        {
+            lock (ContextLock)
             {
-                return false;
+                lock (_gate)
+                {
+                    if (_disposed)
+                    {
+                        return false;
+                    }
+
+                    LogRecreatingDevice(_logger);
+                    DisposeDeviceResources();
+
+                    try
+                    {
+                        InitializeDevice();
+                        _isDeviceLost = false;
+                        restored = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        LogRecreateFailed(_logger, ex);
+                        return false;
+                    }
+                }
             }
 
-            LogRecreatingDevice(_logger);
-            DisposeDeviceResources();
-
-            try
+            // Handlers rebuild their resources while the render gates are still held, so no frame sees stale ones.
+            if (restored)
             {
-                InitializeDevice();
-                _isDeviceLost = false;
                 LogDeviceRestored(_logger);
                 DeviceRestored?.Invoke(this, EventArgs.Empty);
-                return true;
             }
-            catch (Exception ex)
+
+            return restored;
+        }
+        finally
+        {
+            for (int i = gates.Length - 1; i >= 0; i--)
             {
-                LogRecreateFailed(_logger, ex);
-                return false;
+                gates[i].Exit();
             }
         }
     }
 
     public void Dispose()
     {
-        lock (_gate)
+        lock (ContextLock)
         {
-            if (_disposed)
+            lock (_gate)
             {
-                return;
-            }
+                if (_disposed)
+                {
+                    return;
+                }
 
-            _disposed = true;
-            DisposeDeviceResources();
+                _disposed = true;
+                DisposeDeviceResources();
+            }
         }
     }
 

@@ -34,7 +34,15 @@ public sealed class SourceFrameCache : IDisposable
     public SourceFrameCache(D3D11DeviceManager? deviceManager = null)
     {
         _deviceManager = deviceManager;
+        if (_deviceManager is not null)
+        {
+            _deviceManager.DeviceLost += OnDeviceLost;
+            _deviceManager.DeviceRestored += OnDeviceRestored;
+        }
     }
+
+    private void OnDeviceLost(object? sender, EventArgs e) => Clear();
+    private void OnDeviceRestored(object? sender, EventArgs e) => Clear();
 
     /// <summary>Updates or stores the latest texture for a source, recreating the SRV if the texture instance changed.</summary>
     public void Store(string sourceId, ID3D11Texture2D texture, long timestampQpc, ID3D11Device? device = null)
@@ -115,6 +123,11 @@ public sealed class SourceFrameCache : IDisposable
         }
 
         _disposed = true;
+        if (_deviceManager is not null)
+        {
+            _deviceManager.DeviceLost -= OnDeviceLost;
+            _deviceManager.DeviceRestored -= OnDeviceRestored;
+        }
         Clear();
     }
 }

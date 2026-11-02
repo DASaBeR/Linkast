@@ -24,7 +24,7 @@ public sealed class OverlayInputProvider(WebOverlayHost web) : IOverlayInputProv
         return new StaticFramePipeInput(overlay.LayerId, frame, width, height);
     }
 
-    private static byte[] Render(OverlaySource source, int width, int height) => source switch
+    public static byte[] Render(OverlaySource source, int width, int height) => source switch
     {
         ImageOverlaySource image => OverlayRenderer.LoadImage(image.Path) is { } bitmap
             ? OverlayRenderer.ToLayerFrame(bitmap, width, height)
