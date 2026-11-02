@@ -2115,6 +2115,13 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     {
         State = e.Current;
         FollowPerformance(e.Current);
+        if (e.Current is StreamState.Preparing or StreamState.Connecting && e.Previous is StreamState.Idle or StreamState.Stopped or StreamState.Failed)
+        {
+            Stats.Begin();
+            LogStreamSettings(StreamSettingsLine());
+        }
+
+        Stats.StateChanged(e);
         if (e.Error is not null && e.Current is StreamState.Failed or StreamState.Reconnecting)
         {
             LastError = e.Error;
@@ -2136,6 +2143,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     private void OnTelemetry(StreamTelemetry t)
     {
+        Stats.Observe(t);
         ElapsedText = t.Uptime.ToString(@"hh\:mm\:ss", CultureInfo.InvariantCulture);
         ReconnectsText = t.ReconnectCount.ToString(CultureInfo.InvariantCulture);
 

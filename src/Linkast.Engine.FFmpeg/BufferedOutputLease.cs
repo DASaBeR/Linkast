@@ -105,6 +105,7 @@ internal sealed partial class BufferedOutputLease : IOutputLease
     private async Task RunAsync()
     {
         var ct = _cts.Token;
+        var began = Stopwatch.GetTimestamp();
         TcpClient? encoder = null;
         TcpClient? sender = null;
         try
@@ -114,16 +115,20 @@ internal sealed partial class BufferedOutputLease : IOutputLease
             encoder = await acceptEncoder.ConfigureAwait(false);
             Volatile.Write(ref _encoderConnected, true);
             _encoderListener.Stop();
+            LogEncoderConnected(Stopwatch.GetElapsedTime(began).TotalSeconds);
             var fill = FillAsync(encoder.GetStream(), ct);
 
             sender = await acceptSender.WaitAsync(ct).ConfigureAwait(false);
             _senderListener.Stop();
+            LogSenderConnected(Stopwatch.GetElapsedTime(began).TotalSeconds, BufferedBytes);
             var drain = DrainAsync(sender.GetStream(), ct);
 
             // The server side ending (relay failure, sender gone) ends the attempt; the encoder finishing
             // (stopped) lets the buffer empty to the server first.
             var senderExit = _sender!.Exited;
             var first = await Task.WhenAny(drain, senderExit, _inner.Completion).ConfigureAwait(false);
+            LogEnded(first == drain ? "the encoder finished" : first == senderExit ? "the sending FFmpeg exited" : "the server connection ended",
+                senderExit.IsCompleted ? senderExit.Result : null, BufferedBytes, Stopwatch.GetElapsedTime(began).TotalSeconds);
             if (first == drain)
             {
                 await drain.ConfigureAwait(false);
@@ -309,6 +314,15 @@ internal sealed partial class BufferedOutputLease : IOutputLease
         _cts.Dispose();
         _room.Dispose();
     }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Buffer: the encoder connected after {Seconds:0.00} s.")]
+    private partial void LogEncoderConnected(double seconds);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Buffer: the sending FFmpeg connected after {Seconds:0.00} s ({Buffered} bytes were waiting).")]
+    private partial void LogSenderConnected(double seconds, long buffered);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Buffer: this connection ended because {Reason} (sender exit code {SenderExit}, {Buffered} bytes unsent, after {Seconds:0.0} s).")]
+    private partial void LogEnded(string reason, int? senderExit, long buffered, double seconds);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "The upload is not keeping up: {Megabytes:0.0} MB (about {Seconds:0} s of the stream) waiting to be sent. Lower the bitrate.")]
     private partial void LogBacklog(double megabytes, double seconds);

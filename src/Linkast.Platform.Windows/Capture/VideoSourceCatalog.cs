@@ -122,6 +122,9 @@ public static partial class VideoSourceCatalog
 
     public static bool WindowExists(long handle) => IsWindow((nint)handle);
 
+    /// <summary>True when Windows considers the window's program to have stopped responding (a hung game).</summary>
+    public static bool IsWindowHung(long handle) => IsHungAppWindow((nint)handle);
+
     /// <summary>True when the window is minimized (iconic).</summary>
     public static bool IsWindowMinimized(long handle) => IsIconic((nint)handle);
 
@@ -182,6 +185,10 @@ public static partial class VideoSourceCatalog
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool IsIconic(nint hwnd);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool IsHungAppWindow(nint hwnd);
 
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

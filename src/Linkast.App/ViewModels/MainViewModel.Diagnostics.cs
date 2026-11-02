@@ -14,6 +14,31 @@ namespace Linkast.App.ViewModels;
 public sealed partial class MainViewModel
 {
     private PerformanceMonitor? _performance;
+    private StreamStatsLogger? _stats;
+
+    /// <summary>Numbers for the log: bitrate, backlog, frame rate, reconnects, and whether the captured game still responds.</summary>
+    private StreamStatsLogger Stats => _stats ??= new StreamStatsLogger(_loggerFactory.CreateLogger<StreamStatsLogger>()) { Extra = DescribeGame };
+
+    private string? DescribeGame()
+    {
+        if (SelectedSourceKind?.Kind != VideoSourceKind.Window || SelectedWindow is not { } w)
+        {
+            return null;
+        }
+
+        var name = w.ProcessName ?? w.Title;
+        return !VideoSourceCatalog.WindowExists(w.Handle)
+            ? $"game window {name} is gone"
+            : VideoSourceCatalog.IsWindowHung(w.Handle)
+                ? $"game {name} is NOT RESPONDING"
+                : $"game {name} responding{(VideoSourceCatalog.IsWindowMinimized(w.Handle) ? ", minimized" : string.Empty)}";
+    }
+
+    private string StreamSettingsLine() =>
+        $"network {(BuildProxy() is { } proxy ? proxy.Label : SelectedNetwork.IsAutomatic ? "Windows default" : SelectedNetwork.Name)}; " +
+        $"video {SelectedResolution.Width}x{SelectedResolution.Height}@{SelectedFrameRate} {VideoBitrateKbps} kbps, keyframe every {KeyframeIntervalSeconds} s, preset {EncoderPreset ?? "default"}; " +
+        $"audio {AudioBitrateKbps} kbps, desktop {SystemAudioVolume:0}%, microphone {(MicrophoneEnabled ? MicrophoneVolume.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + "%" : "off")}, noise suppression {MicrophoneNoiseSuppression}; " +
+        $"record {RecordWhenLive}";
 
     /// <summary>Logs what each capture of a starting stream is: the window, its state and its monitor.</summary>
     private void LogStreamContext(StreamSession session)
@@ -61,6 +86,9 @@ public sealed partial class MainViewModel
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Activity: {Line}")]
     private partial void LogActivity(string line);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Stream settings: {Details}")]
+    private partial void LogStreamSettings(string details);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Going live: {Details}")]
     private partial void LogGoingLive(string details);

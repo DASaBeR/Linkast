@@ -202,12 +202,26 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
     {
         var backoff = new ReconnectBackoff(session.Reconnect);
         var captureRestarts = new ReconnectBackoff(_options.CaptureRestart);
+        var attempt = 0;
         try
         {
             while (!ct.IsCancellationRequested)
             {
                 _state.TryTransition(StreamState.Connecting);
+                attempt++;
+                var attemptBegan = _time.GetTimestamp();
+                if (_logger is not null)
+                {
+                    LogAttemptStarted(_logger, attempt, _reconnectCount);
+                }
+
                 var error = await RunAttemptAsync(session, [backoff, captureRestarts], ct).ConfigureAwait(false);
+                if (_logger is not null)
+                {
+                    LogAttemptEnded(_logger, attempt, _time.GetElapsedTime(attemptBegan).TotalSeconds,
+                        error is null ? "stopped" : $"{error.Category}/{error.Code}", error is null ? string.Empty : Short(_redactor.Redact(error.Detail ?? error.UserMessage)));
+                }
+
                 if (error is null || ct.IsCancellationRequested)
                 {
                     break;
@@ -218,6 +232,11 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 if (error.IsRetryable && budget.NextDelay() is { } nextDelay)
                 {
                     _reconnectCount++;
+                    if (_logger is not null)
+                    {
+                        LogRetry(_logger, _reconnectCount, nextDelay.TotalSeconds);
+                    }
+
                     _state.TryTransition(StreamState.Reconnecting, error);
                     PublishTelemetry(session, null, null, null);
                     try
@@ -230,6 +249,11 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                     }
 
                     continue;
+                }
+
+                if (_logger is not null)
+                {
+                    LogGaveUp(_logger, $"{error.Category}/{error.Code}", error.IsRetryable);
                 }
 
                 _state.TryTransition(StreamState.Failed, error);
@@ -574,11 +598,21 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
             if (done == process.Exited)
             {
                 await Task.WhenAny(lease.Completion, Task.Delay(500, CancellationToken.None)).ConfigureAwait(false);
+                if (_logger is not null)
+                {
+                    LogEncoderExited(_logger, process.Exited.Result, Short(_redactor.Redact(string.Join(" | ", recent.TakeLast(4)))), lease.Completion.IsCompleted);
+                }
+
                 return LeaseError(lease) ?? ErrorClassifier.ClassifyExit(process.Exited.Result, [.. recent]);
             }
 
             if (done == lease.Completion)
             {
+                if (_logger is not null)
+                {
+                    LogOutputEnded(_logger, lease.Completion.IsFaulted ? Short(_redactor.Redact(lease.Completion.Exception?.GetBaseException().Message)) : "closed without an error");
+                }
+
                 process.Kill();
                 return LeaseError(lease) ?? new StreamError(ErrorCategory.Network, "network.closed", "The server closed the connection.");
             }
@@ -608,10 +642,20 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 if (isLive)
                 {
                     liveSince = now;
+                    if (_logger is not null)
+                    {
+                        LogWentLive(_logger, _time.GetElapsedTime(attemptStart, now).TotalSeconds, net.BytesSent, progress?.Frame ?? 0);
+                    }
+
                     _state.TryTransition(StreamState.Live);
                 }
                 else if (_time.GetElapsedTime(attemptStart, now) > _options.ConnectTimeout)
                 {
+                    if (_logger is not null)
+                    {
+                        LogConnectTimeout(_logger, _time.GetElapsedTime(attemptStart, now).TotalSeconds, net.BytesSent, progress?.Frame ?? 0, net.Connected);
+                    }
+
                     process.Kill();
                     return new StreamError(ErrorCategory.Network, "network.connect_timeout", "Connection attempt timed out waiting for ingest server.");
                 }
@@ -627,6 +671,11 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 var byteStall = lease.IsMeasured && _time.GetElapsedTime(lastBytesAdvance, now) > _options.StallTimeout;
                 if (frameStall || byteStall)
                 {
+                    if (_logger is not null)
+                    {
+                        LogStalled(_logger, frameStall ? "no new frames" : "no bytes sent", _time.GetElapsedTime(frameStall ? lastFrameAdvance : lastBytesAdvance, now).TotalSeconds, net.BufferedBytes);
+                    }
+
                     process.Kill();
                     return new StreamError(
                         ErrorCategory.Network,
@@ -1022,6 +1071,36 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
             "FFmpeg exited unexpectedly during startup.",
             string.IsNullOrWhiteSpace(stderr) ? $"Exit code {exitCode}." : $"Exit code {exitCode}: {stderr}");
     }
+
+    private static string Short(string? text, int max = 400) =>
+        string.IsNullOrEmpty(text) ? string.Empty : text.Length <= max ? text : text[..max] + "…";
+
+    [LoggerMessage(LogLevel.Information, "Stream attempt {Attempt} starts ({Reconnects} reconnects so far).")]
+    private static partial void LogAttemptStarted(ILogger logger, int attempt, int reconnects);
+
+    [LoggerMessage(LogLevel.Information, "Stream attempt {Attempt} ended after {Seconds:0.0} s: {Result}. {Detail}")]
+    private static partial void LogAttemptEnded(ILogger logger, int attempt, double seconds, string result, string detail);
+
+    [LoggerMessage(LogLevel.Information, "Reconnect {Count}: trying again in {Delay:0.0} s.")]
+    private static partial void LogRetry(ILogger logger, int count, double delay);
+
+    [LoggerMessage(LogLevel.Warning, "Giving up: {Error} (retryable: {Retryable}).")]
+    private static partial void LogGaveUp(ILogger logger, string error, bool retryable);
+
+    [LoggerMessage(LogLevel.Information, "Stream is live {Seconds:0.0} s after the attempt began ({Bytes} bytes sent, {Frames} frames encoded).")]
+    private static partial void LogWentLive(ILogger logger, double seconds, long bytes, long frames);
+
+    [LoggerMessage(LogLevel.Warning, "Connecting took longer than allowed ({Seconds:0.0} s, {Bytes} bytes sent, {Frames} frames encoded, connected: {Connected}).")]
+    private static partial void LogConnectTimeout(ILogger logger, double seconds, long bytes, long frames, bool connected);
+
+    [LoggerMessage(LogLevel.Warning, "Encoder FFmpeg exited with code {Code} (output ended: {OutputEnded}). Last messages: {Lines}")]
+    private static partial void LogEncoderExited(ILogger logger, int code, string lines, bool outputEnded);
+
+    [LoggerMessage(LogLevel.Warning, "The output to the server ended: {Reason}")]
+    private static partial void LogOutputEnded(ILogger logger, string reason);
+
+    [LoggerMessage(LogLevel.Warning, "Stream stalled: {Kind} for {Seconds:0.0} s ({Buffered} bytes waiting to be sent).")]
+    private static partial void LogStalled(ILogger logger, string kind, double seconds, long buffered);
 
     [LoggerMessage(LogLevel.Error, "Unexpected error occurred during D3D11 streaming session.")]
     private static partial void LogUnexpected(ILogger logger, Exception ex);
