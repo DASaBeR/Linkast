@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+﻿// SPDX-License-Identifier: GPL-3.0-or-later
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
@@ -154,6 +154,14 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
         {
             // Clean shutdown
         }
+        catch (IOException ex)
+        {
+            // The audio pipe is gone: FFmpeg ended (a stop, or a reconnect that starts a new mixer).
+            if (_logger is not null)
+            {
+                LogOutputClosed(_logger, ex.Message);
+            }
+        }
         catch (Exception ex)
         {
             if (_logger is not null)
@@ -286,53 +294,6 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
         _cts.Dispose();
     }
 
-    private sealed class NoiseSuppressor
-    {
-        // 85 Hz 1st-order IIR high-pass filter: alpha = 1 / (1 + 2*pi*85/48000) = ~0.989
-        private const float AlphaHp = 0.989f;
-        private float _hpPrevInL;
-        private float _hpPrevInR;
-        private float _hpPrevOutL;
-        private float _hpPrevOutR;
-
-        // Adaptive noise gate parameters
-        private const float Threshold = 0.012f; // ~ -38 dB
-        private const float MinGain = 0.03f;    // ~ -30 dB attenuation of background noise/hum
-        private const float AttackRate = 0.2f;  // Fast ~5ms attack
-        private const float ReleaseRate = 0.01f;// Smooth ~150ms release
-        private float _currentGain = 1.0f;
-        private float _envelope;
-
-        public void Process(Span<float> stereoBuffer)
-        {
-            for (int i = 0; i < stereoBuffer.Length; i += 2)
-            {
-                float inL = stereoBuffer[i];
-                float inR = stereoBuffer[i + 1];
-
-                // High-pass filter
-                float hpL = AlphaHp * (_hpPrevOutL + inL - _hpPrevInL);
-                float hpR = AlphaHp * (_hpPrevOutR + inR - _hpPrevInR);
-                _hpPrevInL = inL;
-                _hpPrevInR = inR;
-                _hpPrevOutL = hpL;
-                _hpPrevOutR = hpR;
-
-                // Level detection
-                float level = Math.Max(Math.Abs(hpL), Math.Abs(hpR));
-                _envelope = Math.Max(level, _envelope * 0.999f);
-
-                // Gate target gain
-                float targetGain = _envelope > Threshold ? 1.0f : MinGain;
-                float rate = targetGain > _currentGain ? AttackRate : ReleaseRate;
-                _currentGain += (targetGain - _currentGain) * rate;
-
-                stereoBuffer[i] = hpL * _currentGain;
-                stereoBuffer[i + 1] = hpR * _currentGain;
-            }
-        }
-    }
-
     private sealed class ChannelState : IDisposable
     {
         private readonly Lock _gate = new();
@@ -340,7 +301,8 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
         private volatile float _gain;
         private readonly bool _isMicrophone;
         private readonly UnifiedAudioMixer _mixer;
-        private readonly NoiseSuppressor? _noiseSuppressor;
+        private readonly SpeechGate? _noiseSuppressor;
+        private bool _noiseSuppressorWasOn;
 
         private float _lastSampleL;
         private float _lastSampleR;
@@ -354,7 +316,7 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
             _isMicrophone = string.Equals(name, AudioChannels.Microphone, StringComparison.OrdinalIgnoreCase);
             if (_isMicrophone)
             {
-                _noiseSuppressor = new NoiseSuppressor();
+                _noiseSuppressor = new SpeechGate();
             }
         }
 
@@ -479,9 +441,19 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
                 }
 
                 // Apply real-time noise suppression on microphone channel when enabled
-                if (_isMicrophone && _mixer.NoiseSuppressionEnabled && _noiseSuppressor is not null)
+                if (_isMicrophone && _noiseSuppressor is not null)
                 {
-                    _noiseSuppressor.Process(slice);
+                    var on = _mixer.NoiseSuppressionEnabled;
+                    if (on && !_noiseSuppressorWasOn)
+                    {
+                        _noiseSuppressor.Reset(); // old audio in its delay line must not be replayed
+                    }
+
+                    _noiseSuppressorWasOn = on;
+                    if (on)
+                    {
+                        _noiseSuppressor.Process(slice);
+                    }
                 }
 
                 for (int i = 0; i < SamplesPerSlice; i++)
@@ -511,6 +483,9 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
             Tap = null;
         }
     }
+
+    [LoggerMessage(LogLevel.Debug, "Audio output closed; the mixer loop ends ({Reason}).")]
+    private static partial void LogOutputClosed(ILogger logger, string reason);
 
     [LoggerMessage(LogLevel.Error, "Audio mixer loop failed with exception.")]
     private static partial void LogMixLoopFailed(ILogger logger, Exception ex);
