@@ -127,7 +127,7 @@ public sealed record StreamSettings
     /// <summary>The captured game's own sound gets its own fader (it is also part of desktop audio).</summary>
     public bool SeparateGameAudio { get; init; }
 
-    /// <summary>Fader positions (0–200 %) of the channels other than desktop audio and the microphone, by channel.</summary>
+    /// <summary>Fader positions (0–800 %) of the channels other than desktop audio and the microphone, by channel.</summary>
     public IReadOnlyDictionary<string, double> ChannelVolumes { get; init; } = NoVolumes;
 
     /// <summary>Shared so that default settings compare equal (records compare collections by reference).</summary>

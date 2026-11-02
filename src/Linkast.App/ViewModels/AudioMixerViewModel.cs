@@ -17,7 +17,7 @@ public enum MixerChannelKind
 }
 
 /// <summary>
-/// One fader of the mixer: a volume (0–200 %), a mute switch and a level meter, like a channel strip in
+/// One fader of the mixer: a volume (0–800 %, up to +18 dB), a mute switch and a level meter, like a channel strip in
 /// OBS. A channel can also be silent because the active scene mutes it.
 /// </summary>
 public sealed partial class MixerChannelViewModel(string key, MixerChannelKind kind, string name) : ObservableObject
@@ -30,7 +30,7 @@ public sealed partial class MixerChannelViewModel(string key, MixerChannelKind k
     [ObservableProperty]
     public partial string Name { get; set; } = name;
 
-    /// <summary>Fader position, 0 to 200 % (100 % = unchanged).</summary>
+    /// <summary>Fader position, 0 to 800 % (100 % = unchanged, up to +18 dB).</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(VolumeText), nameof(IsSilent))]
     public partial double Volume { get; set; } = 100;
@@ -73,7 +73,7 @@ public sealed partial class MixerChannelViewModel(string key, MixerChannelKind k
 
     public string VolumeText => Volume <= 0
         ? "-∞ dB"
-        : string.Create(CultureInfo.InvariantCulture, $"{20 * Math.Log10(Volume / 100):+0.0;-0.0;0.0} dB");
+        : string.Create(CultureInfo.InvariantCulture, $"{Math.Min(18.0, 20 * Math.Log10(Volume / 100)):+0.0;-0.0;0.0} dB");
 
     /// <summary>The gain the stream uses: 0 while muted (here or by the scene).</summary>
     public double Gain => Muted || SceneMuted ? 0 : Volume / 100;

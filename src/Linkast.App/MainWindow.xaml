@@ -611,9 +611,9 @@
                                                                             <ProgressBar Orientation="Vertical" Width="8" Minimum="0" Maximum="100" Value="{Binding Level, Mode=OneWay}"
                                                                                          Foreground="{DynamicResource Linkast.Success}" Visibility="{Binding HasMeter, Converter={StaticResource BoolToVis}}"
                                                                                          AutomationProperties.Name="Level" />
-                                                                            <Slider Grid.Column="2" Orientation="Vertical" Minimum="0" Maximum="200" Value="{Binding Volume}"
+                                                                            <Slider Grid.Column="2" Orientation="Vertical" Minimum="0" Maximum="800" Value="{Binding Volume}"
                                                                                     SmallChange="1" LargeChange="10" IsMoveToPointEnabled="True"
-                                                                                    ToolTip="Volume (100% = unchanged, up to 200%)" AutomationProperties.Name="Volume" />
+                                                                                    ToolTip="Volume (100% = unchanged, up to 800% / +18 dB)" AutomationProperties.Name="Volume" />
                                                                         </Grid>
                                                                         <TextBlock HorizontalAlignment="Center" FontSize="11" Typography.NumeralAlignment="Tabular"
                                                                                    Foreground="{DynamicResource Linkast.TextSecondary}">

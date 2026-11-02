@@ -48,6 +48,10 @@ public class UnifiedAudioMixerTests
         bool changedUnknown = await mixer.SetGainAsync("unknown", 0.5);
         Assert.False(changedUnknown);
 
+        mixer.AddTestChannel("mic", 1.0);
+        bool changedKnown = await mixer.SetGainAsync("mic", 8.0);
+        Assert.True(changedKnown);
+
         await mixer.DisposeAsync();
     }
 

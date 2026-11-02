@@ -321,6 +321,19 @@ public class SettingsSerializerTests
     [Fact]
     public void Unknown_enum_value_marks_file_corrupt_rather_than_crashing() =>
         Assert.Equal(SettingsLoadOutcome.Corrupt, SettingsSerializer.Deserialize("{\"schemaVersion\":2,\"webcam\":{\"layers\":[{\"look\":{\"shape\":\"Hexagon\"}}]}}").Outcome);
+
+    [Fact]
+    public void Volume_up_to_800_is_preserved_when_deserialized()
+    {
+        var json = """
+            {"schemaVersion":2,
+             "stream":{"systemAudioVolume":800,"microphoneVolume":400,"channelVolumes":{"overlay_alert":750}}}
+            """;
+        var (s, _) = SettingsSerializer.Deserialize(json);
+        Assert.Equal(800, s.Stream.SystemAudioVolume);
+        Assert.Equal(400, s.Stream.MicrophoneVolume);
+        Assert.Equal(750, s.Stream.ChannelVolumes["overlay_alert"]);
+    }
 }
 
 public class CameraPresetTests

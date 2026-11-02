@@ -189,7 +189,7 @@ public sealed class WebOverlayRenderer : IAsyncDisposable
     /// hears matches what the stream gets: a lower fader is quieter, a muted one silent.
     /// </summary>
     public Task PlayTestSoundAsync(double gain) =>
-        _controller.CoreWebView2.ExecuteScriptAsync(TestSoundScript.Replace("{GAIN}", (TestSoundLevel * Math.Clamp(gain, 0, 2)).ToString("0.####", System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal));
+        _controller.CoreWebView2.ExecuteScriptAsync(TestSoundScript.Replace("{GAIN}", (TestSoundLevel * Math.Clamp(gain, 0, 8)).ToString("0.####", System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal));
 
     /// <summary>The chime's level at 100 %: -6 dBFS, so 200 % reaches full scale without clipping.</summary>
     private const double TestSoundLevel = 0.5;

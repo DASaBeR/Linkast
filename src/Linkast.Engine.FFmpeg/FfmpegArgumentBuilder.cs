@@ -572,7 +572,7 @@ public static class FfmpegArgumentBuilder
         return ($"iw*{F(c.Width)}", $"ih*{F(c.Height)}", $"iw*{F(c.X)}", $"ih*{F(c.Y)}");
     }
 
-    private static string Gain(double gain) => Math.Clamp(gain, 0, 4).ToString("0.###", Inv);
+    private static string Gain(double gain) => Math.Clamp(gain, 0, 10).ToString("0.###", Inv);
 
     /// <summary>
     /// Every capture and layer once, bottom first: scene media (on the canvas, under everything), then

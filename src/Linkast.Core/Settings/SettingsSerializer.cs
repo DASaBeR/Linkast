@@ -251,8 +251,8 @@ public static class SettingsSerializer
             Theme = Enum.IsDefined(s.Theme) ? s.Theme : AppTheme.Dark,
             Stream = stream with
             {
-                SystemAudioVolume = Math.Clamp(Finite(stream.SystemAudioVolume, 100), 0, 200),
-                MicrophoneVolume = Math.Clamp(Finite(stream.MicrophoneVolume, 100), 0, 200),
+                SystemAudioVolume = Math.Clamp(Finite(stream.SystemAudioVolume, 100), 0, 800),
+                MicrophoneVolume = Math.Clamp(Finite(stream.MicrophoneVolume, 100), 0, 800),
                 FrameRate = stream.FrameRate is 30 or 60 ? stream.FrameRate : 60,
                 VideoBitrateKbps = Math.Clamp(stream.VideoBitrateKbps, 200, 100_000),
                 KeyframeIntervalSeconds = Math.Clamp(stream.KeyframeIntervalSeconds, 1, 10),
@@ -262,7 +262,7 @@ public static class SettingsSerializer
                 // Empty collections stay the shared defaults, so untouched settings still compare equal.
                 ChannelVolumes = stream.ChannelVolumes is not { Count: > 0 } volumes ? StreamSettings.NoVolumes : volumes
                     .Where(kv => IsChannel(kv.Key))
-                    .ToDictionary(kv => kv.Key, kv => Math.Clamp(Finite(kv.Value, 100), 0, 200), StringComparer.Ordinal),
+                    .ToDictionary(kv => kv.Key, kv => Math.Clamp(Finite(kv.Value, 100), 0, 800), StringComparer.Ordinal),
                 MutedChannels = stream.MutedChannels is not { Count: > 0 } muted ? [] : [.. muted.Where(IsChannel).Distinct(StringComparer.Ordinal)],
             },
             Webcam = SanitizeWebcam(webcam),

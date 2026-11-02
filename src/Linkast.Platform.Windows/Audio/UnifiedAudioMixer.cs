@@ -249,7 +249,7 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
     {
         if (_channels.TryGetValue(channel, out var state))
         {
-            state.Gain = (float)Math.Clamp(gain, 0.0, 4.0);
+            state.Gain = (float)Math.Clamp(gain, 0.0, 10.0);
             return Task.FromResult(true);
         }
 
@@ -349,7 +349,7 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
         public ChannelState(string name, double initialGain, UnifiedAudioMixer mixer)
         {
             Name = name;
-            _gain = (float)Math.Clamp(initialGain, 0.0, 4.0);
+            _gain = (float)Math.Clamp(initialGain, 0.0, 10.0);
             _mixer = mixer;
             _isMicrophone = string.Equals(name, AudioChannels.Microphone, StringComparison.OrdinalIgnoreCase);
             if (_isMicrophone)

@@ -38,6 +38,14 @@ public class MixerTests
     }
 
     [Fact]
+    public void Max_volume_reaches_18_dB_and_reports_in_text()
+    {
+        var channel = new MixerChannelViewModel("mic", MixerChannelKind.Microphone, "Microphone") { Volume = 800 };
+        Assert.Equal(8.0, channel.Gain);
+        Assert.Equal("+18.0 dB", channel.VolumeText);
+    }
+
+    [Fact]
     public void A_test_sound_is_reported_at_its_level_in_the_stream() =>
         Assert.StartsWith("-12 dB in the stream.", MainViewModel.DescribeTestLevel(-12, 0.5), StringComparison.Ordinal);
 
