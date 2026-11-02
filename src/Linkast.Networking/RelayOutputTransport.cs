@@ -48,7 +48,7 @@ public sealed partial class RelayOutputTransport(ILogger<RelayOutputTransport>? 
 
         var lease = new RelayLease(listener, publishUrl, tcUrl, server, network, ConnectTimeout, _logger, new RtmpKeyRewriter(placeholder, key));
         lease.Start();
-        LogOpened(port, server.Host, network.DisplayName ?? "system default route");
+        LogOpened(port, server.Host, network.Proxy is { IsEnabled: true } proxy ? proxy.Label : network.DisplayName ?? "system default route");
         return Task.FromResult<IOutputLease>(lease);
     }
 
@@ -162,10 +162,12 @@ internal sealed partial class RelayLease : IOutputLease
 
             remote = await OutboundConnector.ConnectAsync(_server, _network, _connectTimeout, ct).ConfigureAwait(false);
             _localEndpoint = remote.Local.ToString();
-            _remoteEndpoint = $"{_server.IdnHost} ({remote.RemoteAddress}:{remote.Port})";
+            _remoteEndpoint = remote.ViaProxy is null
+                ? $"{_server.IdnHost} ({remote.RemoteAddress}:{remote.Port})"
+                : $"{_server.IdnHost}:{remote.Port} via {remote.ViaProxy}";
             _interfaceName = remote.InterfaceName;
             _connected = true;
-            LogConnected(_remoteEndpoint, _localEndpoint, _interfaceName ?? "unknown", _network.IsSystemDefault ? "default route" : "selected adapter (verified)", remote.ConnectTime.TotalMilliseconds, remote.UsedAdapterDns);
+            LogConnected(_remoteEndpoint, _localEndpoint, _interfaceName ?? "unknown", remote.ViaProxy is not null ? "proxy" : _network.IsSystemDefault ? "default route" : "selected adapter (verified)", remote.ConnectTime.TotalMilliseconds, remote.UsedAdapterDns);
 
             using var localStream = local.GetStream();
             var up = PumpAsync(localStream, remote.Stream, isUpstream: true, ct);
@@ -218,7 +220,9 @@ internal sealed partial class RelayLease : IOutputLease
         }
     }
 
-    private string LostMessage() => _network.IsSystemDefault
+    private string LostMessage() => _network.Proxy is { IsEnabled: true } p
+        ? $"The connection to the server through the {p.Label} was lost."
+        : _network.IsSystemDefault
         ? "The connection to the server was lost."
         : $"The connection to the server through '{_network.DisplayName}' was lost.";
 

@@ -165,7 +165,7 @@
                         <views:SceneEditor Layers="{Binding Layers}" SelectedLayer="{Binding Selected, Mode=TwoWay}"
                                            CanvasWidth="{Binding CanvasWidth}" CanvasHeight="{Binding CanvasHeight}"
                                            BasePlacement="{Binding BasePlacement, Mode=TwoWay}" BaseFit="{Binding BaseFit}" BaseCrop="{Binding BaseCrop, Mode=TwoWay}"
-                                           BackgroundSource="{Binding EditorBackground}" Snap="{Binding SnapToGrid}"
+                                           BackgroundSource="{Binding EditorBackground}" ShowBase="{Binding ShowCapture}" Snap="{Binding SnapToGrid}"
                                            Overlays="{Binding DataContext.Overlays.Items, RelativeSource={RelativeSource AncestorType=Window}}"
                                            SelectedOverlay="{Binding DataContext.Overlays.Selected, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}"
                                            SceneBackground="{Binding DataContext.ScenePreviewImage, RelativeSource={RelativeSource AncestorType=Window}}"

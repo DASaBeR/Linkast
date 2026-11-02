@@ -468,6 +468,95 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     [NotifyCanExecuteChangedFor(nameof(TestConnectionCommand))]
     public partial bool IsTestingNetwork { get; set; }
 
+    // ---- Proxy for the stream ---------------------------------------------------------------
+
+    /// <summary>The choices for "Proxy type", in the order shown.</summary>
+    public IReadOnlyList<ProxyKindOption> ProxyKinds { get; } =
+    [
+        new(ProxyKind.None, "No proxy"),
+        new(ProxyKind.Socks5, "SOCKS5"),
+        new(ProxyKind.Http, "HTTP"),
+    ];
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsProxyEnabled), nameof(ProxySummary))]
+    public partial ProxyKindOption SelectedProxyKind { get; set; } = new(ProxyKind.None, "No proxy");
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ProxySummary))]
+    public partial string ProxyHost { get; set; } = "127.0.0.1";
+
+    /// <summary>Kept as text so a half-typed number is not lost; an invalid port disables the proxy and says so.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ProxySummary), nameof(ProxyPortValid))]
+    public partial string ProxyPortText { get; set; } = "10808";
+
+    [ObservableProperty]
+    public partial string ProxyUsername { get; set; } = string.Empty;
+
+    public bool IsProxyEnabled => SelectedProxyKind.Kind != ProxyKind.None;
+
+    public bool ProxyPortValid => int.TryParse(ProxyPortText.Trim(), out var port) && port is > 0 and <= 65535;
+
+    public string ProxySummary => !IsProxyEnabled
+        ? "The stream connects directly."
+        : !ProxyPortValid || string.IsNullOrWhiteSpace(ProxyHost)
+            ? "Enter the proxy address and a port from 1 to 65535."
+            : $"The stream goes through the {BuildProxy()?.Label}. Your game and other apps do not.";
+
+    /// <summary>Set from the view's PasswordBox. Never bound as plain text. Saved encrypted with DPAPI.</summary>
+    public Secret ProxyPassword
+    {
+        get;
+        set
+        {
+            field = value ?? new Secret(string.Empty);
+            Redactor.Shared.Register(field);
+            if (!_loading)
+            {
+                _secrets.Set(DpapiSecretStore.ProxyPasswordName, field);
+            }
+        }
+    } = new(string.Empty);
+
+    /// <summary>Raised once after start-up with the saved proxy password, so the view can fill its PasswordBox.</summary>
+    public event EventHandler<Secret>? ProxyPasswordLoaded;
+
+    partial void OnSelectedProxyKindChanged(ProxyKindOption value)
+    {
+        NetworkTestText = null;
+        NetworkTestOk = null;
+
+        // Follow the v2rayN defaults while the port is still one of them.
+        if (value.Kind == ProxyKind.Http && ProxyPortText.Trim() == "10808")
+        {
+            ProxyPortText = "10809";
+        }
+        else if (value.Kind == ProxyKind.Socks5 && ProxyPortText.Trim() == "10809")
+        {
+            ProxyPortText = "10808";
+        }
+    }
+
+    private ProxySettings? BuildProxy()
+    {
+        if (!IsProxyEnabled || !ProxyPortValid || string.IsNullOrWhiteSpace(ProxyHost))
+        {
+            return null;
+        }
+
+        var user = ProxyUsername.Trim();
+        return new ProxySettings(
+            SelectedProxyKind.Kind,
+            ProxyHost.Trim(),
+            int.Parse(ProxyPortText.Trim(), System.Globalization.CultureInfo.InvariantCulture),
+            user.Length == 0 ? null : user,
+            user.Length == 0 || ProxyPassword.IsEmpty ? null : ProxyPassword);
+    }
+
+    /// <summary>The adapter choice and the proxy, as the engine and "Test connection" use them.</summary>
+    private NetworkSelection CurrentNetworkSelection() => SelectedNetwork.ToSelection() with { Proxy = BuildProxy() };
+
     private string? _savedNetworkId;
     private string? _savedNetworkName;
     private DispatcherTimer? _networkChangeTimer;
@@ -517,7 +606,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     [RelayCommand(CanExecute = nameof(CanTestConnection))]
     private async Task TestConnectionAsync()
     {
-        if (!Uri.TryCreate(ServerUrl.Trim(), UriKind.Absolute, out var server) || (server.Scheme != "rtmp" && server.Scheme != "rtmps"))
+        if (!Uri.TryCreate(StreamPlatforms.Normalize(ServerUrl), UriKind.Absolute, out var server) || (server.Scheme != "rtmp" && server.Scheme != "rtmps"))
         {
             NetworkTestOk = false;
             NetworkTestText = "Enter the server URL first (rtmp:// or rtmps://).";
@@ -526,13 +615,17 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         IsTestingNetwork = true;
         NetworkTestOk = null;
-        NetworkTestText = $"Connecting to {server.Host} through {(SelectedNetwork.IsAutomatic ? "the Windows default network" : SelectedNetwork.Name)}…";
+        NetworkTestText = BuildProxy() is { } testProxy
+            ? $"Connecting to {server.Host} through the {testProxy.Label}…"
+            : $"Connecting to {server.Host} through {(SelectedNetwork.IsAutomatic ? "the Windows default network" : SelectedNetwork.Name)}…";
         try
         {
-            var r = await Linkast.Networking.NetworkProbe.TestAsync(server, SelectedNetwork.ToSelection());
+            var r = await Linkast.Networking.NetworkProbe.TestAsync(server, CurrentNetworkSelection());
             NetworkTestOk = r.Success;
             var defaultRoute = r.DefaultRouteAdapter is null ? string.Empty : $" Without a choice, Windows would use '{r.DefaultRouteAdapter}'.";
-            NetworkTestText = r.Success
+            NetworkTestText = r.Success && BuildProxy() is { } usedProxy
+                ? $"Connected to {server.Host} through the {usedProxy.Label} in {r.ConnectTime?.TotalMilliseconds:0} ms. The proxy resolves the server name and picks the route."
+                : r.Success
                 ? $"Connected to {r.RemoteEndpoint} through '{r.AdapterUsed}' from {r.LocalEndpoint} in {r.ConnectTime?.TotalMilliseconds:0} ms" +
                   $"{(r.UsedAdapterDns ? ", using that network's own DNS" : string.Empty)}.{defaultRoute}"
                 : $"{r.Error?.UserMessage}{defaultRoute}";
@@ -1096,6 +1189,12 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             StreamKeyLoaded?.Invoke(this, key);
         }
 
+        if (_secrets.Get(DpapiSecretStore.ProxyPasswordName) is { IsEmpty: false } proxyPassword)
+        {
+            ProxyPassword = proxyPassword;
+            ProxyPasswordLoaded?.Invoke(this, proxyPassword);
+        }
+
         _loading = false;
 
         try
@@ -1237,6 +1336,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         nameof(SelectedEncoder), nameof(SelectedResolution), nameof(SelectedFrameRate), nameof(VideoBitrateKbps),
         nameof(KeyframeIntervalSeconds), nameof(AudioBitrateKbps), nameof(EncoderPreset),
         nameof(SelectedDestinationKind), nameof(SelectedPlatform), nameof(ServerUrl), nameof(SelectedNetwork), nameof(SelectedTheme),
+        nameof(SelectedProxyKind), nameof(ProxyHost), nameof(ProxyPortText), nameof(ProxyUsername),
         nameof(RecordingFolder), nameof(RecordWhenLive), nameof(RemuxRecordingsToMp4),
     ];
 
@@ -1414,6 +1514,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 ServerUrl = ServerUrl,
                 NetworkInterfaceId = SelectedNetwork?.Id,
                 NetworkInterfaceName = SelectedNetwork?.IsAutomatic == false ? SelectedNetwork.Name : null,
+                ProxyKind = SelectedProxyKind.Kind,
+                ProxyHost = ProxyHost.Trim(),
+                ProxyPort = ProxyPortValid ? int.Parse(ProxyPortText.Trim(), System.Globalization.CultureInfo.InvariantCulture) : 10808,
+                ProxyUsername = string.IsNullOrWhiteSpace(ProxyUsername) ? null : ProxyUsername.Trim(),
                 RecordingFolder = RecordingFolder == RecordingFiles.DefaultFolder ? null : RecordingFolder,
                 RecordWhenLive = RecordWhenLive,
                 RemuxRecordingsToMp4 = RemuxRecordingsToMp4,
@@ -1473,6 +1577,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _mutedChannels.Clear();
         _mutedChannels.UnionWith(s.MutedChannels);
         _pendingSceneChoices = (s.StartSceneId, s.EndSceneId);
+        SelectedProxyKind = ProxyKinds.First(k => k.Kind == s.ProxyKind);
+        ProxyHost = s.ProxyHost;
+        ProxyPortText = s.ProxyPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        ProxyUsername = s.ProxyUsername ?? string.Empty;
         _savedNetworkId = s.NetworkInterfaceId;
         _savedNetworkName = s.NetworkInterfaceName;
         SelectedNetwork = NetworkOption.Automatic;
@@ -1926,7 +2034,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         var audio = BuildAudioSources();
 
         var server = new Uri("rtmp://localhost/none");
-        if (!recordOnly && !Uri.TryCreate(ServerUrl.Trim(), UriKind.Absolute, out server))
+        if (!recordOnly && !Uri.TryCreate(StreamPlatforms.Normalize(ServerUrl), UriKind.Absolute, out server))
         {
             error = new StreamError(ErrorCategory.Configuration, "destination.url", "Enter a server URL such as rtmp://live.twitch.tv/app.");
             return null;
@@ -1977,7 +2085,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             audio,
             encoder,
             new Destination(SelectedDestinationKind.Label, server, StreamKey, SelectedDestinationKind.Kind),
-            SelectedNetwork.ToSelection(),
+            CurrentNetworkSelection(),
             ReconnectPolicy.Default)
         {
             // Every camera shown in the layout is included, bottom to top. The camera on/off switch

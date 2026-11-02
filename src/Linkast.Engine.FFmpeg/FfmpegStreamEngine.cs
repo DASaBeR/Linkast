@@ -1054,7 +1054,7 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
         }
 
         // Kept for reconnects even when FFmpeg is not live yet; the next attempt starts at this gain.
-        gain = Math.Clamp(gain, 0, 4);
+        gain = Math.Clamp(gain, 0, 8);
         _liveGain[channel] = gain;
         var ok = await SendLiveAsync("volume@" + channel, "volume", gain.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture), cancellationToken).ConfigureAwait(false);
         LogGainChanged(channel, gain, ok);

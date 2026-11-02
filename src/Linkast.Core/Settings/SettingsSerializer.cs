@@ -258,6 +258,9 @@ public static class SettingsSerializer
                 KeyframeIntervalSeconds = Math.Clamp(stream.KeyframeIntervalSeconds, 1, 10),
                 AudioBitrateKbps = Math.Clamp(stream.AudioBitrateKbps, 32, 512),
                 ServerUrl = stream.ServerUrl ?? string.Empty,
+                ProxyKind = Enum.IsDefined(stream.ProxyKind) ? stream.ProxyKind : ProxyKind.None,
+                ProxyHost = string.IsNullOrWhiteSpace(stream.ProxyHost) ? "127.0.0.1" : stream.ProxyHost.Trim(),
+                ProxyPort = stream.ProxyPort is > 0 and <= 65535 ? stream.ProxyPort : 10808,
                 EndSceneSeconds = Math.Clamp(stream.EndSceneSeconds, 3, 120),
                 // Empty collections stay the shared defaults, so untouched settings still compare equal.
                 ChannelVolumes = stream.ChannelVolumes is not { Count: > 0 } volumes ? StreamSettings.NoVolumes : volumes

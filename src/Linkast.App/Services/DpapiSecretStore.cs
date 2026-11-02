@@ -16,6 +16,8 @@ public sealed class DpapiSecretStore
 {
     public const string StreamKeyName = "destination.streamKey";
 
+    public const string ProxyPasswordName = "network.proxy.password";
+
     private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("Linkast.secrets.v1");
     private readonly Lock _gate = new();
 

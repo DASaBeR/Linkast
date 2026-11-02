@@ -115,6 +115,15 @@ public sealed record StreamSettings
     /// <summary>Adapter name at the time it was chosen, shown when it is not connected.</summary>
     public string? NetworkInterfaceName { get; init; }
 
+    /// <summary>Proxy for the stream: none, SOCKS5 or HTTP. The password is stored separately, encrypted.</summary>
+    public ProxyKind ProxyKind { get; init; }
+
+    public string ProxyHost { get; init; } = "127.0.0.1";
+
+    public int ProxyPort { get; init; } = 10808;
+
+    public string? ProxyUsername { get; init; }
+
     /// <summary>The scene Go live starts on (for example Starting soon), or null to stay on the current scene.</summary>
     public Guid? StartSceneId { get; init; }
 

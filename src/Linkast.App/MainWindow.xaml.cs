@@ -34,6 +34,12 @@ public partial class MainWindow : Window
             StreamKeyBox.Password = key.Reveal();
             _syncingKey = false;
         };
+        viewModel.ProxyPasswordLoaded += (_, password) =>
+        {
+            _syncingKey = true;
+            ProxyPasswordBox.Password = password.Reveal();
+            _syncingKey = false;
+        };
         ((INotifyCollectionChanged)LogList.Items).CollectionChanged += (_, _) =>
         {
             if (LogList.Items.Count > 0)
@@ -58,6 +64,14 @@ public partial class MainWindow : Window
         }
 
         _vm.StreamKey = new Secret(StreamKeyBox.Password.Trim());
+    }
+
+    private void OnProxyPasswordChanged(object sender, RoutedEventArgs e)
+    {
+        if (!_syncingKey)
+        {
+            _vm.ProxyPassword = new Secret(ProxyPasswordBox.Password);
+        }
     }
 
     private void OnStreamKeyPlainChanged(object sender, TextChangedEventArgs e)

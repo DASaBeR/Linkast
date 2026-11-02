@@ -164,9 +164,9 @@ public static partial class SessionValidator
 
         foreach (var a in s.Audio)
         {
-            if (a.Gain is < 0 or > 4 || double.IsNaN(a.Gain))
+            if (a.Gain is < 0 or > 8 || double.IsNaN(a.Gain))
             {
-                errors.Add(new StreamError(ErrorCategory.Audio, "audio.gain", "Audio gain must be between 0 and 4."));
+                errors.Add(new StreamError(ErrorCategory.Audio, "audio.gain", "Audio gain must be between 0 and 8 (0 to 800 %)."));
             }
         }
     }

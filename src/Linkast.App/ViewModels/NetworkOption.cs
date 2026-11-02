@@ -33,3 +33,9 @@ public sealed record NetworkOption(string? Id, string Name, NetworkAdapterInfo? 
 
     public override string ToString() => Label;
 }
+
+/// <summary>One entry in the "Proxy type" list.</summary>
+public sealed record ProxyKindOption(ProxyKind Kind, string Label)
+{
+    public override string ToString() => Label;
+}

@@ -32,6 +32,26 @@ public static class StreamPlatforms
 
     public static StreamPlatformInfo Get(StreamPlatform platform) => All.First(p => p.Platform == platform);
 
+    /// <summary>
+    /// Trims the server URL and adds the application path some services leave out. Kick shows its server as
+    /// <c>rtmps://xxxx.global-contribute.live-video.net</c> (Amazon IVS), whose application is always <c>/app</c>.
+    /// </summary>
+    public static string Normalize(string? serverUrl)
+    {
+        var url = (serverUrl ?? string.Empty).Trim();
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            && uri.Scheme is "rtmp" or "rtmps"
+            && uri.AbsolutePath.Trim('/').Length == 0
+            && string.IsNullOrEmpty(uri.Query)
+            && string.IsNullOrEmpty(uri.Fragment)
+            && uri.IdnHost.EndsWith(".live-video.net", StringComparison.OrdinalIgnoreCase))
+        {
+            return url.TrimEnd('/') + "/app";
+        }
+
+        return url;
+    }
+
     /// <summary>The preset whose server is <paramref name="serverUrl"/>, or <see cref="StreamPlatform.Custom"/>.</summary>
     public static StreamPlatform Detect(string? serverUrl)
     {
@@ -40,7 +60,7 @@ public static class StreamPlatforms
             return StreamPlatform.Custom;
         }
 
-        var url = serverUrl.Trim().TrimEnd('/');
+        var url = Normalize(serverUrl).TrimEnd('/');
         return All.FirstOrDefault(p => p.Server is { } s && string.Equals(s.TrimEnd('/'), url, StringComparison.OrdinalIgnoreCase))?.Platform
             ?? StreamPlatform.Custom;
     }

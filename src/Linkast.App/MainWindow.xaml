@@ -467,7 +467,7 @@
                                     <views:SceneEditor x:Name="OutputPreview" Layers="{Binding Layers}" SelectedLayer="{Binding Selected, Mode=TwoWay}"
                                                        CanvasWidth="{Binding CanvasWidth}" CanvasHeight="{Binding CanvasHeight}"
                                                        BasePlacement="{Binding BasePlacement, Mode=TwoWay}" BaseFit="{Binding BaseFit}" BaseCrop="{Binding BaseCrop, Mode=TwoWay}"
-                                                       BackgroundSource="{Binding EditorBackground}" IsPreviewOnly="True"
+                                                       BackgroundSource="{Binding EditorBackground}" ShowBase="{Binding ShowCapture}" IsPreviewOnly="True"
                                                        StackOrder="{Binding DataContext.PreviewStack, RelativeSource={RelativeSource AncestorType=Window}}"
                                                        ShowOverlayNames="{Binding IsSelected, ElementName=TabOverlays}"
                                                        Overlays="{Binding DataContext.Overlays.Items, RelativeSource={RelativeSource AncestorType=Window}}"
@@ -1092,6 +1092,49 @@
                                                                Foreground="{Binding NetworkTestOk, Converter={x:Static vm:Converters.TestResultBrush}}"
                                                                AutomationProperties.LiveSetting="Polite" AutomationProperties.Name="Connection test result" />
                                                 </DockPanel>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Style="{StaticResource TabSection}" BorderThickness="0" IsEnabled="{Binding CanEditSettings}">
+                                            <StackPanel>
+                                                <TextBlock Text="Proxy for your stream" Style="{StaticResource Linkast.Card.Title}" Margin="0,0,0,4" />
+                                                <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,0,0,12" TextWrapping="Wrap"
+                                                           Text="Send the stream through a proxy, for example a local v2rayN (SOCKS5 127.0.0.1:10808 or HTTP 127.0.0.1:10809). Only the stream uses it; your game and other apps keep their normal connection." />
+                                                <Label Content="Proxy _type" Target="{Binding ElementName=ProxyKindBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
+                                                <ComboBox x:Name="ProxyKindBox" ItemsSource="{Binding ProxyKinds}" SelectedItem="{Binding SelectedProxyKind}" AutomationProperties.Name="Proxy type" />
+                                                <StackPanel Visibility="{Binding IsProxyEnabled, Converter={StaticResource BoolToVis}}">
+                                                    <Grid Margin="0,12,0,0">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="110" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Margin="0,0,10,0">
+                                                            <Label Content="_Address" Target="{Binding ElementName=ProxyHostBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
+                                                            <TextBox x:Name="ProxyHostBox" Text="{Binding ProxyHost, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Proxy address" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="1">
+                                                            <Label Content="_Port" Target="{Binding ElementName=ProxyPortBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
+                                                            <TextBox x:Name="ProxyPortBox" Text="{Binding ProxyPortText, UpdateSourceTrigger=PropertyChanged}" MaxLength="5" AutomationProperties.Name="Proxy port" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                    <Grid Margin="0,12,0,0">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Margin="0,0,10,0">
+                                                            <Label Content="User name (optional)" Target="{Binding ElementName=ProxyUserBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
+                                                            <TextBox x:Name="ProxyUserBox" Text="{Binding ProxyUsername, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Proxy user name" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="1">
+                                                            <Label Content="Password (optional)" Target="{Binding ElementName=ProxyPasswordBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
+                                                            <PasswordBox x:Name="ProxyPasswordBox" PasswordChanged="OnProxyPasswordChanged" AutomationProperties.Name="Proxy password" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </StackPanel>
+                                                <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,12,0,0" TextWrapping="Wrap" Text="{Binding ProxySummary}" />
+                                                <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,6,0,0" TextWrapping="Wrap"
+                                                           Visibility="{Binding IsProxyEnabled, Converter={StaticResource BoolToVis}}"
+                                                           Text="The proxy looks up the server name and chooses the route, so the network choice above does not apply to a proxy on this PC. Use Test connection to check it." />
                                             </StackPanel>
                                         </Border>
                                     </StackPanel>

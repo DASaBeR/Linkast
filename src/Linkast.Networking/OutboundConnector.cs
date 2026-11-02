@@ -10,8 +10,9 @@ namespace Linkast.Networking;
 /// <summary>An established, verified outbound connection to an ingest server.</summary>
 public sealed class OutboundConnection : IAsyncDisposable
 {
-    internal OutboundConnection(Socket socket, Stream stream, IPEndPoint local, IPAddress remote, int port, NetworkAdapterInfo? adapter, string? interfaceName, TimeSpan connectTime, bool usedAdapterDns)
+    internal OutboundConnection(Socket socket, Stream stream, IPEndPoint local, IPAddress remote, int port, NetworkAdapterInfo? adapter, string? interfaceName, TimeSpan connectTime, bool usedAdapterDns, string? viaProxy = null)
     {
+        ViaProxy = viaProxy;
         Socket = socket;
         Stream = stream;
         Local = local;
@@ -45,6 +46,9 @@ public sealed class OutboundConnection : IAsyncDisposable
     /// <summary>True when the name was resolved through the adapter's own DNS servers.</summary>
     public bool UsedAdapterDns { get; }
 
+    /// <summary>Description of the proxy the connection goes through, or null for a direct connection.</summary>
+    public string? ViaProxy { get; }
+
     public async ValueTask DisposeAsync()
     {
         await Stream.DisposeAsync().ConfigureAwait(false);
@@ -66,6 +70,11 @@ public static class OutboundConnector
         var host = server.IdnHost;
         var tls = server.Scheme == "rtmps";
         var port = server.IsDefaultPort || server.Port <= 0 ? (tls ? 443 : 1935) : server.Port;
+        if (selection.Proxy is { IsEnabled: true } proxy)
+        {
+            return await ConnectViaProxyAsync(host, port, tls, selection, proxy, timeout, ct).ConfigureAwait(false);
+        }
+
         var adapter = selection.IsSystemDefault ? null : ResolveAdapter(selection);
 
         var (addresses, usedAdapterDns) = await ResolveAsync(host, adapter, timeout, ct).ConfigureAwait(false);
@@ -127,25 +136,7 @@ public static class OutboundConnector
                     null);
             }
 
-            Stream stream = new NetworkStream(socket, ownsSocket: false);
-            if (tls)
-            {
-                var ssl = new SslStream(stream, leaveInnerStreamOpen: false);
-                try
-                {
-                    using var tlsTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                    tlsTimeout.CancelAfter(timeout);
-                    await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions { TargetHost = host }, tlsTimeout.Token).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (ex is System.Security.Authentication.AuthenticationException or IOException or OperationCanceledException && !ct.IsCancellationRequested)
-                {
-                    await ssl.DisposeAsync().ConfigureAwait(false);
-                    socket.Dispose();
-                    throw Fail("network.tls", "A secure (RTMPS) connection could not be established with the server.", ex);
-                }
-
-                stream = ssl;
-            }
+            var stream = await WrapTlsAsync(socket, host, tls, timeout, ct).ConfigureAwait(false);
 
             return new OutboundConnection(socket, stream, local, address, port, adapter, actual?.Name ?? adapter?.Name, connectTime, usedAdapterDns);
         }
@@ -170,6 +161,112 @@ public static class OutboundConnector
                 Fail("network.unreachable", "The server is unreachable from this network connection.", lastError),
             _ => Fail("network.connect", $"Could not connect to the server{via}.", lastError),
         };
+    }
+
+    /// <summary>The socket stream, wrapped in TLS for rtmps. Disposes the socket when TLS fails.</summary>
+    private static async Task<Stream> WrapTlsAsync(Socket socket, string host, bool tls, TimeSpan timeout, CancellationToken ct, Stream? inner = null)
+    {
+        Stream stream = inner ?? new NetworkStream(socket, ownsSocket: false);
+        if (!tls)
+        {
+            return stream;
+        }
+
+        var ssl = new SslStream(stream, leaveInnerStreamOpen: false);
+        try
+        {
+            using var tlsTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            tlsTimeout.CancelAfter(timeout);
+            await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions { TargetHost = host }, tlsTimeout.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is System.Security.Authentication.AuthenticationException or IOException or OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            await ssl.DisposeAsync().ConfigureAwait(false);
+            socket.Dispose();
+            throw Fail("network.tls", "A secure (RTMPS) connection could not be established with the server.", ex);
+        }
+
+        return ssl;
+    }
+
+    /// <summary>
+    /// Connects to the proxy and asks it to open the tunnel to the ingest server. A proxy on this PC (v2rayN and
+    /// similar) decides the route itself, so a selected network adapter is only bound for a proxy on another machine.
+    /// </summary>
+    private static async Task<OutboundConnection> ConnectViaProxyAsync(string host, int port, bool tls, NetworkSelection selection, ProxySettings proxy, TimeSpan timeout, CancellationToken ct)
+    {
+        IPAddress[] proxyAddresses;
+        try
+        {
+            proxyAddresses = IPAddress.TryParse(proxy.Host, out var literal) ? [literal] : await Dns.GetHostAddressesAsync(proxy.Host, ct).ConfigureAwait(false);
+        }
+        catch (SocketException ex)
+        {
+            throw Fail("network.proxy.dns", $"The proxy address '{proxy.Host}' could not be resolved.", ex);
+        }
+
+        var proxyAddress = OrderAddresses(proxyAddresses)[0];
+        var onThisPc = IPAddress.IsLoopback(proxyAddress);
+        var adapter = selection.IsSystemDefault || onThisPc ? null : ResolveAdapter(selection);
+
+        var sw = Stopwatch.StartNew();
+        Socket socket;
+        try
+        {
+            socket = adapter is null
+                ? new Socket(proxyAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
+                : InterfaceBinding.CreateBoundSocket(adapter, proxyAddress.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+        }
+        catch (SocketException ex)
+        {
+            throw Fail("network.proxy.connect", $"Could not reach the {proxy.Label}.", ex);
+        }
+
+        try
+        {
+            using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            attempt.CancelAfter(timeout);
+            await socket.ConnectAsync(new IPEndPoint(proxyAddress, proxy.Port), attempt.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            socket.Dispose();
+            throw Fail("network.proxy.timeout", $"The {proxy.Label} did not answer in time.", null);
+        }
+        catch (SocketException ex)
+        {
+            socket.Dispose();
+            throw Fail("network.proxy.connect", ex.SocketErrorCode == SocketError.ConnectionRefused
+                ? $"Could not connect to the {proxy.Label}. Is the proxy app (for example v2rayN) running, and are the type and port right?"
+                : $"Could not reach the {proxy.Label}.", ex);
+        }
+
+        var connectTime = sw.Elapsed;
+        Stream tunnel = new NetworkStream(socket, ownsSocket: false);
+        try
+        {
+            using var handshake = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            handshake.CancelAfter(timeout);
+            await ProxyTunnel.EstablishAsync(tunnel, proxy, host, port, handshake.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            socket.Dispose();
+            throw Fail("network.proxy.timeout", $"The {proxy.Label} did not finish the connection to {host} in time.", null);
+        }
+        catch (Exception ex) when (ex is IOException or SocketException)
+        {
+            socket.Dispose();
+            throw Fail("network.proxy.handshake", $"The {proxy.Label} closed the connection. Check the proxy type and port.", ex);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+
+        var stream = await WrapTlsAsync(socket, host, tls, timeout, ct, tunnel).ConfigureAwait(false);
+        return new OutboundConnection(socket, stream, (IPEndPoint)socket.LocalEndPoint!, proxyAddress, port, adapter, adapter?.Name, connectTime, false, proxy.Label);
     }
 
     /// <summary>Looks up the selected adapter fresh (addresses change) and checks it can be used now.</summary>

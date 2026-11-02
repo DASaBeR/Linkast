@@ -52,4 +52,24 @@ public sealed record NetworkSelection(string? InterfaceId, string? DisplayName)
     public static NetworkSelection SystemDefault { get; } = new(null, null);
 
     public bool IsSystemDefault => InterfaceId is null;
+
+    /// <summary>A proxy the stream goes through (for example a local v2rayN), or null to connect directly.</summary>
+    public ProxySettings? Proxy { get; init; }
+}
+
+public enum ProxyKind
+{
+    None,
+    Socks5,
+    Http,
+}
+
+/// <summary>A SOCKS5 or HTTP (CONNECT) proxy for the outgoing stream. Only the stream uses it.</summary>
+public sealed record ProxySettings(ProxyKind Kind, string Host, int Port, string? Username = null, Secret? Password = null)
+{
+    public bool IsEnabled => Kind != ProxyKind.None && !string.IsNullOrWhiteSpace(Host) && Port is > 0 and <= 65535;
+
+    public bool HasCredentials => !string.IsNullOrEmpty(Username);
+
+    public string Label => $"{(Kind == ProxyKind.Socks5 ? "SOCKS5" : "HTTP")} proxy {Host}:{Port}";
 }

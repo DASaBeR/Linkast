@@ -13,10 +13,10 @@ public sealed class DirectOutputTransport : IOutputTransport
     {
         ArgumentNullException.ThrowIfNull(destination);
         ArgumentNullException.ThrowIfNull(network);
-        if (!network.IsSystemDefault)
+        if (!network.IsSystemDefault || network.Proxy is { IsEnabled: true })
         {
             throw new StreamFailureException(new StreamError(
-                ErrorCategory.Configuration, "network.selection.direct", "The direct transport cannot select a network interface."));
+                ErrorCategory.Configuration, "network.selection.direct", "The direct transport cannot select a network interface or use a proxy."));
         }
 
         var url = destination.ServerUrl.GetLeftPart(UriPartial.Path).TrimEnd('/') + "/" + destination.StreamKey.Reveal();

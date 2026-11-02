@@ -108,7 +108,7 @@ public sealed partial class MainViewModel
     /// </summary>
     private async Task<int?> MeasureTwitchUploadAsync(IReadOnlyList<EncoderSpeed> speeds)
     {
-        if (!Uri.TryCreate(ServerUrl.Trim(), UriKind.Absolute, out var server))
+        if (!Uri.TryCreate(StreamPlatforms.Normalize(ServerUrl), UriKind.Absolute, out var server))
         {
             AutoQualityStatus = "The Twitch server address isn't valid.";
             return null;
@@ -122,7 +122,7 @@ public sealed partial class MainViewModel
             [new TestToneSource()],
             new EncoderSettings(encoder, 1920, 1080, 60, UploadTestKbps),
             new Destination("Twitch bandwidth test", server, testKey),
-            SelectedNetwork.ToSelection(),
+            CurrentNetworkSelection(),
             ReconnectPolicy.Disabled);
 
         await using var test = new FfmpegStreamEngine(_engine!.Installation, _transport, logger: _loggerFactory.CreateLogger<FfmpegStreamEngine>());

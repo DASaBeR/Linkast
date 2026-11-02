@@ -116,6 +116,10 @@ public sealed class SceneEditor : UserControl
         nameof(BaseCrop), typeof(NormalizedRect), typeof(SceneEditor),
         new FrameworkPropertyMetadata(new NormalizedRect(0, 0, 1, 1), FrameworkPropertyMetadataOptions.BindsTwoWayByDefault, (d, _) => ((SceneEditor)d)._base.Refresh()));
 
+    /// <summary>False when the scene shows no game or screen: the gameplay area is then not drawn at all.</summary>
+    public static readonly DependencyProperty ShowBaseProperty = DependencyProperty.Register(
+        nameof(ShowBase), typeof(bool), typeof(SceneEditor), new PropertyMetadata(true, (d, _) => ((SceneEditor)d)._base.Refresh()));
+
     public static readonly DependencyProperty BackgroundSourceProperty = DependencyProperty.Register(
         nameof(BackgroundSource), typeof(ImageSource), typeof(SceneEditor), new PropertyMetadata(null, (d, e) => ((SceneEditor)d)._base.SetPicture((ImageSource?)e.NewValue)));
 
@@ -232,6 +236,12 @@ public sealed class SceneEditor : UserControl
     {
         get => (NormalizedRect)GetValue(BaseCropProperty);
         set => SetValue(BaseCropProperty, value);
+    }
+
+    public bool ShowBase
+    {
+        get => (bool)GetValue(ShowBaseProperty);
+        set => SetValue(ShowBaseProperty, value);
     }
 
     public ImageSource? BackgroundSource
@@ -1026,6 +1036,7 @@ public sealed class SceneEditor : UserControl
 
         public void Refresh()
         {
+            Root.Visibility = _owner.ShowBase ? Visibility.Visible : Visibility.Collapsed;
             var b = Bounds();
             Canvas.SetLeft(Root, b.X);
             Canvas.SetTop(Root, b.Y);
