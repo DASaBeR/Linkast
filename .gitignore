@@ -29,3 +29,4 @@ models/*.onnx
 models/*.download
 models/RVM-LICENSE.txt
 .agents/
+docs/reports/pipe-connect-timeout-report.pdf
