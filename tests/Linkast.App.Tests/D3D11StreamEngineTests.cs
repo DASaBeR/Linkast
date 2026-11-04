@@ -385,7 +385,9 @@ public class D3D11StreamEngineTests
         var sw = System.Diagnostics.Stopwatch.StartNew();
         await engine.StartAsync(session);
 
-        while (engine.State != StreamState.Failed && sw.ElapsedMilliseconds < 3000)
+        // The 400 ms timeout fires quickly, but Failed is only published after teardown (process kill,
+        // output pumps), which is slow on a loaded CI runner.
+        while (engine.State != StreamState.Failed && sw.ElapsedMilliseconds < 20000)
         {
             await Task.Delay(50);
         }
