@@ -968,10 +968,16 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     /// <summary>A preset fills in the server; Custom lets the user type it.</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsCustomPlatform), nameof(DestinationSummary))]
+    [NotifyPropertyChangedFor(nameof(IsCustomPlatform), nameof(IsServerEditable), nameof(IsFixedPreset), nameof(DestinationSummary))]
     public partial StreamPlatformInfo SelectedPlatform { get; set; } = StreamPlatforms.Get(StreamPlatform.Custom);
 
     public bool IsCustomPlatform => SelectedPlatform.Platform == StreamPlatform.Custom;
+
+    /// <summary>The server box is shown: Custom, and Kick (each account has its own ingest address).</summary>
+    public bool IsServerEditable => SelectedPlatform.ServerEditable;
+
+    /// <summary>A preset whose server is fixed, so it is only shown, not edited.</summary>
+    public bool IsFixedPreset => !SelectedPlatform.ServerEditable;
 
     private StreamPlatform _activePlatform = StreamPlatform.Custom;
     private readonly Dictionary<StreamPlatform, DestinationProfile> _profiles = [];
@@ -1000,7 +1006,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
         else
         {
-            ServerUrl = !string.IsNullOrWhiteSpace(profile?.ServerUrl) ? profile.ServerUrl : (value.Server ?? string.Empty);
+            // A fixed preset always uses its own server (a saved copy could be out of date); Kick keeps the
+            // user's own ingest address.
+            ServerUrl = value.ServerEditable && !string.IsNullOrWhiteSpace(profile?.ServerUrl) ? profile.ServerUrl : (value.Server ?? string.Empty);
             SelectedDestinationKind = DestinationKinds.First(d => d.Kind == DestinationKind.Direct);
         }
 

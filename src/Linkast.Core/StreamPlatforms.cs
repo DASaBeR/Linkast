@@ -17,6 +17,12 @@ public sealed record StreamPlatformInfo(StreamPlatform Platform, string Name, st
 {
     // Shown in lists and read by screen readers.
     public override string ToString() => Name;
+
+    /// <summary>
+    /// The user can change the server: Custom (any server), and Kick, whose ingest address belongs to each
+    /// account (it is shown in the Kick dashboard) rather than being one address for everybody.
+    /// </summary>
+    public bool ServerEditable => Platform is StreamPlatform.Custom or StreamPlatform.Kick;
 }
 
 public static class StreamPlatforms
@@ -61,6 +67,11 @@ public static class StreamPlatforms
         }
 
         var url = Normalize(serverUrl).TrimEnd('/');
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.IdnHost.EndsWith(".global-contribute.live-video.net", StringComparison.OrdinalIgnoreCase))
+        {
+            return StreamPlatform.Kick; // every Kick account has its own ingest host
+        }
+
         return All.FirstOrDefault(p => p.Server is { } s && string.Equals(s.TrimEnd('/'), url, StringComparison.OrdinalIgnoreCase))?.Platform
             ?? StreamPlatform.Custom;
     }

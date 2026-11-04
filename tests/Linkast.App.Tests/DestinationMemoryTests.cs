@@ -253,4 +253,29 @@ public sealed class DestinationMemoryTests : IDisposable
         Assert.DoesNotContain("CustomKeySecret", redacted);
         Assert.DoesNotContain("KickKeySecret", redacted);
     }
+    [Fact]
+    public async Task Kick_keeps_the_users_own_ingest_address_but_other_presets_stay_fixed()
+    {
+        var (vm, settingsStore, _) = CreateApp();
+        await vm.InitializeAsync();
+
+        const string mine = "rtmps://abc123def456.global-contribute.live-video.net/app";
+        vm.SelectedPlatform = StreamPlatforms.Get(StreamPlatform.Kick);
+        Assert.True(vm.IsServerEditable);
+        vm.ServerUrl = mine;
+
+        vm.SelectedPlatform = StreamPlatforms.Get(StreamPlatform.Twitch);
+        Assert.True(vm.IsFixedPreset);
+        Assert.Equal(StreamPlatforms.Get(StreamPlatform.Twitch).Server, vm.ServerUrl);
+
+        vm.SelectedPlatform = StreamPlatforms.Get(StreamPlatform.Kick);
+        Assert.Equal(mine, vm.ServerUrl);
+
+        // Still there after a restart.
+        settingsStore.Save(vm.CurrentSettings());
+        var (vm2, _, _) = CreateApp();
+        await vm2.InitializeAsync();
+        Assert.Equal(StreamPlatform.Kick, vm2.SelectedPlatform.Platform);
+        Assert.Equal(mine, vm2.ServerUrl);
+    }
 }

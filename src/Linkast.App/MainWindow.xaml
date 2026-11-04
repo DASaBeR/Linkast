@@ -1000,23 +1000,29 @@
                                                                 <TextBlock Text="Where do I find my key?" />
                                                             </StackPanel>
                                                         </Button>
-                                                        <TextBlock Style="{StaticResource Linkast.Text.Hint}" VerticalAlignment="Center" Margin="0" TextTrimming="CharacterEllipsis">
+                                                        <TextBlock Style="{StaticResource Linkast.Text.Hint}" VerticalAlignment="Center" Margin="0" TextTrimming="CharacterEllipsis"
+                                                                   Visibility="{Binding IsFixedPreset, Converter={StaticResource BoolToVis}}">
                                                             <Run Text="Server:" /> <Run Text="{Binding ServerUrl, Mode=OneWay}" FontFamily="{DynamicResource Linkast.Font.Mono}" />
                                                         </TextBlock>
                                                     </DockPanel>
                                                 </StackPanel>
 
                                                 <!-- Custom: any RTMP or RTMPS server, direct or through a restream service. -->
-                                                <StackPanel Visibility="{Binding IsCustomPlatform, Converter={StaticResource BoolToVis}}" Margin="0,12,0,0">
-                                                    <ListBox Style="{StaticResource Linkast.Segmented}" ItemsSource="{Binding DestinationKinds}" HorizontalAlignment="Left"
-                                                             SelectedItem="{Binding SelectedDestinationKind}" AutomationProperties.Name="Delivery type" />
-                                                    <TextBlock Style="{StaticResource Linkast.Text.Hint}" Text="{Binding SelectedDestinationKind.Explanation}" Margin="0,6,0,0" />
+                                                <StackPanel Visibility="{Binding IsServerEditable, Converter={StaticResource BoolToVis}}" Margin="0,12,0,0">
+                                                    <StackPanel Visibility="{Binding IsCustomPlatform, Converter={StaticResource BoolToVis}}">
+                                                        <ListBox Style="{StaticResource Linkast.Segmented}" ItemsSource="{Binding DestinationKinds}" HorizontalAlignment="Left"
+                                                                 SelectedItem="{Binding SelectedDestinationKind}" AutomationProperties.Name="Delivery type" />
+                                                        <TextBlock Style="{StaticResource Linkast.Text.Hint}" Text="{Binding SelectedDestinationKind.Explanation}" Margin="0,6,0,0" />
+                                                    </StackPanel>
                                                     <Label Content="Server _URL" Target="{Binding ElementName=ServerUrlBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,12,0,5" />
                                                     <TextBox x:Name="ServerUrlBox" Text="{Binding ServerUrl, UpdateSourceTrigger=PropertyChanged}"
                                                              AutomationProperties.HelpText="For example rtmp://live.twitch.tv/app or rtmps://a.rtmps.youtube.com/live2" />
                                                     <TextBlock Style="{StaticResource Linkast.Text.Warning}" Text="Add the server address your platform or restream service gives you."
                                                                Visibility="{Binding ServerUrl, Converter={x:Static vm:Converters.EmptyToVisibility}}" />
-                                                    <TextBlock Style="{StaticResource Linkast.Text.Hint}" Text="For example rtmp://live.twitch.tv/app or rtmps://a.rtmps.youtube.com/live2" />
+                                                    <TextBlock Style="{StaticResource Linkast.Text.Hint}" Text="For example rtmp://live.twitch.tv/app or rtmps://a.rtmps.youtube.com/live2"
+                                                               Visibility="{Binding IsCustomPlatform, Converter={StaticResource BoolToVis}}" />
+                                                    <TextBlock Style="{StaticResource Linkast.Text.Hint}" Text="Kick gives every account its own server address. Copy yours from the Kick dashboard (Stream settings) if the one shown does not work."
+                                                               TextWrapping="Wrap" Visibility="{Binding IsCustomPlatform, Converter={x:Static vm:Converters.InverseBoolToVisibility}}" />
                                                 </StackPanel>
 
                                                 <Label Content="Stream _key" Target="{Binding ElementName=StreamKeyBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,14,0,5" />
