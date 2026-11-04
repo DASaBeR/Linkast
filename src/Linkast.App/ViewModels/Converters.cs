@@ -236,6 +236,48 @@ public static class Converters
         }
         : "\uE774");
 
+    /// <summary>
+    /// A mixer fader that moves in dB instead of percent: bottom = silent, then -80 dB up to +18 dB (800 %).
+    /// A linear 0-800 % travel left only a sliver below 100 %, so a game could not be turned down far enough.
+    /// </summary>
+    public static IValueConverter VolumeFader { get; } = new VolumeFaderConverter();
+
+    private const double FaderMinDb = -80;
+    private const double FaderMaxDb = 18;
+    private const double FaderTravel = 1000;
+
+    private sealed class VolumeFaderConverter : IValueConverter
+    {
+        public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        {
+            var percent = value is double d ? d : 0;
+            if (percent <= 0)
+            {
+                return 0d;
+            }
+
+            var db = Math.Clamp(20 * Math.Log10(percent / 100), FaderMinDb, FaderMaxDb);
+            return Math.Max(1, (db - FaderMinDb) / (FaderMaxDb - FaderMinDb) * FaderTravel);
+        }
+
+        public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        {
+            var position = value is double d ? d : 0;
+            if (position <= 1)
+            {
+                return 0d;
+            }
+
+            var db = FaderMinDb + position / FaderTravel * (FaderMaxDb - FaderMinDb);
+            if (Math.Abs(db) < 0.4)
+            {
+                return 100d; // a firm stop at "unchanged"
+            }
+
+            return Math.Min(800, 100 * Math.Pow(10, db / 20));
+        }
+    }
+
     private static object Brush(string key) => Application.Current.TryFindResource(key) ?? Brushes.Gray;
 
     private sealed class MultiLambda(Func<object?[], object?> convert) : IMultiValueConverter
