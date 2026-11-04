@@ -10,11 +10,11 @@ namespace Linkast.App.Services;
 /// (temp file then replace), so a crash mid-save never leaves a half-written file. A corrupt
 /// file is kept aside, never silently overwritten.
 /// </summary>
-public sealed partial class JsonSettingsStore(ILogger<JsonSettingsStore> logger)
+public sealed partial class JsonSettingsStore(ILogger<JsonSettingsStore> logger, string? path = null)
 {
     private readonly Lock _gate = new();
 
-    public static string FilePath => Path.Combine(App.DataDirectory, "settings.json");
+    public string FilePath { get; } = path ?? Path.Combine(App.DataDirectory, "settings.json");
 
     public SettingsLoadOutcome LastOutcome { get; private set; }
 
@@ -60,7 +60,11 @@ public sealed partial class JsonSettingsStore(ILogger<JsonSettingsStore> logger)
         {
             try
             {
-                Directory.CreateDirectory(App.DataDirectory);
+                var dir = Path.GetDirectoryName(FilePath);
+                if (!string.IsNullOrEmpty(dir))
+                {
+                    Directory.CreateDirectory(dir);
+                }
                 var temp = FilePath + ".tmp";
                 File.WriteAllText(temp, json);
                 if (File.Exists(FilePath))

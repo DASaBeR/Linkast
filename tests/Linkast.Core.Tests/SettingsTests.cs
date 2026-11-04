@@ -334,6 +334,50 @@ public class SettingsSerializerTests
         Assert.Equal(400, s.Stream.MicrophoneVolume);
         Assert.Equal(750, s.Stream.ChannelVolumes["overlay_alert"]);
     }
+
+    [Fact]
+    public void Destinations_round_trip_through_serializer()
+    {
+        var settings = new LinkastSettings
+        {
+            Stream = new StreamSettings
+            {
+                Platform = StreamPlatform.Kick,
+                ServerUrl = "rtmps://custom.kick.com/app",
+                DestinationKind = DestinationKind.Direct,
+                Destinations = new Dictionary<StreamPlatform, DestinationProfile>
+                {
+                    [StreamPlatform.Kick] = new DestinationProfile { ServerUrl = "rtmps://custom.kick.com/app", DestinationKind = DestinationKind.Direct },
+                    [StreamPlatform.Custom] = new DestinationProfile { ServerUrl = "rtmp://my.custom.server/live", DestinationKind = DestinationKind.ThirdPartyRestream },
+                },
+            },
+        };
+
+        var json = SettingsSerializer.Serialize(settings);
+        var (back, outcome) = SettingsSerializer.Deserialize(json);
+
+        Assert.Equal(SettingsLoadOutcome.Loaded, outcome);
+        Assert.Equal(2, back.Stream.Destinations.Count);
+        Assert.Equal("rtmps://custom.kick.com/app", back.Stream.Destinations[StreamPlatform.Kick].ServerUrl);
+        Assert.Equal(DestinationKind.Direct, back.Stream.Destinations[StreamPlatform.Kick].DestinationKind);
+        Assert.Equal("rtmp://my.custom.server/live", back.Stream.Destinations[StreamPlatform.Custom].ServerUrl);
+        Assert.Equal(DestinationKind.ThirdPartyRestream, back.Stream.Destinations[StreamPlatform.Custom].DestinationKind);
+    }
+
+    [Fact]
+    public void Legacy_settings_without_destinations_deserializes_with_empty_destinations()
+    {
+        var json = """
+            {"schemaVersion":4,
+             "stream":{"platform":"YouTube","serverUrl":"rtmps://a.rtmps.youtube.com/live2","destinationKind":"Direct"}}
+            """;
+        var (s, outcome) = SettingsSerializer.Deserialize(json);
+        Assert.Equal(SettingsLoadOutcome.Loaded, outcome);
+        Assert.NotNull(s.Stream.Destinations);
+        Assert.Empty(s.Stream.Destinations);
+        Assert.Equal(StreamPlatform.YouTube, s.Stream.Platform);
+        Assert.Equal("rtmps://a.rtmps.youtube.com/live2", s.Stream.ServerUrl);
+    }
 }
 
 public class CameraPresetTests

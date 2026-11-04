@@ -109,6 +109,12 @@ public sealed record StreamSettings
 
     public string ServerUrl { get; init; } = string.Empty;
 
+    /// <summary>Per-platform destination settings, so each tab remembers its own values.</summary>
+    public IReadOnlyDictionary<StreamPlatform, DestinationProfile> Destinations { get; init; } = NoDestinations;
+
+    // One shared empty value, so two default settings compare equal (a record compares a dictionary by reference).
+    internal static readonly IReadOnlyDictionary<StreamPlatform, DestinationProfile> NoDestinations = new Dictionary<StreamPlatform, DestinationProfile>();
+
     /// <summary>Network adapter ID for the stream, or null for the Windows default route.</summary>
     public string? NetworkInterfaceId { get; init; }
 
@@ -144,6 +150,13 @@ public sealed record StreamSettings
 
     /// <summary>Channels muted in the mixer (in every scene).</summary>
     public IReadOnlyList<string> MutedChannels { get; init; } = [];
+}
+
+/// <summary>Per-platform destination profile containing the server URL and delivery kind.</summary>
+public sealed record DestinationProfile
+{
+    public string ServerUrl { get; init; } = string.Empty;
+    public DestinationKind DestinationKind { get; init; } = DestinationKind.Direct;
 }
 
 /// <summary>One camera layer: which camera, and how it looks (camera-level). Placement lives in layouts.</summary>

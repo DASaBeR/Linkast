@@ -258,6 +258,17 @@ public static class SettingsSerializer
                 KeyframeIntervalSeconds = Math.Clamp(stream.KeyframeIntervalSeconds, 1, 10),
                 AudioBitrateKbps = Math.Clamp(stream.AudioBitrateKbps, 32, 512),
                 ServerUrl = stream.ServerUrl ?? string.Empty,
+                Destinations = stream.Destinations is not { Count: > 0 } destinations
+                    ? StreamSettings.NoDestinations
+                    : destinations
+                        .Where(kv => Enum.IsDefined(kv.Key) && kv.Value is not null)
+                        .ToDictionary(
+                            kv => kv.Key,
+                            kv => new DestinationProfile
+                            {
+                                ServerUrl = kv.Value.ServerUrl ?? string.Empty,
+                                DestinationKind = Enum.IsDefined(kv.Value.DestinationKind) ? kv.Value.DestinationKind : DestinationKind.Direct,
+                            }),
                 ProxyKind = Enum.IsDefined(stream.ProxyKind) ? stream.ProxyKind : ProxyKind.None,
                 ProxyHost = string.IsNullOrWhiteSpace(stream.ProxyHost) ? "127.0.0.1" : stream.ProxyHost.Trim(),
                 ProxyPort = stream.ProxyPort is > 0 and <= 65535 ? stream.ProxyPort : 10808,

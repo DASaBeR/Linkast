@@ -31,6 +31,7 @@
   </ItemGroup>
   <ItemGroup>
     <AssemblyMetadata Include="LinkastReleaseRepository" Value="$(LinkastReleaseRepository)" />
+    <InternalsVisibleTo Include="Linkast.App.Tests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Linkast.Core\Linkast.Core.csproj" />

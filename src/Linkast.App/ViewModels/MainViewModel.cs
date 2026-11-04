@@ -164,9 +164,23 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         if (parts.Contains(ObsImportPart.Stream) && import.Stream is { } target)
         {
-            stream = stream with { ServerUrl = target.ServerUrl, Platform = StreamPlatforms.Detect(target.ServerUrl), DestinationKind = DestinationKind.Direct };
+            var detected = StreamPlatforms.Detect(target.ServerUrl);
+            _profiles[detected] = new DestinationProfile
+            {
+                ServerUrl = target.ServerUrl,
+                DestinationKind = DestinationKind.Direct,
+            };
+            _activePlatform = detected;
+            stream = stream with
+            {
+                ServerUrl = target.ServerUrl,
+                Platform = detected,
+                DestinationKind = DestinationKind.Direct,
+                Destinations = new Dictionary<StreamPlatform, DestinationProfile>(_profiles),
+            };
             if (!target.Key.IsEmpty)
             {
+                _secrets.Set(DpapiSecretStore.StreamKeyNameFor(detected), target.Key);
                 Redactor.Shared.Register(target.Key);
                 StreamKey = target.Key;
                 StreamKeyLoaded?.Invoke(this, target.Key);
@@ -959,13 +973,52 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     public bool IsCustomPlatform => SelectedPlatform.Platform == StreamPlatform.Custom;
 
+    private StreamPlatform _activePlatform = StreamPlatform.Custom;
+    private readonly Dictionary<StreamPlatform, DestinationProfile> _profiles = [];
+    private bool _switchingPlatform;
+
     partial void OnSelectedPlatformChanged(StreamPlatformInfo value)
     {
         OnPropertyChanged(nameof(CanMeasureUpload));
-        if (!_loading && value.Server is { } server)
+        if (_loading)
         {
-            ServerUrl = server;
+            return;
+        }
+
+        _profiles[_activePlatform] = new DestinationProfile
+        {
+            ServerUrl = ServerUrl,
+            DestinationKind = SelectedDestinationKind?.Kind ?? DestinationKind.Direct,
+        };
+
+        _activePlatform = value.Platform;
+        _profiles.TryGetValue(_activePlatform, out var profile);
+        if (value.Platform == StreamPlatform.Custom)
+        {
+            ServerUrl = profile?.ServerUrl ?? string.Empty;
+            SelectedDestinationKind = DestinationKinds.FirstOrDefault(d => d.Kind == (profile?.DestinationKind ?? DestinationKind.Direct)) ?? DestinationKinds[0];
+        }
+        else
+        {
+            ServerUrl = !string.IsNullOrWhiteSpace(profile?.ServerUrl) ? profile.ServerUrl : (value.Server ?? string.Empty);
             SelectedDestinationKind = DestinationKinds.First(d => d.Kind == DestinationKind.Direct);
+        }
+
+        var key = _secrets.Get(DpapiSecretStore.StreamKeyNameFor(value.Platform)) ?? new Secret(string.Empty);
+        _switchingPlatform = true;
+        try
+        {
+            StreamKey = key;
+        }
+        finally
+        {
+            _switchingPlatform = false;
+        }
+
+        StreamKeyLoaded?.Invoke(this, key);
+        if (!key.IsEmpty)
+        {
+            Redactor.Shared.Register(key);
         }
     }
 
@@ -1044,14 +1097,15 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         set
         {
             field = value ?? new Secret(string.Empty);
+            Redactor.Shared.Register(field);
             OnPropertyChanged(nameof(CanMeasureUpload));
             OnPropertyChanged(nameof(HasStreamKey));
             OnPropertyChanged(nameof(IsDestinationReady));
             OnPropertyChanged(nameof(NeedsSetup));
             OnPropertyChanged(nameof(StatusTitleText));
-            if (!_loading)
+            if (!_loading && !_switchingPlatform)
             {
-                _secrets.Set(DpapiSecretStore.StreamKeyName, field);
+                _secrets.Set(DpapiSecretStore.StreamKeyNameFor(_activePlatform), field);
             }
         }
     } = new(string.Empty);
@@ -1182,11 +1236,34 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             AppendLog("Saved settings could not be read and were reset. A copy of the old file was kept in the Linkast folder.");
         }
 
-        if (_secrets.Get(DpapiSecretStore.StreamKeyName) is { IsEmpty: false } key)
+        // Migration from single legacy key to per-platform key
+        var legacyKey = _secrets.Get(DpapiSecretStore.StreamKeyName);
+        var activeKeyName = DpapiSecretStore.StreamKeyNameFor(_activePlatform);
+        var activeKey = _secrets.Get(activeKeyName);
+        if (legacyKey is { IsEmpty: false })
         {
-            Redactor.Shared.Register(key);
-            StreamKey = key;
-            StreamKeyLoaded?.Invoke(this, key);
+            if (activeKey is null || activeKey.IsEmpty)
+            {
+                _secrets.Set(activeKeyName, legacyKey);
+                activeKey = legacyKey;
+            }
+
+            _secrets.Set(DpapiSecretStore.StreamKeyName, null);
+        }
+
+        // Register ALL stored platform keys with Redactor so an inactive tab key never leaks
+        foreach (var platformInfo in StreamPlatforms.All)
+        {
+            if (_secrets.Get(DpapiSecretStore.StreamKeyNameFor(platformInfo.Platform)) is { IsEmpty: false } storedKey)
+            {
+                Redactor.Shared.Register(storedKey);
+            }
+        }
+
+        if (activeKey is { IsEmpty: false })
+        {
+            StreamKey = activeKey;
+            StreamKeyLoaded?.Invoke(this, activeKey);
         }
 
         if (_secrets.Get(DpapiSecretStore.ProxyPasswordName) is { IsEmpty: false } proxyPassword)
@@ -1196,6 +1273,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         _loading = false;
+        StartWindowListWatch();
 
         try
         {
@@ -1302,6 +1380,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        _windowListTimer?.Stop();
         _performance?.Dispose();
         _snapshotTimer.Stop();
         _fullscreenTimer?.Stop();
@@ -1483,7 +1562,15 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     }
 
     /// <summary>Everything on screen, as it would be saved.</summary>
-    private LinkastSettings CurrentSettings() => new()
+    internal LinkastSettings CurrentSettings()
+    {
+        _profiles[_activePlatform] = new DestinationProfile
+        {
+            ServerUrl = ServerUrl,
+            DestinationKind = SelectedDestinationKind.Kind,
+        };
+
+        return new()
         {
             Theme = SelectedTheme.Theme,
             Stream = new StreamSettings
@@ -1509,6 +1596,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 KeyframeIntervalSeconds = KeyframeIntervalSeconds,
                 AudioBitrateKbps = AudioBitrateKbps,
                 EncoderPreset = EncoderPreset,
+                Destinations = new Dictionary<StreamPlatform, DestinationProfile>(_profiles),
                 DestinationKind = SelectedDestinationKind.Kind,
                 Platform = SelectedPlatform.Platform,
                 ServerUrl = ServerUrl,
@@ -1533,6 +1621,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             Hotkeys = Hotkeys.ToSettings(),
             CustomPresets = Webcam.CustomPresets,
         };
+    }
 
     private void ApplyStreamSettings(StreamSettings s)
     {
@@ -1560,9 +1649,31 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         KeyframeIntervalSeconds = s.KeyframeIntervalSeconds;
         AudioBitrateKbps = s.AudioBitrateKbps;
         EncoderPreset = s.EncoderPreset;
+        _profiles.Clear();
+        foreach (var (p, prof) in s.Destinations)
+        {
+            _profiles[p] = prof;
+        }
+
+        var resolvedPlatform = s.Platform;
+        if (s.Destinations.Count == 0 && resolvedPlatform == StreamPlatform.Custom && !string.IsNullOrWhiteSpace(s.ServerUrl))
+        {
+            resolvedPlatform = StreamPlatforms.Detect(s.ServerUrl);
+        }
+
+        _activePlatform = resolvedPlatform;
+        if (!_profiles.ContainsKey(_activePlatform))
+        {
+            _profiles[_activePlatform] = new DestinationProfile
+            {
+                ServerUrl = s.ServerUrl,
+                DestinationKind = s.DestinationKind,
+            };
+        }
+
         SelectedDestinationKind = DestinationKinds.FirstOrDefault(d => d.Kind == s.DestinationKind) ?? DestinationKinds[0];
         ServerUrl = s.ServerUrl;
-        SelectedPlatform = StreamPlatforms.Get(s.Platform != StreamPlatform.Custom ? s.Platform : StreamPlatforms.Detect(s.ServerUrl));
+        SelectedPlatform = StreamPlatforms.Get(resolvedPlatform);
         RecordingFolder = string.IsNullOrWhiteSpace(s.RecordingFolder) ? RecordingFiles.DefaultFolder : s.RecordingFolder;
         RecordWhenLive = s.RecordWhenLive;
         RemuxRecordingsToMp4 = s.RemuxRecordingsToMp4;
@@ -1855,10 +1966,23 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     [RelayCommand]
     private void RefreshSources()
     {
-        Replace(Monitors, VideoSourceCatalog.ListMonitors(), ref _selectedMonitorKey, m => m.DeviceName, v => SelectedMonitor = v,
-            fallback: list => list.FirstOrDefault(m => m.IsPrimary) ?? list.FirstOrDefault());
-        Replace(Windows, VideoSourceCatalog.ListWindows(), ref _selectedWindowKey, w => w.Handle.ToString(CultureInfo.InvariantCulture), v => SelectedWindow = v,
-            fallback: list => list.FirstOrDefault());
+        // A refresh clears and refills the lists, which empties and re-selects the Capture card's boxes. That
+        // is not the user choosing another capture, and a running stream must not follow it (it used to drop
+        // the game for a second, or capture whatever window came first in the list).
+        var before = _applyingSceneCapture;
+        _applyingSceneCapture = true;
+        try
+        {
+            Replace(Monitors, VideoSourceCatalog.ListMonitors(), ref _selectedMonitorKey, m => m.DeviceName, v => SelectedMonitor = v,
+                fallback: list => list.FirstOrDefault(m => m.IsPrimary) ?? list.FirstOrDefault());
+            Replace(Windows, VideoSourceCatalog.ListWindows(), ref _selectedWindowKey, w => w.Handle.ToString(CultureInfo.InvariantCulture), v => SelectedWindow = v,
+                fallback: list => list.FirstOrDefault());
+            KeepSceneCaptureSelected();
+        }
+        finally
+        {
+            _applyingSceneCapture = before;
+        }
 
         try
         {
@@ -1870,6 +1994,73 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         catch (System.Runtime.InteropServices.COMException ex)
         {
             AppendLog("Audio devices could not be listed: " + ex.Message);
+        }
+    }
+
+    /// <summary>After the lists were refilled: the card shows what the scene (or the user's pending choice) captures.</summary>
+    private void KeepSceneCaptureSelected()
+    {
+        if (Webcam is null)
+        {
+            return;
+        }
+
+        var wanted = _pendingCapture ?? CaptureOf(Webcam.ActiveLayout);
+        if (wanted.Kind == SceneCaptureKind.Window && FindWindow(wanted) is { } window)
+        {
+            SelectedWindow = window;
+        }
+        else if (wanted.Kind == SceneCaptureKind.Display && FindMonitor(wanted) is { } monitor)
+        {
+            SelectedMonitor = monitor;
+        }
+    }
+
+    private DispatcherTimer? _windowListTimer;
+    private bool _windowListBusy;
+
+    /// <summary>
+    /// Keeps the list of game windows current, so a game started after Linkast can be chosen without pressing
+    /// Refresh (or restarting Linkast), and a restarted game is found again. Only a changed list touches the box.
+    /// </summary>
+    private void StartWindowListWatch()
+    {
+        _windowListTimer ??= new DispatcherTimer(TimeSpan.FromSeconds(3), DispatcherPriority.Background, (_, _) => _ = RefreshWindowListIfChangedAsync(), _ui);
+        _windowListTimer.Start();
+    }
+
+    private async Task RefreshWindowListIfChangedAsync()
+    {
+        if (_loading || _windowListBusy)
+        {
+            return;
+        }
+
+        _windowListBusy = true;
+        try
+        {
+            var latest = await Task.Run(VideoSourceCatalog.ListWindows);
+            if (latest.Select(w => w.Handle).Order().SequenceEqual(Windows.Select(w => w.Handle).Order()))
+            {
+                return;
+            }
+
+            var before = _applyingSceneCapture;
+            _applyingSceneCapture = true;
+            try
+            {
+                Replace(Windows, latest, ref _selectedWindowKey, w => w.Handle.ToString(CultureInfo.InvariantCulture), v => SelectedWindow = v,
+                    fallback: list => list.FirstOrDefault());
+                KeepSceneCaptureSelected();
+            }
+            finally
+            {
+                _applyingSceneCapture = before;
+            }
+        }
+        finally
+        {
+            _windowListBusy = false;
         }
     }
 

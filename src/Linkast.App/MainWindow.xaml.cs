@@ -32,6 +32,10 @@ public partial class MainWindow : Window
         {
             _syncingKey = true;
             StreamKeyBox.Password = key.Reveal();
+            if (ShowKeyToggle.IsChecked == true)
+            {
+                StreamKeyPlain.Text = StreamKeyBox.Password;
+            }
             _syncingKey = false;
         };
         viewModel.ProxyPasswordLoaded += (_, password) =>
