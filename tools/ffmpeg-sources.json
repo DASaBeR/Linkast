@@ -20,7 +20,7 @@
     { "name": "libiconv", "version": "1.19-1", "url": "https://repo.msys2.org/mingw/sources/mingw-w64-libiconv-1.19-1.src.tar.zst", "note": "MSYS2 source package (upstream source plus the patches that were built)" },
     { "name": "opencore-amr", "version": "0.1.6", "url": "https://downloads.sourceforge.net/project/opencore-amr/opencore-amr/opencore-amr-0.1.6.tar.gz" },
     { "name": "libssh", "version": "0.12.0", "url": "https://www.libssh.org/files/0.12/libssh-0.12.0.tar.xz", "mirror": "https://git.libssh.org/projects/libssh.git/snapshot/libssh-0.12.0.tar.gz" },
-    { "name": "libtheora", "version": "v1.2.0", "url": "https://downloads.xiph.org/releases/theora/libtheora-1.2.0.tar.xz" },
+    { "name": "libtheora", "version": "v1.2.0", "url": "https://downloads.xiph.org/releases/theora/libtheora-1.2.0.tar.xz", "mirror": "https://github.com/xiph/theora/archive/refs/tags/v1.2.0.tar.gz" },
     { "name": "libwebp", "version": "v1.6.0-199-g94d3c4a", "git": "https://github.com/webmproject/libwebp.git", "ref": "94d3c4a" },
     { "name": "libxml2", "version": "v2.15.0-122-gddcb79dc", "git": "https://gitlab.gnome.org/GNOME/libxml2.git", "ref": "ddcb79dc" },
     { "name": "openal-soft", "version": "1.25.2", "git": "https://github.com/kcat/openal-soft.git", "ref": "1.25.2" },
