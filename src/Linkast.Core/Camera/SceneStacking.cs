@@ -133,6 +133,16 @@ public static class SceneStacking
         return result;
     }
 
+    /// <summary>
+    /// Builds the stream stack by placing all scene backgrounds below the merged scene source order.
+    /// </summary>
+    public static IReadOnlyList<string> BuildStack(IEnumerable<string> mediaIds, IReadOnlyList<IReadOnlyList<string>> scenes)
+    {
+        ArgumentNullException.ThrowIfNull(mediaIds);
+        ArgumentNullException.ThrowIfNull(scenes);
+        return [.. mediaIds.Distinct(StringComparer.Ordinal), .. Merge(scenes)];
+    }
+
     private static int IndexOf(IReadOnlyList<string> list, string id)
     {
         for (var i = 0; i < list.Count; i++)

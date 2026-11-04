@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using System.Collections.ObjectModel;
+using Linkast.App.Services;
 using Linkast.Core.Camera;
 
 namespace Linkast.App.ViewModels;
@@ -59,8 +60,13 @@ public sealed partial class MainViewModel
     }
 
     /// <summary>The stream's one stack: the starting scene's order, then every other scene's where it fits.</summary>
-    private IReadOnlyList<string> BuildStack(SceneLayout active) =>
-        SceneStacking.Merge([.. StreamScenes(active).Select(ShownOrder)]);
+    private IReadOnlyList<string> BuildStack(SceneLayout active)
+    {
+        var mediaIds = StreamScenes(active)
+            .Where(s => SceneMediaRenderer.StreamFile(s, (int)Webcam.CanvasWidth, (int)Webcam.CanvasHeight) is not null)
+            .Select(s => SceneMediaLayerId(s.Id));
+        return SceneStacking.BuildStack(mediaIds, [.. StreamScenes(active).Select(ShownOrder)]);
+    }
 
     /// <summary>Makes the sources list and the preview follow the active scene's order.</summary>
     private void RefreshSceneSources()
@@ -105,7 +111,10 @@ public sealed partial class MainViewModel
             }
         }
 
-        PreviewStack = order;
+        var mediaId = Webcam.ActiveLayout.Media is not null && SceneMediaRenderer.StreamFile(Webcam.ActiveLayout, (int)Webcam.CanvasWidth, (int)Webcam.CanvasHeight) is not null
+            ? SceneMediaLayerId(Webcam.ActiveLayout.Id)
+            : null;
+        PreviewStack = mediaId is not null ? [mediaId, .. order] : order;
         OnPropertyChanged(nameof(PreviewStack));
     }
 

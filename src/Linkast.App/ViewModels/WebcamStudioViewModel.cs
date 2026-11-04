@@ -162,10 +162,21 @@ public sealed partial class WebcamStudioViewModel : ObservableObject, IAsyncDisp
         Attach(layer);
 
         // New cameras appear in every landscape game scene (in a free corner) and are hidden in vertical
-        // ones and in scenes that cover the game (Starting soon, Be right back, Ending, Just chatting).
+        // ones and in scenes that cover the game (Starting soon, Be right back, Ending). Just chatting
+        // gets the camera (large, centred) if it has no camera yet.
         for (var i = 0; i < _layouts.Count; i++)
         {
             var layout = _layouts[i];
+            if (layout.Kind == SceneKind.JustChatting && layout.CameraPlacements.Count == 0)
+            {
+                var (w, h) = layout.CanvasSize(_landscapeWidth, _landscapeHeight);
+                var defaultRect = layout.Orientation == OutputOrientation.Vertical
+                    ? new NormalizedRect(0.05, 0.25, 0.9, 0.5)
+                    : new NormalizedRect(0.2, 0.1, 0.6, 0.8);
+                _layouts[i] = layout.WithPlacement(id, LayerGeometry.FitInside(defaultRect, layer.LayerAspectRatio, w, h));
+                continue;
+            }
+
             if (layout.Orientation != OutputOrientation.Landscape || layout.Kind is not (SceneKind.Gaming or SceneKind.Custom))
             {
                 continue;
@@ -861,6 +872,24 @@ public sealed partial class WebcamStudioViewModel : ObservableObject, IAsyncDisp
 
             Selected = Layers.FirstOrDefault(l => l.LayerId == s.SelectedLayerId) ?? Layers[0];
             LoadVirtualCamera(s.VirtualCamera);
+
+            // Just chatting never loads without a camera if a camera exists.
+            if (Layers.Count > 0)
+            {
+                var first = Layers[0];
+                for (var i = 0; i < _layouts.Count; i++)
+                {
+                    var layout = _layouts[i];
+                    if (layout.Kind == SceneKind.JustChatting && layout.CameraPlacements.Count == 0)
+                    {
+                        var (cw, ch) = layout.CanvasSize(_landscapeWidth, _landscapeHeight);
+                        var defaultRect = layout.Orientation == OutputOrientation.Vertical
+                            ? new NormalizedRect(0.05, 0.25, 0.9, 0.5)
+                            : new NormalizedRect(0.2, 0.1, 0.6, 0.8);
+                        _layouts[i] = layout.WithPlacement(first.LayerId, LayerGeometry.FitInside(defaultRect, first.LayerAspectRatio, cw, ch));
+                    }
+                }
+            }
 
             // Every slot gets the camera's own shape, so the editor, preview and stream agree
             // (for example the default vertical slot holds a round camera as a centred circle).

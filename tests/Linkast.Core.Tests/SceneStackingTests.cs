@@ -41,4 +41,28 @@ public class SceneStackingTests
     [Fact]
     public void A_new_source_with_nothing_below_it_goes_to_the_bottom() =>
         Assert.Equal(["bg", "game", "cam"], SceneStacking.Merge([["game", "cam"], ["bg", "game"]]));
+
+    [Fact]
+    public void BuildStack_puts_background_media_at_the_bottom_below_all_scenes()
+    {
+        var mediaIds = new[] { "scene-media-1", "scene-media-2" };
+        var scenes = new[]
+        {
+            new[] { "game", "camera-1" },
+            new[] { "camera-1", "overlay-1" },
+        };
+
+        var stack = SceneStacking.BuildStack(mediaIds, scenes);
+        Assert.Equal(["scene-media-1", "scene-media-2", "game", "camera-1", "overlay-1"], stack);
+
+        // Permutations of present sources must always place the media key at the bottom once in the stack
+        var perm1 = SceneStacking.Resolve(stack, ["camera-1", "scene-media-1", "game"]);
+        Assert.Equal(["scene-media-1", "game", "camera-1"], perm1);
+
+        var perm2 = SceneStacking.Resolve(stack, ["game", "camera-1", "scene-media-1"]);
+        Assert.Equal(["scene-media-1", "game", "camera-1"], perm2);
+
+        var perm3 = SceneStacking.Resolve(stack, ["scene-media-2", "overlay-1", "camera-1", "scene-media-1"]);
+        Assert.Equal(["scene-media-1", "scene-media-2", "camera-1", "overlay-1"], perm3);
+    }
 }

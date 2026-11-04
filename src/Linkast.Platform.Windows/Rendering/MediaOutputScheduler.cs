@@ -276,7 +276,7 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
         }
     }
 
-    private IReadOnlyList<string> GetOrderedKeys(IReadOnlyDictionary<string, ID3D11SceneSource> sources, IReadOnlyList<string>? stackOrder)
+    internal IReadOnlyList<string> GetOrderedKeys(IReadOnlyDictionary<string, ID3D11SceneSource> sources, IReadOnlyList<string>? stackOrder)
     {
         bool needsUpdate = _cachedOrderedKeys is null
             || sources.Count != _lastSourcesCount
@@ -285,7 +285,7 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
 
         if (!needsUpdate)
         {
-            foreach (var k in sources.Keys)
+            foreach (var k in sources.Keys.OrderBy(k => k, StringComparer.Ordinal))
             {
                 if (!_cachedSourceKeys.Contains(k))
                 {
@@ -299,7 +299,7 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
         {
             _cachedSourceKeys.Clear();
             var presentList = new List<string>(sources.Count);
-            foreach (var k in sources.Keys)
+            foreach (var k in sources.Keys.OrderBy(k => k, StringComparer.Ordinal))
             {
                 _cachedSourceKeys.Add(k);
                 presentList.Add(k);
@@ -315,6 +315,11 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
             else
             {
                 _cachedOrderedKeys = presentList;
+            }
+
+            if (_logger is not null)
+            {
+                LogOrderedKeysRebuilt(_logger, string.Join(", ", _cachedOrderedKeys));
             }
         }
 
@@ -379,6 +384,9 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
 
         _cts.Dispose();
     }
+
+    [LoggerMessage(LogLevel.Debug, "Ordered scene keys rebuilt: {Keys}")]
+    private static partial void LogOrderedKeysRebuilt(ILogger logger, string keys);
 
     [LoggerMessage(LogLevel.Debug, "Video output closed; the render loop ends ({Reason}).")]
     private static partial void LogOutputClosed(ILogger logger, string reason);

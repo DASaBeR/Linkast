@@ -184,4 +184,42 @@ public class MediaOutputSchedulerTests
         Assert.True(topIsBlack < 100, $"Y was {topIsBlack}");
         Assert.True(topIsWhite > 150, $"Y was {topIsWhite}");
     }
+
+    [Fact]
+    public async Task MediaOutputScheduler_GetOrderedKeys_produces_identical_order_regardless_of_sources_enumeration_order()
+    {
+        using var manager = new D3D11DeviceManager();
+        using var compositor = new D3D11SceneCompositor(manager, 64, 64);
+        using var cache = new SourceFrameCache();
+        var layout = new SceneLayout { Name = "CardAndCam" };
+
+        byte[] pixels = new byte[16 * 16 * 4];
+        await using var card = new ImageD3D11SceneSource("scene-media-card", manager, pixels, 16, 16);
+        await using var cam = new ImageD3D11SceneSource("camera-1", manager, pixels, 16, 16);
+
+        var sourcesOrder1 = new Dictionary<string, ID3D11SceneSource>(StringComparer.Ordinal)
+        {
+            ["scene-media-card"] = card,
+            ["camera-1"] = cam,
+        };
+
+        var sourcesOrder2 = new Dictionary<string, ID3D11SceneSource>(StringComparer.Ordinal)
+        {
+            ["camera-1"] = cam,
+            ["scene-media-card"] = card,
+        };
+
+        var stackOrder = new List<string> { "scene-media-card", "camera-1" };
+
+        using var output = new MemoryStream();
+        var scheduler = new MediaOutputScheduler(
+            compositor, cache, () => layout, () => sourcesOrder1, output, targetFps: 60,
+            stackOrderProvider: () => stackOrder);
+
+        var keys1 = scheduler.GetOrderedKeys(sourcesOrder1, stackOrder);
+        var keys2 = scheduler.GetOrderedKeys(sourcesOrder2, stackOrder);
+
+        Assert.Equal(["scene-media-card", "camera-1"], keys1);
+        Assert.Equal(["scene-media-card", "camera-1"], keys2);
+    }
 }

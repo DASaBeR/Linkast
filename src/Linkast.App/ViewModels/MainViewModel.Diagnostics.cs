@@ -68,6 +68,13 @@ public sealed partial class MainViewModel
                     break;
             }
         }
+
+        foreach (var scene in StreamScenes(Webcam.ActiveLayout))
+        {
+            var cameras = string.Join(", ", scene.CameraPlacements.Select(p => $"{p.Key} {p.Value}"));
+            var stack = scene.StackOrder is not null ? string.Join(", ", scene.StackOrder) : string.Empty;
+            LogGoingLive($"{scene.Name}: cameras [{cameras}], stack order [{stack}]");
+        }
     }
 
     /// <summary>Samples the PC's load once a minute while live; stops when the stream ends.</summary>
