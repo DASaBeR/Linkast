@@ -62,6 +62,49 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
 
     public long TotalBytesWritten => Interlocked.Read(ref _totalBytesWritten);
 
+    /// <summary>A slice the audio may trail the master clock by before the mixer writes extra slices to catch up.</summary>
+    private const int CatchUpThresholdSlices = 2;
+
+    /// <summary>Most slices written in one tick to catch up (200 ms), so a long stall never floods the pipe.</summary>
+    private const int MaxCatchUpSlices = 20;
+
+    private long _maxLagTicks;
+
+    /// <summary>
+    /// How far the audio written so far trails the master clock the video is paced by. Positive: the sound
+    /// will play later than the picture it belongs to. Near zero while the mixer keeps up.
+    /// </summary>
+    public TimeSpan ClockLag =>
+        Stopwatch.GetElapsedTime(_streamStartTimestamp) - TimeSpan.FromSeconds((double)TotalBytesWritten / BytesPerSec);
+
+    /// <summary>The largest <see cref="ClockLag"/> seen since the mixer started.</summary>
+    public TimeSpan MaxClockLag => TimeSpan.FromTicks(Interlocked.Read(ref _maxLagTicks));
+
+    private void NoteLag()
+    {
+        var lag = ClockLag.Ticks;
+        long seen;
+        while (lag > (seen = Interlocked.Read(ref _maxLagTicks)) && Interlocked.CompareExchange(ref _maxLagTicks, lag, seen) != seen)
+        {
+        }
+    }
+
+    /// <summary>
+    /// A tick that arrives late (the OS timer is coarse, or the process was starved) writes only one slice, and
+    /// the missed time was never made up while sound kept arriving: the audio fell further behind the video.
+    /// Writes the slices that are due, as long as there is sound (or a gap to pad) to write.
+    /// </summary>
+    internal async ValueTask CatchUpAsync(float[] mixFloatBuffer, byte[] outByteBuffer, byte[] silenceBuffer, CancellationToken ct)
+    {
+        for (var i = 0; i < MaxCatchUpSlices && ClockLag > TimeSpan.FromSeconds((double)CatchUpThresholdSlices * BytesPerSlice / BytesPerSec); i++)
+        {
+            if (await MixOneSliceAsync(mixFloatBuffer, outByteBuffer, silenceBuffer, ct).ConfigureAwait(false) == 0)
+            {
+                break;
+            }
+        }
+    }
+
     public bool IsRunning => _isRunning;
 
     public bool NoiseSuppressionEnabled => _noiseSuppressionEnabled;
@@ -148,6 +191,8 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
             while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
             {
                 await MixOneSliceAsync(mixFloatBuffer, outByteBuffer, silenceBuffer, ct).ConfigureAwait(false);
+                await CatchUpAsync(mixFloatBuffer, outByteBuffer, silenceBuffer, ct).ConfigureAwait(false);
+                NoteLag();
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

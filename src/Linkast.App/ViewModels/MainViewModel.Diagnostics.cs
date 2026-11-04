@@ -17,7 +17,15 @@ public sealed partial class MainViewModel
     private StreamStatsLogger? _stats;
 
     /// <summary>Numbers for the log: bitrate, backlog, frame rate, reconnects, and whether the captured game still responds.</summary>
-    private StreamStatsLogger Stats => _stats ??= new StreamStatsLogger(_loggerFactory.CreateLogger<StreamStatsLogger>()) { Extra = DescribeGame };
+    private StreamStatsLogger Stats => _stats ??= new StreamStatsLogger(_loggerFactory.CreateLogger<StreamStatsLogger>()) { Extra = DescribeStreamExtra };
+
+    /// <summary>The captured game's state, and how well sound and picture keep to the same clock.</summary>
+    private string? DescribeStreamExtra()
+    {
+        var game = DescribeGame();
+        var sync = _engine?.SyncInfo();
+        return game is null ? sync : sync is null ? game : game + "; " + sync;
+    }
 
     private string? DescribeGame()
     {

@@ -878,6 +878,14 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                     if (src is not null)
                     {
                         _sources[c.Key] = src;
+                        if (_logger is not null)
+                        {
+                            LogCaptureAdded(_logger, c.Key, src.State.ToString(), src.Width, src.Height, !c.StartHidden);
+                        }
+                    }
+                    else if (_logger is not null)
+                    {
+                        LogCaptureNotCreated(_logger, c.Key);
                     }
                 }
 
@@ -904,6 +912,10 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                         if (_sources.TryRemove(key, out _))
                         {
                             _ = oldSource.DisposeAsync().AsTask();
+                            if (_logger is not null)
+                            {
+                                LogCaptureRemoved(_logger, key);
+                            }
                         }
                         _frameCache?.Remove(key);
                         lock (_layoutLock)
@@ -924,9 +936,13 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                     {
                         _audioMixer.AddSource(ch, a, a.Gain);
                     }
-                    catch
+                    catch (Exception ex)
                     {
                         // Source already registered or optional
+                        if (_logger is not null)
+                        {
+                            LogAudioNotAdded(_logger, ch, ex.Message);
+                        }
                     }
                 }
             }
@@ -943,6 +959,34 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
     }
 
     public bool HasCapture(string key) => _sources.ContainsKey(key);
+
+    /// <summary>
+    /// For the stats line: how far the sound trails the clock the picture is paced by, and how many frames the
+    /// render loop had to skip. Null when no stream is running.
+    /// </summary>
+    public string? SyncInfo()
+    {
+        var mixer = _audioMixer;
+        var scheduler = _scheduler;
+        if (mixer is null && scheduler is null)
+        {
+            return null;
+        }
+
+        var parts = new List<string>();
+        if (mixer is not null)
+        {
+            parts.Add(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                $"audio {mixer.ClockLag.TotalMilliseconds:0} ms behind the clock (max {mixer.MaxClockLag.TotalMilliseconds:0} ms)"));
+        }
+
+        if (scheduler is not null)
+        {
+            parts.Add($"render loop skipped {scheduler.FramesDropped} frames");
+        }
+
+        return string.Join(", ", parts);
+    }
 
     public Task<bool> SetCaptureAsync(string key, NormalizedRect? placement, NormalizedRect crop, BaseFit fit, CancellationToken cancellationToken = default)
     {
@@ -1101,6 +1145,18 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
     [LoggerMessage(LogLevel.Warning, "Stream stalled: {Kind} for {Seconds:0.0} s ({Buffered} bytes waiting to be sent).")]
     private static partial void LogStalled(ILogger logger, string kind, double seconds, long buffered);
+
+    [LoggerMessage(LogLevel.Information, "Capture '{Key}' added to the running stream ({State}, {Width}x{Height}, shown: {Shown}).")]
+    private static partial void LogCaptureAdded(ILogger logger, string key, string state, int width, int height, bool shown);
+
+    [LoggerMessage(LogLevel.Warning, "Capture '{Key}' could not be created, so it will not appear in the stream.")]
+    private static partial void LogCaptureNotCreated(ILogger logger, string key);
+
+    [LoggerMessage(LogLevel.Information, "Capture '{Key}' removed from the running stream.")]
+    private static partial void LogCaptureRemoved(ILogger logger, string key);
+
+    [LoggerMessage(LogLevel.Warning, "Sound '{Channel}' could not be added to the running stream: {Reason}")]
+    private static partial void LogAudioNotAdded(ILogger logger, string channel, string reason);
 
     [LoggerMessage(LogLevel.Error, "Unexpected error occurred during D3D11 streaming session.")]
     private static partial void LogUnexpected(ILogger logger, Exception ex);

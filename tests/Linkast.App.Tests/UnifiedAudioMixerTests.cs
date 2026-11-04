@@ -108,4 +108,48 @@ public class UnifiedAudioMixerTests
         Assert.True(mixer.TotalBytesWritten > 0);
         Assert.Equal(0, mixer.TotalBytesWritten % 4);
     }
+    [Fact]
+    public async Task UnifiedAudioMixer_catches_up_when_the_audio_trails_the_master_clock()
+    {
+        var hub = new AudioCaptureHub();
+        using var memoryStream = new MemoryStream();
+
+        // The stream began 1 s ago and nothing has been written: the mixer is a full second late.
+        var mixer = new UnifiedAudioMixer(hub, memoryStream, Stopwatch.GetTimestamp() - Stopwatch.Frequency);
+        mixer.AddTestChannel("game", 1.0);
+
+        // 150 ms of sound (float32 stereo 48 kHz) is waiting in the channel.
+        var frames = 48000 * 150 / 1000;
+        var bytes = new byte[frames * 2 * sizeof(float)];
+        mixer.EnqueueTestChannelData("game", bytes);
+
+        var before = mixer.ClockLag;
+        Assert.True(before > TimeSpan.FromMilliseconds(900));
+
+        await mixer.CatchUpAsync(new float[960], new byte[1920], new byte[192000], CancellationToken.None);
+
+        // One tick wrote far more than one 10 ms slice, but never more than the sound there was.
+        Assert.True(mixer.TotalBytesWritten >= 1920 * 10);
+        Assert.True(mixer.TotalBytesWritten <= frames * 4);
+        Assert.True(mixer.ClockLag < before);
+        Assert.Equal(0, mixer.TotalBytesWritten % 4);
+
+        await mixer.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task UnifiedAudioMixer_does_not_catch_up_when_on_time()
+    {
+        var hub = new AudioCaptureHub();
+        using var memoryStream = new MemoryStream();
+
+        var mixer = new UnifiedAudioMixer(hub, memoryStream, Stopwatch.GetTimestamp());
+        mixer.AddTestChannel("game", 1.0);
+        mixer.EnqueueTestChannelData("game", new byte[48000 * 2 * sizeof(float)]);
+
+        await mixer.CatchUpAsync(new float[960], new byte[1920], new byte[192000], CancellationToken.None);
+
+        Assert.Equal(0, mixer.TotalBytesWritten);
+        await mixer.DisposeAsync();
+    }
 }

@@ -233,6 +233,11 @@ public sealed partial class WindowsGraphicsCaptureSource : ID3D11SceneSource
 
                 _lastFrameTimestampQpc = Stopwatch.GetTimestamp();
                 _frameSequence++;
+                if (!_hasReceivedFrame && _logger is not null)
+                {
+                    LogFirstFrame(_logger, Id, _width, _height);
+                }
+
                 _hasReceivedFrame = true;
             }
             catch (Exception ex)
@@ -374,6 +379,9 @@ public sealed partial class WindowsGraphicsCaptureSource : ID3D11SceneSource
 
     [LoggerMessage(LogLevel.Warning, "Frame processing error on source {SourceId}.")]
     private static partial void LogFrameProcessingFailed(ILogger logger, string sourceId, Exception ex);
+
+    [LoggerMessage(LogLevel.Information, "Capture {SourceId} delivered its first picture ({Width}x{Height}).")]
+    private static partial void LogFirstFrame(ILogger logger, string sourceId, int width, int height);
 
     [LoggerMessage(LogLevel.Information, "Capture target closed for source {SourceId}.")]
     private static partial void LogItemClosed(ILogger logger, string sourceId);
