@@ -52,7 +52,21 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
     private long _lastDataTimestamp;
     private volatile bool _isRunning;
     private volatile NoiseRemoval _noiseRemoval;
+    private volatile float _microphoneBoostGain = 1f;
+    private double _microphoneBoostDb;
+    private readonly PeakLimiter _limiter = new(TargetSampleRate);
+    private Timer? _followTimer;
+    private int _following;
     private bool _disposed;
+
+    /// <summary>The most a fader can raise a sound: +20 dB (the faders go to +18 dB).</summary>
+    private const double MaxGain = 10.0;
+
+    /// <summary>The most the microphone can be boosted before noise removal, like a preamp.</summary>
+    public const double MaxMicrophoneBoostDb = 30;
+
+    /// <summary>How often a channel that follows a program checks that it still captures it.</summary>
+    internal static readonly TimeSpan FollowInterval = TimeSpan.FromSeconds(2);
 
     // For the log: how the sound was kept on the picture's clock.
     private long _droppedAheadSlices;
@@ -231,6 +245,11 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
             parts.Add(string.Create(inv, $"audio kept in step: {dropped * 10} ms dropped while ahead, {padded * 1000.0 / BytesPerSec:0} ms silence while no sound came, {resync * 1000.0 / BytesPerSec:0} ms silence after {Resyncs} stall(s)"));
         }
 
+        if (_limiter.LimitedFrames > 0)
+        {
+            parts.Add(string.Create(inv, $"mix too loud for {_limiter.LimitedFrames / 48.0:0} ms, turned down at most {-_limiter.DeepestReductionDb:0.0} dB instead of clipping"));
+        }
+
         var slow = Interlocked.Read(ref _slowWrites);
         if (slow > 0)
         {
@@ -263,9 +282,23 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
         ArgumentNullException.ThrowIfNull(source);
         ArgumentException.ThrowIfNullOrWhiteSpace(channelName);
 
-        var state = new ChannelState(channelName, initialGain, this);
+        var state = new ChannelState(channelName, initialGain, this) { ProgramName = (source as ProcessAudioSource)?.ProgramName };
         if (!_channels.TryAdd(channelName, state))
         {
+            return;
+        }
+
+        if (state.ProgramName is { } program)
+        {
+            // A program followed by name: its sound when it runs, silence until then (see FollowPrograms).
+            var pid = source is ProcessAudioSource { ProcessId: > 0 } p && ProgramProcesses.IsRunning(p.ProcessId, program)
+                ? p.ProcessId
+                : ProgramProcesses.FindRoot(program);
+            if (pid is { } running)
+            {
+                TryFollow(state, running);
+            }
+
             return;
         }
 
@@ -291,6 +324,84 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
             throw;
         }
     }
+
+    /// <summary>Captures <paramref name="processId"/> (with its child processes) for a channel that follows a program.</summary>
+    private bool TryFollow(ChannelState state, uint processId)
+    {
+        try
+        {
+            state.ReplaceTap(_hub.SubscribeProcess(processId, true, (d, s) => state.EnqueueData(d, s)));
+            state.ProcessId = processId;
+            return true;
+        }
+        catch (StreamFailureException ex)
+        {
+            if (_logger is not null)
+            {
+                LogFollowFailed(_logger, state.Name, state.ProgramName ?? string.Empty, ex.Error.Detail ?? ex.Message);
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// A game or app that restarted runs as a new process: its channel takes the new one's sound. Before, it
+    /// kept listening to the old, ended process and stayed silent for the rest of the stream. A program that
+    /// closed leaves its channel silent until it runs again.
+    /// </summary>
+    internal void FollowPrograms()
+    {
+        if (Interlocked.Exchange(ref _following, 1) == 1)
+        {
+            return; // the previous check is still opening a capture
+        }
+
+        try
+        {
+            IReadOnlyList<ProcessEntry>? processes = null;
+            foreach (var state in _channels.Values)
+            {
+                if (_disposed || state.ProgramName is not { } program)
+                {
+                    continue;
+                }
+
+                processes ??= ProgramProcesses.Snapshot();
+                var running = state.ProcessId != 0 && processes.Any(p =>
+                    p.ProcessId == state.ProcessId && string.Equals(p.ExeName, program, StringComparison.OrdinalIgnoreCase));
+                if (running)
+                {
+                    continue;
+                }
+
+                var root = ProgramProcesses.PickRoot([.. processes], program);
+                if (root is { } pid && TryFollow(state, pid))
+                {
+                    if (_logger is not null)
+                    {
+                        LogProgramFollowed(_logger, state.Name, program, pid);
+                    }
+                }
+                else if (state.ProcessId != 0)
+                {
+                    state.ReplaceTap(null);
+                    state.ProcessId = 0;
+                    if (_logger is not null)
+                    {
+                        LogProgramClosed(_logger, state.Name, program);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            Volatile.Write(ref _following, 0);
+        }
+    }
+
+    /// <summary>The process a channel that follows a program captures now (0 while it isn't running). Tests.</summary>
+    internal uint FollowedProcessOf(string channelName) => _channels.TryGetValue(channelName, out var s) ? s.ProcessId : 0;
 
     /// <summary>True when the mixer has this channel.</summary>
     public bool HasChannel(string channelName) => _channels.ContainsKey(channelName);
@@ -326,6 +437,10 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
 
         _isRunning = true;
         _mixTask = Task.Run(() => MixLoopAsync(_cts.Token));
+
+        // Off the mix loop: opening a program's capture takes a moment, and the sound must not wait for it.
+        // Always on, as a program's channel can be added while live; without one a check does nothing.
+        _followTimer = new Timer(_ => FollowPrograms(), null, FollowInterval, FollowInterval);
     }
 
     private async Task MixLoopAsync(CancellationToken ct)
@@ -407,7 +522,10 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
         {
             Volatile.Write(ref _lastDataTimestamp, now);
 
-            // Convert float32 [-1.0, 1.0] to int16 s16le with soft clamping
+            // Loud sounds together pass full scale: turned down as a whole rather than clipped (see PeakLimiter).
+            _limiter.Process(mixFloatBuffer.AsSpan(0, SamplesPerSlice));
+
+            // Convert float32 [-1.0, 1.0] to int16 s16le (the clamp only catches rounding now)
             for (int i = 0; i < SamplesPerSlice; i++)
             {
                 int s16 = (int)Math.Round(mixFloatBuffer[i] * 32767.0f);
@@ -450,11 +568,22 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
     {
         if (_channels.TryGetValue(channel, out var state))
         {
-            state.Gain = (float)Math.Clamp(gain, 0.0, 10.0);
+            state.Gain = (float)Math.Clamp(gain, 0.0, MaxGain);
             return Task.FromResult(true);
         }
 
         return Task.FromResult(false);
+    }
+
+    /// <summary>How much the microphone is boosted before noise removal, in dB (0 to <see cref="MaxMicrophoneBoostDb"/>).</summary>
+    public double MicrophoneBoostDb => Volatile.Read(ref _microphoneBoostDb);
+
+    public Task<bool> SetMicrophoneBoostAsync(double db, CancellationToken cancellationToken = default)
+    {
+        var clamped = double.IsFinite(db) ? Math.Clamp(db, 0, MaxMicrophoneBoostDb) : 0;
+        Volatile.Write(ref _microphoneBoostDb, clamped);
+        _microphoneBoostGain = (float)Math.Pow(10, clamped / 20);
+        return Task.FromResult(true);
     }
 
     public Task<bool> SetNoiseSuppressionAsync(bool enabled, CancellationToken cancellationToken = default) =>
@@ -475,6 +604,10 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
 
         _disposed = true;
         _cts.Cancel();
+        if (_followTimer is not null)
+        {
+            await _followTimer.DisposeAsync().ConfigureAwait(false);
+        }
 
         if (_isRunning && _mixTask is not null)
         {
@@ -493,11 +626,11 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
     private sealed class ChannelState : IDisposable
     {
         private readonly Lock _gate = new();
-        private readonly Queue<float> _buffer = new(TargetSampleRate); // Holds up to 1 second
+        private readonly JitterBuffer _buffer = new();
         private volatile float _gain;
         private readonly UnifiedAudioMixer _mixer;
         private readonly MicrophoneNoiseRemover? _noiseRemover;
-        private long _overflowSamples;
+        private AudioTap? _tap;
 
         private float _lastSampleL;
         private float _lastSampleR;
@@ -506,7 +639,7 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
         public ChannelState(string name, double initialGain, UnifiedAudioMixer mixer)
         {
             Name = name;
-            _gain = (float)Math.Clamp(initialGain, 0.0, 10.0);
+            _gain = (float)Math.Clamp(initialGain, 0.0, MaxGain);
             _mixer = mixer;
             if (string.Equals(name, AudioChannels.Microphone, StringComparison.OrdinalIgnoreCase))
             {
@@ -516,7 +649,17 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
 
         public string Name { get; }
 
-        public AudioTap? Tap { get; set; }
+        /// <summary>The program this channel follows by name (a game or an app), or null.</summary>
+        public string? ProgramName { get; init; }
+
+        /// <summary>The process of <see cref="ProgramName"/> being captured now; 0 while it isn't running.</summary>
+        public uint ProcessId { get; set; }
+
+        public AudioTap? Tap
+        {
+            get => Volatile.Read(ref _tap);
+            set => Volatile.Write(ref _tap, value);
+        }
 
         public PcmFormat? OverrideFormat { get; set; }
 
@@ -535,25 +678,54 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
             {
                 lock (_gate)
                 {
-                    return TimeSpan.FromSeconds((double)_buffer.Count / (TargetSampleRate * TargetChannels));
+                    return _buffer.Buffered;
                 }
             }
         }
 
-        /// <summary>For the log: sound this channel lost, and noise removal's work. Null when there is nothing to say.</summary>
+        /// <summary>Starts capturing another process of the program (it restarted), or stops (null: it closed).</summary>
+        public void ReplaceTap(AudioTap? tap)
+        {
+            var old = Interlocked.Exchange(ref _tap, tap);
+            old?.Dispose();
+        }
+
+        /// <summary>For the log: how this channel was kept in time, and noise removal's work. Null when there is nothing to say.</summary>
         public string? Describe()
         {
             var inv = CultureInfo.InvariantCulture;
             var parts = new List<string>();
-            var overflow = Interlocked.Read(ref _overflowSamples);
+            long overflow, caughtUp, stretched;
+            lock (_gate)
+            {
+                overflow = _buffer.OverflowFrames;
+                caughtUp = _buffer.FramesCaughtUp;
+                stretched = _buffer.FramesStretched;
+            }
+
             if (overflow > 0)
             {
-                parts.Add(string.Create(inv, $"{overflow * 1000.0 / (TargetSampleRate * TargetChannels):0} ms dropped (not mixed in time)"));
+                parts.Add(string.Create(inv, $"{overflow / 48.0:0} ms dropped (not mixed in time)"));
+            }
+
+            if (caughtUp > 0)
+            {
+                parts.Add(string.Create(inv, $"{caughtUp / 48.0:0} ms played away a little faster to stay with the picture"));
+            }
+
+            if (stretched > 0)
+            {
+                parts.Add(string.Create(inv, $"{stretched / 48.0:0} ms stretched in so its slow clock left no gaps"));
             }
 
             if (_noiseRemover is { BlocksProcessed: > 0 } nr)
             {
                 parts.Add(string.Create(inv, $"noise removal {_mixer.NoiseRemoval} for {nr.BlocksProcessed / 100.0:0} s, speech in {nr.SpeechShare:P0}, CPU {nr.CoreShare:P1} of one core"));
+            }
+
+            if (_noiseRemover is not null && _mixer.MicrophoneBoostDb > 0)
+            {
+                parts.Add(string.Create(inv, $"boost +{_mixer.MicrophoneBoostDb:0} dB"));
             }
 
             return parts.Count == 0 ? null : $"sound '{Name}': {string.Join(", ", parts)}";
@@ -587,65 +759,53 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
                         ? inFrameCount
                         : (int)Math.Round((double)inFrameCount * TargetSampleRate / inSampleRate);
 
-                    int samplesToAdd = outFrameCount * TargetChannels;
-                    for (int i = 0; i < samplesToAdd; i++)
+                    for (int i = 0; i < outFrameCount; i++)
                     {
-                        _buffer.Enqueue(0f);
+                        _buffer.Write(0f, 0f);
                     }
-                }
-                else
-                {
-                    double step = (double)inSampleRate / TargetSampleRate;
 
-                    for (int f = 0; f < inFrameCount; f++)
-                    {
-                        int offset = f * frameBytes;
-                        float sampleL;
-                        float sampleR;
-
-                        if (isFloat)
-                        {
-                            var floatSpan = MemoryMarshal.Cast<byte, float>(data[offset..]);
-                            sampleL = floatSpan[0];
-                            sampleR = inChannels > 1 ? floatSpan[1] : sampleL;
-                        }
-                        else
-                        {
-                            var shortSpan = MemoryMarshal.Cast<byte, short>(data[offset..]);
-                            sampleL = shortSpan[0] / 32768.0f;
-                            sampleR = inChannels > 1 ? shortSpan[1] / 32768.0f : sampleL;
-                        }
-
-                        if (inSampleRate == TargetSampleRate)
-                        {
-                            _buffer.Enqueue(sampleL);
-                            _buffer.Enqueue(sampleR);
-                        }
-                        else
-                        {
-                            while (_resamplePhase < 1.0)
-                            {
-                                float fraction = (float)_resamplePhase;
-                                float outL = _lastSampleL + fraction * (sampleL - _lastSampleL);
-                                float outR = _lastSampleR + fraction * (sampleR - _lastSampleR);
-                                _buffer.Enqueue(outL);
-                                _buffer.Enqueue(outR);
-                                _resamplePhase += step;
-                            }
-
-                            _resamplePhase -= 1.0;
-                            _lastSampleL = sampleL;
-                            _lastSampleR = sampleR;
-                        }
-                    }
+                    return;
                 }
 
-                // Bound buffer size to 200 ms to avoid memory growth if consumer falls behind
-                int maxCapacity = (int)(TargetSampleRate * TargetChannels * 0.2);
-                while (_buffer.Count > maxCapacity)
+                double step = (double)inSampleRate / TargetSampleRate;
+                for (int f = 0; f < inFrameCount; f++)
                 {
-                    _buffer.Dequeue();
-                    _overflowSamples++;
+                    int offset = f * frameBytes;
+                    float sampleL;
+                    float sampleR;
+
+                    if (isFloat)
+                    {
+                        var floatSpan = MemoryMarshal.Cast<byte, float>(data[offset..]);
+                        sampleL = floatSpan[0];
+                        sampleR = inChannels > 1 ? floatSpan[1] : sampleL;
+                    }
+                    else
+                    {
+                        var shortSpan = MemoryMarshal.Cast<byte, short>(data[offset..]);
+                        sampleL = shortSpan[0] / 32768.0f;
+                        sampleR = inChannels > 1 ? shortSpan[1] / 32768.0f : sampleL;
+                    }
+
+                    if (inSampleRate == TargetSampleRate)
+                    {
+                        _buffer.Write(sampleL, sampleR);
+                    }
+                    else
+                    {
+                        while (_resamplePhase < 1.0)
+                        {
+                            float fraction = (float)_resamplePhase;
+                            _buffer.Write(
+                                _lastSampleL + (fraction * (sampleL - _lastSampleL)),
+                                _lastSampleR + (fraction * (sampleR - _lastSampleR)));
+                            _resamplePhase += step;
+                        }
+
+                        _resamplePhase -= 1.0;
+                        _lastSampleL = sampleL;
+                        _lastSampleR = sampleR;
+                    }
                 }
             }
         }
@@ -655,21 +815,26 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
             float currentGain = _gain;
             lock (_gate)
             {
-                if (_buffer.Count < SamplesPerSlice)
+                Span<float> slice = stackalloc float[SamplesPerSlice];
+                if (!_buffer.TryRead(slice))
                 {
                     return false;
                 }
 
-                Span<float> slice = stackalloc float[SamplesPerSlice];
-                for (int i = 0; i < SamplesPerSlice; i++)
-                {
-                    slice[i] = _buffer.Dequeue();
-                }
-
-                // Noise removal hears the microphone as it is, before the fader: the network was trained on
-                // ordinary recording levels, and a fader at 560 % must not change what it takes for noise.
                 if (_noiseRemover is not null)
                 {
+                    // The boost works like a preamp: before noise removal, which was trained on ordinary
+                    // recording levels, so a quiet microphone is brought up to them. The fader comes after:
+                    // a fader at 560 % must not change what the network takes for noise.
+                    var boost = _mixer._microphoneBoostGain;
+                    if (boost != 1f)
+                    {
+                        for (int i = 0; i < SamplesPerSlice; i++)
+                        {
+                            slice[i] *= boost;
+                        }
+                    }
+
                     _noiseRemover.Level = _mixer.NoiseRemoval;
                     _noiseRemover.Process(slice);
                 }
@@ -687,19 +852,11 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
         {
             lock (_gate)
             {
-                int toDiscard = Math.Min(_buffer.Count, SamplesPerSlice);
-                for (int i = 0; i < toDiscard; i++)
-                {
-                    _buffer.Dequeue();
-                }
+                _buffer.Discard(SamplesPerSlice / TargetChannels);
             }
         }
 
-        public void Dispose()
-        {
-            Tap?.Dispose();
-            Tap = null;
-        }
+        public void Dispose() => ReplaceTap(null);
     }
 
     [LoggerMessage(LogLevel.Warning, "Audio was {Lag:0} ms behind the picture (its output was blocked); {Silence:0} ms of silence keep it in step, then the {Waiting:0} ms of sound still waiting.")]
@@ -710,6 +867,15 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
 
     [LoggerMessage(LogLevel.Error, "Audio mixer loop failed with exception.")]
     private static partial void LogMixLoopFailed(ILogger logger, Exception ex);
+
+    [LoggerMessage(LogLevel.Information, "Sound '{Channel}' follows {Program} again (process {ProcessId}): it restarted or started.")]
+    private static partial void LogProgramFollowed(ILogger logger, string channel, string program, uint processId);
+
+    [LoggerMessage(LogLevel.Information, "Sound '{Channel}': {Program} closed; silent until it runs again.")]
+    private static partial void LogProgramClosed(ILogger logger, string channel, string program);
+
+    [LoggerMessage(LogLevel.Warning, "Sound '{Channel}' could not capture {Program}: {Reason}")]
+    private static partial void LogFollowFailed(ILogger logger, string channel, string program, string reason);
 
     [LoggerMessage(LogLevel.Warning, "Failed to attach audio source for channel '{Channel}'.")]
     private static partial void LogAddSourceFailed(ILogger logger, string channel, Exception ex);

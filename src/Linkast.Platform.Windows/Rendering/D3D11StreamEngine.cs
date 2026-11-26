@@ -173,6 +173,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
             // The microphone's noise removal as the session asks; switching it live changes it from here on.
             _noiseRemoval = session.Audio.OfType<MicrophoneSource>().FirstOrDefault()?.EffectiveNoiseRemoval ?? NoiseRemoval.Off;
+            _microphoneBoostDb = session.Audio.OfType<MicrophoneSource>().FirstOrDefault()?.BoostDb ?? 0;
 
             _state.TryTransition(StreamState.Preparing);
             var token = _runCts.Token;
@@ -587,6 +588,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
             }
 
             _ = mixer.SetNoiseRemovalAsync(_noiseRemoval, ct);
+            _ = mixer.SetMicrophoneBoostAsync(_microphoneBoostDb, ct);
             if (_logger is not null)
             {
                 LogAudioStarted(_logger, string.Join(", ", _liveAudio.Keys.Order(StringComparer.OrdinalIgnoreCase).Select(k =>
@@ -1151,6 +1153,19 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
         {
             return _audioMixer.SetNoiseRemovalAsync(level, cancellationToken);
         }
+        return Task.FromResult(true);
+    }
+
+    private double _microphoneBoostDb;
+
+    public Task<bool> SetMicrophoneBoostAsync(double db, CancellationToken cancellationToken = default)
+    {
+        _microphoneBoostDb = db; // kept for a reconnect's new mixer
+        if (_audioMixer is not null)
+        {
+            return _audioMixer.SetMicrophoneBoostAsync(db, cancellationToken);
+        }
+
         return Task.FromResult(true);
     }
 

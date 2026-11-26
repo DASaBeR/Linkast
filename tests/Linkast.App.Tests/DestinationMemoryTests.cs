@@ -278,4 +278,42 @@ public sealed class DestinationMemoryTests : IDisposable
         Assert.Equal(StreamPlatform.Kick, vm2.SelectedPlatform.Platform);
         Assert.Equal(mine, vm2.ServerUrl);
     }
+
+    [Fact]
+    public async Task Apps_on_their_own_fader_and_the_microphone_boost_are_remembered()
+    {
+        var (vm1, settingsStore, _) = CreateApp();
+        await vm1.InitializeAsync();
+        vm1.SystemAudioEnabled = true;
+
+        // An app is added: it gets its own fader, after the microphone and games.
+        vm1.AppAudioChoices.Add(new AppAudioChoice("Spotify.exe", "Spotify", PlayingNow: true));
+        vm1.SelectedAppAudioChoice = vm1.AppAudioChoices[0];
+        vm1.AddAppAudioCommand.Execute(null);
+        var fader = Assert.Single(vm1.Mixer.Channels, c => c.Kind == MixerChannelKind.App);
+        Assert.Equal(AudioChannels.ForApp("Spotify.exe"), fader.Key);
+        Assert.Equal("Spotify", fader.Name);
+        Assert.Empty(vm1.AppAudioChoices); // added apps leave the list
+
+        // Desktop audio carries Spotify too: the tab warns until Desktop audio is muted.
+        Assert.True(vm1.AppAudioHeardTwice);
+        vm1.Mixer.Get(AudioChannels.System)!.Muted = true;
+        Assert.False(vm1.AppAudioHeardTwice);
+
+        fader.Volume = 50;
+        vm1.MicrophoneBoostDb = 12;
+        settingsStore.Save(vm1.CurrentSettings());
+
+        var (vm2, _, _) = CreateApp();
+        await vm2.InitializeAsync();
+        Assert.Equal(12, vm2.MicrophoneBoostDb);
+        var back = Assert.Single(vm2.AppAudioSources);
+        Assert.Equal(new AppAudioSetting("Spotify.exe", "Spotify"), back);
+        Assert.Equal(50, vm2.Mixer.Get(AudioChannels.ForApp("Spotify.exe"))!.Volume);
+
+        // Taken away: its fader goes too.
+        vm2.RemoveAppAudioCommand.Execute(back);
+        Assert.Empty(vm2.AppAudioSources);
+        Assert.DoesNotContain(vm2.Mixer.Channels, c => c.Kind == MixerChannelKind.App);
+    }
 }

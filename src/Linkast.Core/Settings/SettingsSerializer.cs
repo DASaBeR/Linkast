@@ -278,6 +278,12 @@ public static class SettingsSerializer
                     .Where(kv => IsChannel(kv.Key))
                     .ToDictionary(kv => kv.Key, kv => Math.Clamp(Finite(kv.Value, 100), 0, 800), StringComparer.Ordinal),
                 MutedChannels = stream.MutedChannels is not { Count: > 0 } muted ? [] : [.. muted.Where(IsChannel).Distinct(StringComparer.Ordinal)],
+                MicrophoneBoostDb = Math.Clamp(Finite(stream.MicrophoneBoostDb, 0), 0, 30),
+                AppAudio = stream.AppAudio is not { Count: > 0 } apps ? [] : [.. apps
+                    .Where(a => a is not null && IsProgramFile(a.Program))
+                    .DistinctBy(a => AudioChannels.ForApp(a.Program))
+                    .Take(MaxAppAudio)
+                    .Select(a => a with { Name = string.IsNullOrWhiteSpace(a.Name) ? a.Program[..^4] : a.Name.Trim() })],
             },
             Webcam = SanitizeWebcam(webcam),
             Overlays = (s.Overlays ?? new OverlaySettings()).Sanitized(),
@@ -358,4 +364,13 @@ public static class SettingsSerializer
     /// <summary>A mixer channel name: lower-case letters, digits and '_' (it becomes part of an FFmpeg filter name).</summary>
     private static bool IsChannel(string? name) =>
         name is { Length: > 0 and <= 40 } && name.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '_');
+
+    /// <summary>The most apps with their own fader.</summary>
+    public const int MaxAppAudio = 8;
+
+    /// <summary>A bare program file name ("Spotify.exe"): no folder, so nothing but a name is ever matched.</summary>
+    public static bool IsProgramFile(string? name) =>
+        name is { Length: > 4 and <= 260 }
+        && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+        && name.IndexOfAny(['\\', '/', ':', '"', '<', '>', '|', '?', '*']) < 0;
 }

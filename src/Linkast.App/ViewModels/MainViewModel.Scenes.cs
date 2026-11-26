@@ -462,6 +462,11 @@ public sealed partial class MainViewModel
             }
         }
 
+        foreach (var app in AppAudioSources)
+        {
+            wanted.Add((AudioChannels.ForApp(app.Program), MixerChannelKind.App, app.Name));
+        }
+
         foreach (var web in Overlays.Items.Where(o => o.IsWeb && o.HasUrl))
         {
             wanted.Add((AudioChannels.ForOverlay(web.LayerId), MixerChannelKind.WebOverlay, web.Name));
@@ -554,6 +559,7 @@ public sealed partial class MainViewModel
         if (channel.Key == AudioChannels.System)
         {
             OnPropertyChanged(nameof(GameSoundOnly));
+            OnPropertyChanged(nameof(AppAudioHeardTwice));
         }
 
         void SetMuted(string key, bool muted)
@@ -645,6 +651,10 @@ public sealed partial class MainViewModel
                 case MixerChannelKind.WebOverlay when OverlayProcessId(channel.Key) is { } pid:
                     meter.Monitor.StartProcess(pid, include: true);
                     break;
+                case MixerChannelKind.App when AppAudioSources.FirstOrDefault(a => AudioChannels.ForApp(a.Program) == channel.Key) is { } app
+                    && ProgramProcesses.FindRoot(app.Program) is { } appPid:
+                    meter.Monitor.StartProcess(appPid, include: true);
+                    break;
             }
 
             channel.Note ??= meter.Monitor.Problem;
@@ -659,7 +669,7 @@ public sealed partial class MainViewModel
         foreach (var channel in Mixer.Channels)
         {
             channel.Level = _channelMeters.TryGetValue(channel.Key, out var m) && m.Bus.Active
-                ? MixerChannelViewModel.StreamLevel(m.Bus.Meter.LevelDb, channel.Key == _soundTestChannel ? 1 : GainOf(channel.Key)) * 100
+                ? MixerChannelViewModel.StreamLevel(m.Bus.Meter.LevelDb, (channel.Key == _soundTestChannel ? 1 : GainOf(channel.Key)) * InputGain(channel.Key)) * 100
                 : 0;
         }
     }
@@ -786,6 +796,7 @@ public sealed partial class MainViewModel
                 Gain = GainOf(AudioChannels.Microphone),
                 NoiseSuppression = MicrophoneNoiseSuppression,
                 NoiseRemoval = MicrophoneNoiseRemoval,
+                BoostDb = MicrophoneBoostDb,
             });
         }
 
@@ -798,9 +809,19 @@ public sealed partial class MainViewModel
             foreach (var game in GameWindows())
             {
                 var channel = GameChannel(game);
-                audio.Add(new ProcessAudioSource(game.ProcessId, game.ProcessName ?? "Game") { Channel = channel, Gain = GainOf(channel), Optional = true });
+                // Followed by program: a game that restarts (a new process) is heard again. Before, its
+                // fader stayed silent for the rest of the stream.
+                audio.Add(new ProcessAudioSource(game.ProcessId, game.ProcessName ?? "Game")
+                {
+                    Channel = channel,
+                    Gain = GainOf(channel),
+                    Optional = true,
+                    ProgramName = Core.Settings.SettingsSerializer.IsProgramFile(game.ProcessName) ? game.ProcessName : null,
+                });
             }
         }
+
+        audio.AddRange(AppAudioSpecs());
 
         foreach (var web in Overlays.Items.Where(o => o.IsWeb && o.HasUrl))
         {

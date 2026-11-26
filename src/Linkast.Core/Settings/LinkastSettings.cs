@@ -80,6 +80,12 @@ public sealed record StreamSettings
     /// <summary>How much noise is removed from the microphone. Null in settings saved before it existed: then <see cref="MicrophoneNoiseSuppression"/> decides.</summary>
     public Audio.NoiseRemoval? MicrophoneNoiseRemoval { get; init; }
 
+    /// <summary>Raises a quiet microphone by 0 to 30 dB before noise removal, like a preamp.</summary>
+    public double MicrophoneBoostDb { get; init; }
+
+    /// <summary>Programs whose sound has its own fader (music, a browser, a voice chat), by program file.</summary>
+    public IReadOnlyList<AppAudioSetting> AppAudio { get; init; } = [];
+
     public string? EncoderId { get; init; }
 
     public int Width { get; init; } = 1920;
@@ -154,6 +160,11 @@ public sealed record StreamSettings
     /// <summary>Channels muted in the mixer (in every scene).</summary>
     public IReadOnlyList<string> MutedChannels { get; init; } = [];
 }
+
+/// <summary>A program whose sound has its own mixer fader.</summary>
+/// <param name="Program">Its program file, for example "Spotify.exe": found by name each time it runs.</param>
+/// <param name="Name">What the fader says, for example "Spotify".</param>
+public sealed record AppAudioSetting(string Program, string Name);
 
 /// <summary>Per-platform destination profile containing the server URL and delivery kind.</summary>
 public sealed record DestinationProfile

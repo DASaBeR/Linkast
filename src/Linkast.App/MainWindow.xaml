@@ -707,8 +707,60 @@
                                                                   ToolTip="Cleans your microphone on this PC with a speech-trained neural network. Can be changed while live." />
                                                         <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,6,0,0" TextWrapping="Wrap"
                                                                    Text="{Binding SelectedNoiseRemoval.Explanation}" />
+                                                        <views:ValueSlider Label="Microphone boost" Value="{Binding MicrophoneBoostDb}" Minimum="0" Maximum="30" Format="{}+{0:0} dB"
+                                                                           DefaultValue="0" Margin="0,12,0,0" IsEnabled="{Binding MicrophoneEnabled}"
+                                                                           AutomationProperties.Name="Microphone boost"
+                                                                           ToolTip="Raises a quiet microphone on this PC, before noise removal. Turn Windows' own microphone boost down and use this instead: it clips less and leaves the noise removal less to fight. Can be changed while live." />
                                                     </StackPanel>
                                                 </Grid>
+
+                                                <!-- Apps on their own fader: music, a browser, a voice chat. -->
+                                                <TextBlock Text="Apps on their own fader" FontWeight="SemiBold" Margin="0,20,0,4" />
+                                                <TextBlock Style="{StaticResource Linkast.Text.Hint}" TextWrapping="Wrap" Margin="0,0,0,8"
+                                                           Text="Take only the sound of one program, such as Spotify, a browser or Discord, with its own fader. It is found again when it restarts. Works while live." />
+                                                <ItemsControl ItemsSource="{Binding AppAudioSources}" Focusable="False">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <DockPanel Margin="0,0,0,6">
+                                                                <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Subtle}" MinHeight="28" Padding="10,2"
+                                                                        Command="{Binding DataContext.RemoveAppAudioCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                                        CommandParameter="{Binding}" ToolTip="Take this app's fader away (works while live)"
+                                                                        AutomationProperties.Name="{Binding Name, StringFormat=Remove {0}}">
+                                                                    <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE711;" FontSize="12" />
+                                                                </Button>
+                                                                <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE8D6;" FontSize="13" Margin="0,0,8,0" VerticalAlignment="Center" />
+                                                                <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
+                                                                    <Run Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" />
+                                                                    <Run Text="{Binding Program, Mode=OneWay}" Foreground="{DynamicResource Linkast.TextTertiary}" />
+                                                                </TextBlock>
+                                                            </DockPanel>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                                <DockPanel IsEnabled="{Binding CanCaptureAppAudio}">
+                                                    <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Secondary}" Margin="8,0,0,0" MinHeight="32" Padding="12,4"
+                                                            Command="{Binding AddAppAudioCommand}" AutomationProperties.Name="Add app sound">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE710;" FontSize="12" Margin="0,0,8,0" />
+                                                            <AccessText Text="Add a_pp" />
+                                                        </StackPanel>
+                                                    </Button>
+                                                    <ComboBox ItemsSource="{Binding AppAudioChoices}" SelectedItem="{Binding SelectedAppAudioChoice}"
+                                                              DropDownOpened="OnAppAudioDropDownOpened" AutomationProperties.Name="App to add"
+                                                              ToolTip="Programs playing sound now come first. Start the program (and play something) if it isn't listed." />
+                                                </DockPanel>
+                                                <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,6,0,0" TextWrapping="Wrap"
+                                                           Visibility="{Binding CanCaptureAppAudio, Converter={x:Static vm:Converters.InverseBoolToVisibility}}"
+                                                           Text="Taking one app's sound needs Windows 10 version 2004 or later." />
+                                                <Border Margin="0,8,0,0" Padding="10,8" CornerRadius="{StaticResource Linkast.Radius.Action}" Background="{DynamicResource Linkast.Surface2}"
+                                                        Visibility="{Binding AppAudioHeardTwice, Converter={StaticResource BoolToVis}}">
+                                                    <DockPanel>
+                                                        <TextBlock DockPanel.Dock="Left" Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE7BA;" FontSize="13" Margin="0,0,10,0"
+                                                                   Foreground="{DynamicResource Linkast.Warning}" VerticalAlignment="Top" />
+                                                        <TextBlock TextWrapping="Wrap"
+                                                                   Text="These apps are also in Desktop audio, so viewers hear them twice (louder, with an echo). Mute Desktop audio in the mixer, or turn it off, to hear each app once on its own fader." />
+                                                    </DockPanel>
+                                                </Border>
                                             </StackPanel>
                                         </Border>
                                     </StackPanel>

@@ -861,7 +861,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     partial void OnIsStreamPageVisibleChanged(bool value) => UpdateStreamMeters();
 
-    partial void OnSystemAudioEnabledChanged(bool value) => RefreshMixerChannels();
+    partial void OnSystemAudioEnabledChanged(bool value)
+    {
+        RefreshMixerChannels();
+        OnPropertyChanged(nameof(AppAudioHeardTwice));
+    }
 
     partial void OnMicrophoneEnabledChanged(bool value)
     {
@@ -923,6 +927,26 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         ApplyLiveGain(AudioChannels.System, GainOf(AudioChannels.System));
     }
+
+    /// <summary>
+    /// Raises a quiet microphone by 0 to 30 dB on this PC, before noise removal, like a preamp. Better than
+    /// Windows' microphone boost, which also boosts what the noise removal then has to fight, and clips
+    /// before Linkast can do anything about it. Can be changed while live.
+    /// </summary>
+    [ObservableProperty]
+    public partial double MicrophoneBoostDb { get; set; }
+
+    partial void OnMicrophoneBoostDbChanged(double value)
+    {
+        if (_engine is { } engine && IsActive)
+        {
+            _ = engine.SetMicrophoneBoostAsync(value);
+        }
+    }
+
+    /// <summary>What a channel's sound is raised by before its fader: the microphone's boost.</summary>
+    private double InputGain(string channel) =>
+        channel == AudioChannels.Microphone ? Math.Pow(10, MicrophoneBoostDb / 20) : 1;
 
     partial void OnSelectedNoiseRemovalChanged(NoiseRemovalOption value)
     {
@@ -1430,7 +1454,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     [
         nameof(SelectedSourceKind), nameof(SelectedMonitor), nameof(SelectedWindow), nameof(UseDesktopDuplication), nameof(CaptureCursor),
         nameof(SystemAudioEnabled), nameof(SelectedOutputDevice), nameof(SystemAudioVolume),
-        nameof(MicrophoneEnabled), nameof(SelectedInputDevice), nameof(MicrophoneVolume), nameof(SelectedNoiseRemoval),
+        nameof(MicrophoneEnabled), nameof(SelectedInputDevice), nameof(MicrophoneVolume), nameof(MicrophoneBoostDb), nameof(SelectedNoiseRemoval),
         nameof(SelectedEncoder), nameof(SelectedResolution), nameof(SelectedFrameRate), nameof(VideoBitrateKbps),
         nameof(KeyframeIntervalSeconds), nameof(AudioBitrateKbps), nameof(EncoderPreset),
         nameof(SelectedDestinationKind), nameof(SelectedPlatform), nameof(ServerUrl), nameof(SelectedNetwork), nameof(SelectedTheme),
@@ -1608,6 +1632,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 MicrophoneVolume = MicrophoneVolume,
                 MicrophoneNoiseSuppression = MicrophoneNoiseSuppression,
                 MicrophoneNoiseRemoval = MicrophoneNoiseRemoval,
+                MicrophoneBoostDb = MicrophoneBoostDb,
+                AppAudio = AppAudioSources.Count == 0 ? [] : [.. AppAudioSources],
                 EncoderId = SelectedEncoder?.Id ?? _loaded.Stream.EncoderId,
                 Width = SelectedResolution.Width,
                 Height = SelectedResolution.Height,
@@ -1662,6 +1688,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         MicrophoneEnabled = s.MicrophoneEnabled;
         SelectedInputDevice = InputDevices.FirstOrDefault(d => d.Id == s.MicrophoneDeviceId) ?? SelectedInputDevice;
         MicrophoneVolume = s.MicrophoneVolume;
+        MicrophoneBoostDb = s.MicrophoneBoostDb;
         SelectedNoiseRemoval = NoiseRemovalOption.For(s.MicrophoneNoiseRemoval ?? (s.MicrophoneNoiseSuppression ? NoiseRemoval.Standard : NoiseRemoval.Off));
         SelectedResolution = Resolutions.FirstOrDefault(r => r.Width == s.Width && r.Height == s.Height) ?? Resolutions[0];
         SelectedFrameRate = FrameRates.Contains(s.FrameRate) ? s.FrameRate : 60;
@@ -1707,6 +1734,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         _mutedChannels.Clear();
         _mutedChannels.UnionWith(s.MutedChannels);
+        LoadAppAudio(s.AppAudio);
+        RefreshMixerChannels();
         _pendingSceneChoices = (s.StartSceneId, s.EndSceneId);
         SelectedProxyKind = ProxyKinds.First(k => k.Kind == s.ProxyKind);
         ProxyHost = s.ProxyHost;

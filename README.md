@@ -40,8 +40,8 @@ It is made for streamers who find OBS Studio too complicated: fewer settings, cl
 ### Alerts, overlays and audio
 
 - **Stream alerts and overlays** from Streamlabs, StreamElements, Reymit or any alert service: paste the same link you would give OBS as a Browser Source. Add your logo or any picture. Move, resize and trim them live.
-- **Audio mixer** like OBS: a fader, mute and level meter for desktop audio, your microphone, the game on its own, every alert and every scene video, with **Test sound** for alerts.
-- **Microphone noise removal** and mute that work while live, without restarting the stream.
+- **Audio mixer** like OBS: a fader, mute and level meter for desktop audio, your microphone, the game on its own, apps on their own (Spotify, a browser, Discord), every alert and every scene video, with **Test sound** for alerts. A limiter keeps a loud mix from clipping.
+- **Microphone noise removal**, boost (up to +30 dB) and mute that work while live, without restarting the stream.
 - **Global hotkeys** that work in fullscreen games: go live, mute, cameras, Be right back, record and switch scenes with Ctrl+Alt+1 to 9.
 
 <p align="center">

@@ -67,7 +67,11 @@ public abstract record AudioSourceSpec
 }
 
 /// <param name="DeviceId">WASAPI endpoint ID, or null for the default communications/console microphone.</param>
-public sealed record MicrophoneSource(string? DeviceId, string DisplayName) : AudioSourceSpec;
+public sealed record MicrophoneSource(string? DeviceId, string DisplayName) : AudioSourceSpec
+{
+    /// <summary>Raises a quiet microphone by this many dB (0 to 30) before noise removal, like a preamp.</summary>
+    public double BoostDb { get; init; }
+}
 
 /// <param name="DeviceId">WASAPI render endpoint ID to loop back, or null for the default output device.</param>
 public sealed record SystemAudioSource(string? DeviceId, string DisplayName) : AudioSourceSpec
@@ -84,7 +88,15 @@ public sealed record SystemAudioSource(string? DeviceId, string DisplayName) : A
 /// The sound of one program (and its child processes), for example the captured game or a web overlay's
 /// browser. Needs Windows 10 2004 or later.
 /// </summary>
-public sealed record ProcessAudioSource(uint ProcessId, string DisplayName) : AudioSourceSpec;
+public sealed record ProcessAudioSource(uint ProcessId, string DisplayName) : AudioSourceSpec
+{
+    /// <summary>
+    /// The program file to follow (for example "Spotify.exe"): when its process ends, the sound is taken from
+    /// the program's new process as soon as it runs again, and a <see cref="ProcessId"/> of 0 means "whenever
+    /// it runs". Null: only this process (a web overlay's browser, whose program is shared with others).
+    /// </summary>
+    public string? ProgramName { get; init; }
+}
 
 /// <summary>Synthetic sine tone generated inside FFmpeg. Used by tests.</summary>
 public sealed record TestToneSource : AudioSourceSpec;

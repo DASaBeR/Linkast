@@ -12,6 +12,9 @@ public enum MixerChannelKind
     Desktop,
     Microphone,
     Game,
+
+    /// <summary>An app's own sound: music, a browser, a voice chat.</summary>
+    App,
     WebOverlay,
     SceneVideo,
 }
@@ -99,7 +102,8 @@ public sealed partial class MixerChannelViewModel(string key, MixerChannelKind k
         MixerChannelKind.Desktop => "", // speaker
         MixerChannelKind.Microphone => "", // microphone
         MixerChannelKind.Game => "", // game
-        MixerChannelKind.WebOverlay => "", // globe
+        MixerChannelKind.App => "", // music note
+        MixerChannelKind.WebOverlay =>"", // globe
         _ => "", // video
     };
 

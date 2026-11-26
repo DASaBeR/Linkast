@@ -18,6 +18,10 @@ public static class AudioChannels
     /// <summary>The channel of one captured game or app, from its program name (for example "game_dota2").</summary>
     public static string ForGame(string program) => "game_" + Clean(program);
 
+    /// <summary>The channel of an app's own sound, from its program file (for example "Spotify.exe" gives "app_spotify").</summary>
+    public static string ForApp(string programFile) =>
+        "app_" + Clean(programFile.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? programFile[..^4] : programFile);
+
     /// <summary>The channel of a web overlay, from its layer ID (for example "overlay-2" gives "web_overlay_2").</summary>
     public static string ForOverlay(string layerId) => "web_" + Clean(layerId);
 
@@ -45,4 +49,10 @@ public interface ILiveAudioControl
     /// </summary>
     Task<bool> SetNoiseRemovalAsync(Audio.NoiseRemoval level, CancellationToken cancellationToken = default) =>
         SetNoiseSuppressionAsync(level != Audio.NoiseRemoval.Off, cancellationToken);
+
+    /// <summary>
+    /// Boosts the microphone by <paramref name="db"/> (0 to 30) before noise removal, like a preamp. False
+    /// when the engine can't (then the boost applies from the next stream).
+    /// </summary>
+    Task<bool> SetMicrophoneBoostAsync(double db, CancellationToken cancellationToken = default) => Task.FromResult(false);
 }

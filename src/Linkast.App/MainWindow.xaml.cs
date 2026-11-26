@@ -165,6 +165,9 @@ public partial class MainWindow : Window
 
     // The mixer row scrolls sideways only, but its ScrollViewer still swallows the wheel. Pass a plain wheel on to
     // the settings page so it scrolls as usual; Shift + wheel scrolls the faders sideways.
+    /// <summary>The app list is read when opened, so a program started a moment ago is in it.</summary>
+    private void OnAppAudioDropDownOpened(object? sender, EventArgs e) => _vm.RefreshAppAudioChoicesCommand.Execute(null);
+
     private void OnMixerWheel(object sender, MouseWheelEventArgs e)
     {
         var mixer = (ScrollViewer)sender;

@@ -256,4 +256,196 @@ public class UnifiedAudioMixerTests
         Assert.Equal(0, mixer.TotalBytesWritten);
         await mixer.DisposeAsync();
     }
+
+    [Fact]
+    public async Task UnifiedAudioMixer_turns_a_too_loud_mix_down_instead_of_clipping_it()
+    {
+        var hub = new AudioCaptureHub();
+        using var memoryStream = new MemoryStream();
+        var mixer = new UnifiedAudioMixer(hub, memoryStream, Stopwatch.GetTimestamp() - 10 * Stopwatch.Frequency);
+
+        // A loud game and loud desktop audio: 0.7 + 0.7 is 1.4 times full scale.
+        mixer.AddTestChannel("game", 1.0);
+        mixer.AddTestChannel("sys", 1.0);
+        for (var slice = 0; slice < 20; slice++)
+        {
+            mixer.EnqueueTestChannelData("game", Sound(10, 0.7f));
+            mixer.EnqueueTestChannelData("sys", Sound(10, 0.7f));
+            Assert.True(await mixer.MixOneSliceAsync() > 0);
+        }
+
+        var samples = MemoryMarshal.Cast<byte, short>(memoryStream.ToArray()).ToArray();
+        Assert.True(samples.Max() <= (short)(32767 * 0.892), $"peak {samples.Max()}; before, 32767 (clipped)");
+        Assert.True(samples[^1] > 32767 * 0.88, "held just under the ceiling");
+        Assert.Contains("instead of clipping", mixer.Describe(), StringComparison.Ordinal);
+
+        await mixer.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task UnifiedAudioMixer_boosts_a_quiet_microphone_before_its_fader()
+    {
+        var hub = new AudioCaptureHub();
+        using var memoryStream = new MemoryStream();
+        var mixer = new UnifiedAudioMixer(hub, memoryStream, Stopwatch.GetTimestamp() - 10 * Stopwatch.Frequency);
+        mixer.AddTestChannel(AudioChannels.Microphone, 0.5);
+        Assert.True(await mixer.SetMicrophoneBoostAsync(20));
+        Assert.Equal(20, mixer.MicrophoneBoostDb);
+
+        mixer.EnqueueTestChannelData(AudioChannels.Microphone, Sound(10, 0.01f));
+        Assert.True(await mixer.MixOneSliceAsync() > 0);
+
+        // 0.01 boosted 20 dB is 0.1; the fader at 50 % halves it: 0.05.
+        var last = MemoryMarshal.Cast<byte, short>(memoryStream.ToArray())[^1];
+        Assert.InRange(last / 32768.0, 0.049, 0.051);
+
+        // Out-of-range asks are held to 0..30 dB.
+        await mixer.SetMicrophoneBoostAsync(99);
+        Assert.Equal(UnifiedAudioMixer.MaxMicrophoneBoostDb, mixer.MicrophoneBoostDb);
+        await mixer.SetMicrophoneBoostAsync(double.NaN);
+        Assert.Equal(0, mixer.MicrophoneBoostDb);
+
+        await mixer.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task UnifiedAudioMixer_boost_reaches_only_the_microphone()
+    {
+        var hub = new AudioCaptureHub();
+        using var memoryStream = new MemoryStream();
+        var mixer = new UnifiedAudioMixer(hub, memoryStream, Stopwatch.GetTimestamp() - 10 * Stopwatch.Frequency);
+        mixer.AddTestChannel("sys", 1.0);
+        await mixer.SetMicrophoneBoostAsync(30);
+
+        mixer.EnqueueTestChannelData("sys", Sound(10, 0.1f));
+        Assert.True(await mixer.MixOneSliceAsync() > 0);
+
+        var last = MemoryMarshal.Cast<byte, short>(memoryStream.ToArray())[^1];
+        Assert.InRange(last / 32768.0, 0.099, 0.101);
+        await mixer.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task UnifiedAudioMixer_keeps_a_steady_source_close_to_the_picture_after_a_burst()
+    {
+        var hub = new AudioCaptureHub();
+        using var memoryStream = new MemoryStream();
+        var mixer = new UnifiedAudioMixer(hub, memoryStream, Stopwatch.GetTimestamp() - 100 * Stopwatch.Frequency);
+        mixer.AddTestChannel("mic", 1.0);
+
+        // A capture hiccup hands over 150 ms at once; then the microphone keeps pace for a minute.
+        mixer.EnqueueTestChannelData("mic", Sound(150));
+        for (var slice = 0; slice < 6000; slice++)
+        {
+            mixer.EnqueueTestChannelData("mic", Sound(10));
+            await mixer.MixOneSliceAsync();
+        }
+
+        // Before, the microphone stayed 150 ms behind the picture for the rest of the stream.
+        Assert.Contains("played away a little faster", mixer.Describe(), StringComparison.Ordinal);
+        Assert.DoesNotContain("dropped (not mixed in time)", mixer.Describe(), StringComparison.Ordinal);
+        await mixer.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task UnifiedAudioMixer_follows_a_program_that_closes_and_starts_again()
+    {
+        if (Environment.OSVersion.Version.Build < 19041)
+        {
+            return; // process loopback needs Windows 10 2004
+        }
+
+        static Process StartProgram() =>
+            Process.Start(new ProcessStartInfo("ping.exe", "-n 60 127.0.0.1") { CreateNoWindow = true, UseShellExecute = false })!;
+
+        var hub = new AudioCaptureHub();
+        using var memoryStream = new MemoryStream();
+        var mixer = new UnifiedAudioMixer(hub, memoryStream);
+        var program = $"linkast-test-{Guid.NewGuid():N}.exe";
+
+        // Not running when the stream starts: the channel is there, silent, and doesn't fail the stream.
+        mixer.AddSource("app_test", new ProcessAudioSource(0, "Test") { ProgramName = program, Channel = "app_test" });
+        Assert.True(mixer.HasChannel("app_test"));
+        Assert.Equal(0u, mixer.FollowedProcessOf("app_test"));
+        mixer.FollowPrograms();
+        Assert.Equal(0u, mixer.FollowedProcessOf("app_test"));
+        Assert.Equal(0, hub.ActiveSessions);
+        await mixer.DisposeAsync();
+
+        // A real program (ping): followed while it runs, let go when it closes, taken again when it restarts.
+        mixer = new UnifiedAudioMixer(hub, memoryStream);
+        var first = StartProgram();
+        Process? second = null;
+        try
+        {
+            mixer.AddSource("app_ping", new ProcessAudioSource((uint)first.Id, "Ping") { ProgramName = "PING.EXE", Channel = "app_ping" });
+            Assert.Equal((uint)first.Id, mixer.FollowedProcessOf("app_ping"));
+            Assert.Equal(1, hub.ActiveSessions);
+
+            first.Kill();
+            await first.WaitForExitAsync();
+            mixer.FollowPrograms();
+            if (mixer.FollowedProcessOf("app_ping") == 0)
+            {
+                Assert.Equal(0, hub.ActiveSessions);
+            }
+
+            second = StartProgram();
+            mixer.FollowPrograms();
+            var followed = mixer.FollowedProcessOf("app_ping");
+            Assert.NotEqual((uint)first.Id, followed);
+            Assert.NotEqual(0u, followed); // this run's second ping, or another ping that runs on this PC
+            Assert.Equal(1, hub.ActiveSessions);
+        }
+        finally
+        {
+            foreach (var p in new[] { first, second })
+            {
+                if (p is not null)
+                {
+                    if (!p.HasExited)
+                    {
+                        p.Kill();
+                    }
+
+                    p.Dispose();
+                }
+            }
+
+            await mixer.DisposeAsync();
+        }
+
+        Assert.Equal(0, hub.ActiveSessions);
+    }
+
+    [Fact]
+    public void ProgramProcesses_picks_the_process_that_started_the_others()
+    {
+        // Chrome: the browser process started its renderers and its audio service; Explorer started it.
+        ProcessEntry[] processes =
+        [
+            new(4, 0, "System"),
+            new(100, 4, "explorer.exe"),
+            new(200, 100, "chrome.exe"),
+            new(201, 200, "chrome.exe"),
+            new(202, 200, "chrome.exe"),
+            new(203, 201, "chrome.exe"),
+            new(300, 100, "Spotify.exe"),
+            new(301, 300, "Spotify.exe"),
+            // A second, idle copy of Chrome started from elsewhere has fewer processes under it.
+            new(400, 4, "chrome.exe"),
+        ];
+
+        Assert.Equal(200u, ProgramProcesses.PickRoot(processes, "chrome.exe"));
+        Assert.Equal(300u, ProgramProcesses.PickRoot(processes, "SPOTIFY.EXE"));
+        Assert.Null(ProgramProcesses.PickRoot(processes, "discord.exe"));
+        Assert.Null(ProgramProcesses.PickRoot(processes, ""));
+    }
+
+    [Fact]
+    public void ProgramProcesses_snapshot_sees_this_process()
+    {
+        var self = (uint)Environment.ProcessId;
+        Assert.Contains(ProgramProcesses.Snapshot(), p => p.ProcessId == self && p.ExeName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
+    }
 }

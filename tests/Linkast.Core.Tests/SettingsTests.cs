@@ -336,6 +336,51 @@ public class SettingsSerializerTests
     }
 
     [Fact]
+    public void Apps_on_their_own_fader_and_the_boost_are_kept_within_bounds()
+    {
+        var json = """
+            {"schemaVersion":2,
+             "stream":{"microphoneBoostDb":99,
+                       "appAudio":[{"program":"Spotify.exe","name":"Spotify"},
+                                   {"program":"spotify.EXE","name":"Twice"},
+                                   {"program":"C:\\Windows\\evil.exe","name":"Path"},
+                                   {"program":"notes.txt","name":"Not a program"},
+                                   {"program":"chrome.exe","name":"  "},
+                                   null]}}
+            """;
+        var (s, outcome) = SettingsSerializer.Deserialize(json);
+
+        Assert.NotEqual(SettingsLoadOutcome.Corrupt, outcome);
+        Assert.Equal(30, s.Stream.MicrophoneBoostDb);
+        Assert.Equal(
+            [new AppAudioSetting("Spotify.exe", "Spotify"), new AppAudioSetting("chrome.exe", "chrome")],
+            s.Stream.AppAudio);
+    }
+
+    [Fact]
+    public void Apps_on_their_own_fader_round_trip_and_default_to_none()
+    {
+        Assert.Empty(new StreamSettings().AppAudio);
+        Assert.Equal(0, new StreamSettings().MicrophoneBoostDb);
+
+        var settings = new LinkastSettings
+        {
+            Stream = new StreamSettings { MicrophoneBoostDb = 9, AppAudio = [new("Discord.exe", "Discord")] },
+        };
+        var (back, _) = SettingsSerializer.Deserialize(SettingsSerializer.Serialize(settings));
+        Assert.Equal(9, back.Stream.MicrophoneBoostDb);
+        Assert.Equal(new AppAudioSetting("Discord.exe", "Discord"), Assert.Single(back.Stream.AppAudio));
+    }
+
+    [Theory]
+    [InlineData("Spotify.exe", "app_spotify")]
+    [InlineData("Discord.EXE", "app_discord")]
+    [InlineData("msedge.exe", "app_msedge")]
+    [InlineData("My Game-2.exe", "app_my_game_2")]
+    public void An_apps_channel_is_named_after_its_program(string program, string channel) =>
+        Assert.Equal(channel, AudioChannels.ForApp(program));
+
+    [Fact]
     public void Destinations_round_trip_through_serializer()
     {
         var settings = new LinkastSettings
