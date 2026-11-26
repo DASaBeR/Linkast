@@ -15,15 +15,25 @@ namespace Linkast.Platform.Windows.Rendering;
 /// <summary>
 /// GPU-accelerated capture source capturing a window or display monitor via Windows Graphics Capture (WGC).
 /// Frames are ingested directly onto Direct3D 11 textures with zero CPU readback.
+/// <para>
+/// Windows can end a capture while its window lives on: a game switching between fullscreen and windowed or
+/// changing resolution, or a window that wasn't ready to be captured yet. A lost capture then starts again on
+/// the same target once a second, as soon as it can be captured. Before, it stayed lost and the stream showed
+/// black: the app replaces a capture only when its window is gone, and switching scenes only shows or hides
+/// a capture, so neither brought it back. (A window that is gone is the app's to replace: it finds the
+/// program's new window and gives it a capture of its own.)
+/// </para>
 /// </summary>
 public sealed partial class WindowsGraphicsCaptureSource : ID3D11SceneSource
 {
     private readonly Lock _syncLock = new();
     private readonly D3D11DeviceManager _deviceManager;
-    private readonly IntPtr _targetHandle;
     private readonly bool _isWindow;
     private readonly bool _captureCursor;
     private readonly ILogger? _logger;
+    private readonly Timer _recoveryTimer;
+    private readonly IntPtr _targetHandle;
+    private bool _recovering;
 
     private IDirect3DDevice? _winrtDevice;
     private GraphicsCaptureItem? _item;
@@ -53,9 +63,19 @@ public sealed partial class WindowsGraphicsCaptureSource : ID3D11SceneSource
         _isWindow = isWindow;
         _captureCursor = captureCursor;
         _logger = logger;
+        _recoveryTimer = new Timer(_ => TryRecover(), null, Timeout.Infinite, Timeout.Infinite);
+        _deviceManager.DeviceLost += OnDeviceLost;
+        _deviceManager.DeviceRestored += OnDeviceRestored;
 
         StartCapture();
+        if (State == SceneSourceState.Lost)
+        {
+            BeginRecovery();
+        }
     }
+
+    /// <summary>How often a lost capture tries to start again.</summary>
+    internal static readonly TimeSpan RecoveryInterval = TimeSpan.FromSeconds(1);
 
     public string Id { get; }
 
@@ -82,6 +102,11 @@ public sealed partial class WindowsGraphicsCaptureSource : ID3D11SceneSource
 
             if (changed)
             {
+                if (value == SceneSourceState.Lost)
+                {
+                    BeginRecovery();
+                }
+
                 StateChanged?.Invoke(this, value);
             }
         }
@@ -167,15 +192,16 @@ public sealed partial class WindowsGraphicsCaptureSource : ID3D11SceneSource
 
                 _session.StartCapture();
                 _state = SceneSourceState.Capturing;
-                _deviceManager.DeviceLost += OnDeviceLost;
-                _deviceManager.DeviceRestored += OnDeviceRestored;
             }
             catch (Exception ex)
             {
-                if (_logger is not null)
+                // While recovering, a window that isn't ready yet can fail every second: logged once.
+                if (_logger is not null && !_recovering)
                 {
                     LogCaptureStartFailed(_logger, Id, ex);
                 }
+
+                StopCapture();
                 _state = SceneSourceState.Lost;
             }
         }
@@ -301,6 +327,79 @@ public sealed partial class WindowsGraphicsCaptureSource : ID3D11SceneSource
         }
     }
 
+    private void BeginRecovery()
+    {
+        lock (_syncLock)
+        {
+            if (_disposed || _recovering)
+            {
+                return;
+            }
+
+            _recovering = true;
+            _recoveryTimer.Change(RecoveryInterval, RecoveryInterval);
+        }
+    }
+
+    /// <summary>Lets go of the item, frame pool and session of a capture that ended or failed to start.</summary>
+    private void StopCapture()
+    {
+        if (_item is not null)
+        {
+            _item.Closed -= OnItemClosed;
+            _item = null;
+        }
+
+        if (_framePool is not null)
+        {
+            _framePool.FrameArrived -= OnFrameArrived;
+            _framePool.Dispose();
+            _framePool = null;
+        }
+
+        _session?.Dispose();
+        _session = null;
+        _winrtDevice?.Dispose();
+        _winrtDevice = null;
+    }
+
+    private void TryRecover()
+    {
+        var recovered = false;
+        lock (_syncLock)
+        {
+            if (_disposed || _state != SceneSourceState.Lost)
+            {
+                return;
+            }
+
+            // A minimized window can't be captured yet; a closed one never again (the app replaces it).
+            if (_isWindow && !VideoSourceCatalog.IsWindowCapturable(_targetHandle))
+            {
+                return;
+            }
+
+            // The last picture stays on screen until the new capture delivers one.
+            StopCapture();
+            StartCapture();
+            if (_state == SceneSourceState.Capturing)
+            {
+                recovered = true;
+                _recovering = false;
+                _recoveryTimer.Change(Timeout.Infinite, Timeout.Infinite);
+                if (_logger is not null)
+                {
+                    LogRecovered(_logger, Id);
+                }
+            }
+        }
+
+        if (recovered)
+        {
+            StateChanged?.Invoke(this, SceneSourceState.Capturing);
+        }
+    }
+
     public ValueTask<ID3D11Texture2D?> AcquireFrameAsync(CancellationToken ct = default)
     {
         lock (_syncLock)
@@ -344,29 +443,14 @@ public sealed partial class WindowsGraphicsCaptureSource : ID3D11SceneSource
             }
 
             _disposed = true;
+            _recoveryTimer.Dispose();
             _deviceManager.DeviceLost -= OnDeviceLost;
             _deviceManager.DeviceRestored -= OnDeviceRestored;
 
-            if (_item is not null)
-            {
-                _item.Closed -= OnItemClosed;
-            }
-
-            if (_framePool is not null)
-            {
-                _framePool.FrameArrived -= OnFrameArrived;
-                _framePool.Dispose();
-                _framePool = null;
-            }
-
-            _session?.Dispose();
-            _session = null;
+            StopCapture();
 
             _retainedTexture?.Dispose();
             _retainedTexture = null;
-
-            _winrtDevice?.Dispose();
-            _winrtDevice = null;
 
             State = SceneSourceState.Lost;
         }
@@ -385,6 +469,9 @@ public sealed partial class WindowsGraphicsCaptureSource : ID3D11SceneSource
 
     [LoggerMessage(LogLevel.Information, "Capture target closed for source {SourceId}.")]
     private static partial void LogItemClosed(ILogger logger, string sourceId);
+
+    [LoggerMessage(LogLevel.Information, "Capture {SourceId} had ended and captures again.")]
+    private static partial void LogRecovered(ILogger logger, string sourceId);
 
     [LoggerMessage(LogLevel.Error, "Recreating frame pool after device restore failed on {SourceId}.")]
     private static partial void LogDeviceRestoredFailed(ILogger logger, string sourceId, Exception ex);

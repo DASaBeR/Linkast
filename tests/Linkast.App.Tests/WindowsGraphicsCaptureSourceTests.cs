@@ -60,4 +60,58 @@ public class WindowsGraphicsCaptureSourceTests
 
         Assert.Equal(SceneSourceState.Lost, source.State);
     }
+
+    [Fact]
+    public async Task A_capture_that_Windows_ends_starts_again_on_its_own()
+    {
+        var hMon = MonitorFromWindow(IntPtr.Zero, MONITOR_DEFAULTTOPRIMARY);
+        using var deviceManager = new D3D11DeviceManager();
+        var source = new WindowsGraphicsCaptureSource("ended-mon", deviceManager, hMon, isWindow: false);
+        var states = new System.Collections.Concurrent.ConcurrentQueue<SceneSourceState>();
+        source.StateChanged += (_, s) => states.Enqueue(s);
+
+        try
+        {
+            Assert.Equal(SceneSourceState.Capturing, source.State);
+
+            // What Windows does when it ends a capture (a game changing display mode): the item's Closed event.
+            typeof(WindowsGraphicsCaptureSource)
+                .GetMethod("OnItemClosed", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(source, [null, null]);
+            Assert.Equal(SceneSourceState.Lost, source.State);
+
+            var deadline = DateTime.UtcNow + WindowsGraphicsCaptureSource.RecoveryInterval * 5;
+            while (source.State != SceneSourceState.Capturing && DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(50);
+            }
+
+            // Before, it stayed lost and the stream was black until the source was added again.
+            Assert.Equal(SceneSourceState.Capturing, source.State);
+            Assert.Equal([SceneSourceState.Lost, SceneSourceState.Capturing], states.ToArray());
+            Assert.True(source.Width > 0);
+        }
+        finally
+        {
+            await source.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task A_lost_window_capture_keeps_trying_quietly_and_stops_when_disposed()
+    {
+        using var deviceManager = new D3D11DeviceManager();
+        var source = new WindowsGraphicsCaptureSource("gone-win", deviceManager, new IntPtr(0x12345678), isWindow: true);
+        var changes = 0;
+        source.StateChanged += (_, _) => Interlocked.Increment(ref changes);
+
+        // A window that is gone can't come back: the retries leave it lost without raising anything.
+        await Task.Delay(WindowsGraphicsCaptureSource.RecoveryInterval * 2.5);
+        Assert.Equal(SceneSourceState.Lost, source.State);
+        Assert.Equal(0, Volatile.Read(ref changes));
+
+        await source.DisposeAsync();
+        await Task.Delay(WindowsGraphicsCaptureSource.RecoveryInterval * 1.5);
+        Assert.Equal(SceneSourceState.Lost, source.State);
+    }
 }
