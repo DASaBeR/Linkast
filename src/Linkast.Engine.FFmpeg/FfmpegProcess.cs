@@ -123,7 +123,9 @@ public sealed class FfmpegProcess : IAsyncDisposable
             // stdin already closed: the process is exiting.
         }
 
-        if (await Task.WhenAny(_exited.Task, Task.Delay(grace)).ConfigureAwait(false) != _exited.Task)
+        // Waits up to the grace period without leaving a timer running (CA2027), and never throws here.
+        await ((Task)_exited.Task).WaitAsync(grace).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        if (!_exited.Task.IsCompleted)
         {
             Kill();
         }

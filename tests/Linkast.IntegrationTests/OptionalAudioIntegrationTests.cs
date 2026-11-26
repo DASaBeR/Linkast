@@ -202,7 +202,7 @@ public sealed class OptionalAudioIntegrationTests(ITestOutputHelper output) : IA
             await _cts.CancelAsync();
             if (_writer is not null)
             {
-                await Task.WhenAny(_writer, Task.Delay(2000));
+                await _writer.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             }
 
             if (_pipe is not null)

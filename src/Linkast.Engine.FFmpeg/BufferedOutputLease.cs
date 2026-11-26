@@ -369,7 +369,7 @@ internal sealed partial class BufferedOutputLease : IOutputLease
         // An attempt whose encoder never connected has nothing to send, so there is nothing to wait for.
         if (_run is not null && Volatile.Read(ref _encoderConnected))
         {
-            await Task.WhenAny(_run, Task.Delay(TimeSpan.FromSeconds(6))).ConfigureAwait(false);
+            await _run.WaitAsync(TimeSpan.FromSeconds(6)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
         else
         {
@@ -386,7 +386,7 @@ internal sealed partial class BufferedOutputLease : IOutputLease
 
         if (_run is not null)
         {
-            await Task.WhenAny(_run, Task.Delay(TimeSpan.FromSeconds(2))).ConfigureAwait(false);
+            await _run.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
 
         await _inner.DisposeAsync().ConfigureAwait(false);

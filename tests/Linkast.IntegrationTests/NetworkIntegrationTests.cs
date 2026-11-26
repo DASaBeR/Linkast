@@ -285,7 +285,7 @@ public sealed class NetworkIntegrationTests(ITestOutputHelper output)
             _listener.Stop();
             if (_loop is not null)
             {
-                await Task.WhenAny(_loop, Task.Delay(2000));
+                await _loop.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             }
 
             _cts.Dispose();
