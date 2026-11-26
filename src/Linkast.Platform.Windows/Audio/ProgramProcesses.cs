@@ -15,11 +15,39 @@ public readonly record struct ProcessEntry(uint ProcessId, uint ParentId, string
 public static partial class ProgramProcesses
 {
     /// <summary>The first process of <paramref name="exeName"/> (for example "chrome.exe"), or null when it isn't running.</summary>
-    public static uint? FindRoot(string exeName) => PickRoot(Snapshot(), exeName);
+    public static uint? FindRoot(string exeName) => PickRoot(WithoutExited(Snapshot(), [exeName]), exeName);
 
     /// <summary>True when <paramref name="processId"/> still runs and is <paramref name="exeName"/>.</summary>
     public static bool IsRunning(uint processId, string exeName) =>
-        Snapshot().Any(p => p.ProcessId == processId && string.Equals(p.ExeName, exeName, StringComparison.OrdinalIgnoreCase));
+        WithoutExited(Snapshot(), [exeName]).Any(p => p.ProcessId == processId && string.Equals(p.ExeName, exeName, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Leaves out processes of <paramref name="exeNames"/> that have ended but are still listed: Windows keeps
+    /// an ended process in the list while anything holds a handle to it. Only the named programs are checked.
+    /// </summary>
+    public static IReadOnlyList<ProcessEntry> WithoutExited(IReadOnlyList<ProcessEntry> processes, IReadOnlyCollection<string> exeNames)
+    {
+        ArgumentNullException.ThrowIfNull(processes);
+        ArgumentNullException.ThrowIfNull(exeNames);
+        return [.. processes.Where(p => !exeNames.Contains(p.ExeName, StringComparer.OrdinalIgnoreCase) || !HasExited(p.ProcessId))];
+    }
+
+    private static bool HasExited(uint processId)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById((int)processId);
+            return process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return true; // gone
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return false; // can't be asked (a protected process): it runs
+        }
+    }
 
     /// <summary>
     /// Of the processes named <paramref name="exeName"/>, the one no other of them started. With several (two

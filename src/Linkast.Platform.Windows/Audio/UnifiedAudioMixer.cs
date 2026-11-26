@@ -367,7 +367,8 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
                     continue;
                 }
 
-                processes ??= ProgramProcesses.Snapshot();
+                processes ??= ProgramProcesses.WithoutExited(
+                    ProgramProcesses.Snapshot(), [.. _channels.Values.Select(c => c.ProgramName).OfType<string>()]);
                 var running = state.ProcessId != 0 && processes.Any(p =>
                     p.ProcessId == state.ProcessId && string.Equals(p.ExeName, program, StringComparison.OrdinalIgnoreCase));
                 if (running)
