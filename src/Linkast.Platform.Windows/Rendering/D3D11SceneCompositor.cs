@@ -137,6 +137,8 @@ public sealed partial class D3D11SceneCompositor : IDisposable
     private ID3D11Texture2D? _canvasTexture;
     private ID3D11RenderTargetView? _canvasRtv;
     private ID3D11ShaderResourceView? _canvasSrv;
+    private ID3D11Texture2D? _blackTexture;
+    private ID3D11ShaderResourceView? _blackSrv;
     private ID3D11Buffer? _nv12GpuBuffer;
     private ID3D11UnorderedAccessView? _nv12Uav;
     private readonly ID3D11Buffer?[] _nv12StagingBuffers = new ID3D11Buffer?[2];
@@ -441,6 +443,42 @@ public sealed partial class D3D11SceneCompositor : IDisposable
     }
 
     /// <summary>
+    /// Paints <paramref name="destRect"/> opaque black: what viewers see in place of a capture that has no
+    /// picture right now, instead of its last picture frozen or the layers under it showing through.
+    /// </summary>
+    public unsafe void DrawBlack(NormalizedRect destRect)
+    {
+        lock (_renderGate)
+        lock (_deviceManager.ContextLock)
+        {
+            if (_disposed || _canvasRtv is null)
+            {
+                return;
+            }
+
+            if (_blackSrv is null)
+            {
+                uint opaqueBlack = 0xFF000000; // BGRA
+                var desc = new Texture2DDescription
+                {
+                    Width = 1,
+                    Height = 1,
+                    MipLevels = 1,
+                    ArraySize = 1,
+                    Format = Format.B8G8R8A8_UNorm,
+                    SampleDescription = new SampleDescription(1, 0),
+                    Usage = ResourceUsage.Immutable,
+                    BindFlags = BindFlags.ShaderResource,
+                };
+                _blackTexture = _deviceManager.Device.CreateTexture2D(desc, [new SubresourceData(&opaqueBlack, 4)]);
+                _blackSrv = _deviceManager.Device.CreateShaderResourceView(_blackTexture);
+            }
+
+            DrawLayer(_blackSrv, destRect, NormalizedRect.Full);
+        }
+    }
+
+    /// <summary>
     /// Executes GPU compute shader to convert composited canvas into BT.709 NV12 format,
     /// and copies the frame into the provided <paramref name="destination"/> byte span.
     /// Returns the total bytes written.
@@ -610,6 +648,10 @@ public sealed partial class D3D11SceneCompositor : IDisposable
 
     private void DisposeResources()
     {
+        _blackSrv?.Dispose();
+        _blackSrv = null;
+        _blackTexture?.Dispose();
+        _blackTexture = null;
         _canvasRtv?.Dispose();
         _canvasRtv = null;
         _canvasSrv?.Dispose();

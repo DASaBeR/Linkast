@@ -379,8 +379,9 @@ public sealed partial class WindowsGraphicsCaptureSource : ID3D11SceneSource
                 return;
             }
 
-            // The last picture stays on screen until the new capture delivers one.
+            // Black until the new capture delivers a picture: the old one would show a moment that has passed.
             StopCapture();
+            _hasReceivedFrame = false;
             StartCapture();
             if (_state == SceneSourceState.Capturing)
             {

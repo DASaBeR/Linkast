@@ -222,4 +222,68 @@ public class MediaOutputSchedulerTests
         Assert.Equal(["scene-media-card", "camera-1"], keys1);
         Assert.Equal(["scene-media-card", "camera-1"], keys2);
     }
+
+    [Fact]
+    public async Task A_capture_that_cut_out_shows_black_not_what_is_under_it()
+    {
+        using var manager = new D3D11DeviceManager();
+        using var compositor = new D3D11SceneCompositor(manager, 64, 64);
+        using var cache = new SourceFrameCache();
+        var layout = new SceneLayout { Name = "Game" };
+
+        byte[] white = new byte[16 * 16 * 4];
+        Array.Fill(white, (byte)255);
+        await using var background = new ImageD3D11SceneSource("bg", manager, white, 16, 16);
+        // A game window that is gone: the capture is lost.
+        var game = new WindowsGraphicsCaptureSource("w1", manager, new IntPtr(0x12345678), isWindow: true);
+        Assert.Equal(Linkast.Core.Rendering.SceneSourceState.Lost, game.State);
+
+        var sources = new Dictionary<string, ID3D11SceneSource>(StringComparer.Ordinal) { ["bg"] = background, ["w1"] = game };
+        var placements = new Dictionary<string, NormalizedRect>(StringComparer.Ordinal)
+        {
+            ["bg"] = NormalizedRect.Full,
+            ["w1"] = new NormalizedRect(0, 0, 0.5, 1), // the left half
+        };
+        IReadOnlyList<string> stack = ["bg", "w1"];
+        using var output = new MemoryStream();
+        var scheduler = new MediaOutputScheduler(
+            compositor, cache, () => layout, () => sources, output, targetFps: 60,
+            placementsProvider: () => placements,
+            stackOrderProvider: () => stack);
+
+        try
+        {
+            // NV12 readback is double-buffered, so a frame appears one render late.
+            scheduler.RenderSingleFrame();
+            output.SetLength(0);
+            scheduler.RenderSingleFrame();
+            var y = output.ToArray();
+
+            Assert.True(y[(64 * 32) + 16] < 20, $"Y in the capture's place was {y[(64 * 32) + 16]}"); // before: white
+            Assert.True(y[(64 * 32) + 48] > 200, $"Y beside it was {y[(64 * 32) + 48]}");
+        }
+        finally
+        {
+            await game.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public void Where_no_layer_is_the_picture_is_black()
+    {
+        using var manager = new D3D11DeviceManager();
+        using var compositor = new D3D11SceneCompositor(manager, 64, 64);
+        using var cache = new SourceFrameCache();
+        using var output = new MemoryStream();
+        var scheduler = new MediaOutputScheduler(
+            compositor, cache, () => new SceneLayout { Name = "Empty", ShowCapture = false },
+            () => new Dictionary<string, ID3D11SceneSource>(), output, targetFps: 60);
+
+        scheduler.RenderSingleFrame();
+        output.SetLength(0);
+        scheduler.RenderSingleFrame();
+
+        var y = output.ToArray()[(64 * 32) + 32];
+        Assert.True(y <= 17, $"Y was {y} (black is 16; the old navy was about 27)");
+    }
 }

@@ -267,8 +267,8 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
             var crops = _cropsProvider?.Invoke();
             var stackOrder = _stackOrderProvider?.Invoke();
 
-            // 1. Begin frame with clear color (navy or black)
-            if (!_compositor.BeginFrame(new Color4(0.05f, 0.05f, 0.08f, 1.0f)))
+            // 1. Begin frame: black where no layer is (as the frames sent while the picture is lost)
+            if (!_compositor.BeginFrame(new Color4(0f, 0f, 0f, 1f)))
             {
                 return false;
             }
@@ -279,7 +279,8 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
 
                 foreach (var key in orderedKeys)
                 {
-                    if (!sources.TryGetValue(key, out var source) || source.State == SceneSourceState.Lost)
+                    // A lost capture still takes its place, in black (see RenderSource).
+                    if (!sources.TryGetValue(key, out var source) || (source.State == SceneSourceState.Lost && !IsCapture(source)))
                     {
                         continue;
                     }
@@ -386,8 +387,20 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
         return _cachedOrderedKeys!;
     }
 
+    /// <summary>A capture of a game, window or screen (not a camera, picture or overlay).</summary>
+    private static bool IsCapture(ID3D11SceneSource source) => source is WindowsGraphicsCaptureSource;
+
     private void RenderSource(string key, ID3D11SceneSource source, NormalizedRect placement, NormalizedRect crop)
     {
+        // A capture that cut out (its window closed, minimized, or restarting after Windows ended it) shows
+        // black in its place: not its last picture frozen, nor the layers under it flashing through.
+        if (IsCapture(source) && source.State != SceneSourceState.Capturing)
+        {
+            _frameCache.Remove(key);
+            _compositor.DrawBlack(placement);
+            return;
+        }
+
         var task = source.AcquireFrameAsync();
         var acquired = task.IsCompletedSuccessfully ? task.Result : task.AsTask().GetAwaiter().GetResult();
         if (acquired is not null)
@@ -405,6 +418,10 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
             else if (tex is not null)
             {
                 _compositor.DrawLayer(tex, placement, crop);
+            }
+            else if (IsCapture(source))
+            {
+                _compositor.DrawBlack(placement); // started, no picture yet
             }
         }
     }
