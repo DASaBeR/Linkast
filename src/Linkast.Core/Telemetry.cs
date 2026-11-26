@@ -52,7 +52,8 @@ public sealed record NetworkSnapshot(
     string? RemoteEndpoint,
     string? InterfaceName,
     bool Connected,
-    long BufferedBytes = 0);
+    long BufferedBytes = 0,
+    TimeSpan DroppedDuration = default);
 
 /// <summary>Combined health snapshot published to the UI roughly once per second.</summary>
 public sealed record StreamTelemetry(

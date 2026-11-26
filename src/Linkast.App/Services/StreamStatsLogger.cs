@@ -26,6 +26,14 @@ public sealed partial class StreamStatsLogger(ILogger<StreamStatsLogger> logger)
     private TimeSpan _lastSeen;
     private bool _active;
 
+    // Each reconnect starts a new connection and a new FFmpeg, whose counters start at zero again. These carry
+    // the earlier connections' totals, so the summary covers the whole stream (it said "sent 0.5 MB" for a
+    // stream that had sent 88 MB before its reconnects).
+    private Counter _sent;
+    private Counter _dropped;
+    private Counter _duplicated;
+    private TimeSpanCounter _skipped;
+
     /// <summary>Extra text for each stats line, for example whether the captured game still responds. May return null.</summary>
     public Func<string?>? Extra { get; set; }
 
@@ -40,6 +48,10 @@ public sealed partial class StreamStatsLogger(ILogger<StreamStatsLogger> logger)
         _reconnects = 0;
         _lastSeen = TimeSpan.Zero;
         _active = true;
+        _sent = default;
+        _dropped = default;
+        _duplicated = default;
+        _skipped = default;
     }
 
     /// <summary>One line for each state change, with the reason when there is one.</summary>
@@ -75,8 +87,6 @@ public sealed partial class StreamStatsLogger(ILogger<StreamStatsLogger> logger)
                 _total.AddSent(kbps);
                 _window.NoteBacklog(n.BufferedBytes);
                 _total.NoteBacklog(n.BufferedBytes);
-                _window.BytesSent = n.BytesSent;
-                _total.BytesSent = n.BytesSent;
             }
 
             if (t.Encoder is { } e)
@@ -94,12 +104,19 @@ public sealed partial class StreamStatsLogger(ILogger<StreamStatsLogger> logger)
                     _total.AddFps(e.Fps);
                 }
 
-                _window.Dropped = e.DroppedFrames;
-                _window.Duplicated = e.DuplicatedFrames;
-                _total.Dropped = e.DroppedFrames;
-                _total.Duplicated = e.DuplicatedFrames;
+                _window.Dropped = _dropped.Observe(e.DroppedFrames);
+                _window.Duplicated = _duplicated.Observe(e.DuplicatedFrames);
+                _total.Dropped = _window.Dropped;
+                _total.Duplicated = _window.Duplicated;
                 _previousEncoder = e;
             }
+        }
+
+        if (t.Network is { } net)
+        {
+            _window.BytesSent = _sent.Observe(net.BytesSent);
+            _total.BytesSent = _window.BytesSent;
+            _skipped.Observe(net.DroppedDuration);
         }
 
         if (t.Uptime - _windowStart >= Interval)
@@ -131,8 +148,15 @@ public sealed partial class StreamStatsLogger(ILogger<StreamStatsLogger> logger)
 
         if (w.SentSamples > 0)
         {
-            var seconds = w.EncoderAvg > 0 ? w.BacklogMaxBytes * 8.0 / 1000.0 / w.EncoderAvg : 0;
-            parts.Add(string.Create(CultureInfo.InvariantCulture, $"sent {w.SentAvg:0} kbps (min {w.SentMin:0}, max {w.SentMax:0}), backlog now {(t.Network?.BufferedBytes ?? 0) / 1048576.0:0.0} MB (max {w.BacklogMaxBytes / 1048576.0:0.0} MB, about {seconds:0} s), total sent {w.BytesSent / 1048576.0:0.0} MB"));
+            var now = t.Network?.BufferedBytes ?? 0;
+            var max = Math.Max(w.BacklogMaxBytes, now);
+            var seconds = w.EncoderAvg > 0 ? max * 8.0 / 1000.0 / w.EncoderAvg : 0;
+            parts.Add(string.Create(CultureInfo.InvariantCulture, $"sent {w.SentAvg:0} kbps (min {w.SentMin:0}, max {w.SentMax:0}), backlog now {now / 1048576.0:0.0} MB (max {max / 1048576.0:0.0} MB, about {seconds:0} s), total sent {w.BytesSent / 1048576.0:0.0} MB"));
+        }
+
+        if (_skipped.Total > TimeSpan.Zero)
+        {
+            parts.Add(string.Create(CultureInfo.InvariantCulture, $"skipped {_skipped.Total.TotalSeconds:0.0} s of the stream so far (the upload could not carry it)"));
         }
 
         if (t.Network is { } n)
@@ -191,7 +215,51 @@ public sealed partial class StreamStatsLogger(ILogger<StreamStatsLogger> logger)
         }
 
         parts.Add(string.Create(CultureInfo.InvariantCulture, $"dropped {w.Dropped}, duplicated {w.Duplicated}, largest backlog {w.BacklogMaxBytes / 1048576.0:0.0} MB"));
+        if (_skipped.Total > TimeSpan.Zero)
+        {
+            parts.Add(string.Create(CultureInfo.InvariantCulture, $"skipped {_skipped.Total.TotalSeconds:0.0} s because the upload could not carry it"));
+        }
+
         return string.Join("; ", parts);
+    }
+
+    /// <summary>
+    /// A counter that restarts at zero on each reconnect (a new connection or FFmpeg): the total over all of
+    /// them. A value lower than the last means a restart.
+    /// </summary>
+    private struct Counter
+    {
+        private long _carried;
+        private long _last;
+
+        public long Observe(long value)
+        {
+            if (value < _last)
+            {
+                _carried += _last;
+            }
+
+            _last = value;
+            return _carried + value;
+        }
+    }
+
+    private struct TimeSpanCounter
+    {
+        private TimeSpan _carried;
+        private TimeSpan _last;
+
+        public readonly TimeSpan Total => _carried + _last;
+
+        public void Observe(TimeSpan value)
+        {
+            if (value < _last)
+            {
+                _carried += _last;
+            }
+
+            _last = value;
+        }
     }
 
     private static string Short(string text) => text.Length <= 400 ? text : text[..400] + "…";

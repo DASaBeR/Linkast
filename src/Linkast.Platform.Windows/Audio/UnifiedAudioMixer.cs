@@ -1,11 +1,12 @@
 ﻿// SPDX-License-Identifier: GPL-3.0-or-later
-using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using Linkast.Core;
 using Linkast.Core.Audio;
+using Linkast.Core.Audio.Noise;
 using Microsoft.Extensions.Logging;
 
 namespace Linkast.Platform.Windows.Audio;
@@ -14,8 +15,14 @@ namespace Linkast.Platform.Windows.Audio;
 /// Hardware audio mixer combining multiple WASAPI capture sessions (desktop audio, mic, game audio)
 /// into a single continuous 48kHz stereo 16-bit PCM (s16le) stream.
 /// Includes format normalization (int16/float32, mono upmixing, 44.1kHz->48kHz resampling)
-/// and real-time microphone noise suppression.
-/// Timeline is locked to the same monotonic master clock as the video scheduler to eliminate A/V drift.
+/// and real-time microphone noise removal (RNNoise, see <see cref="MicrophoneNoiseRemover"/>).
+/// <para>
+/// The sound keeps to the picture's clock: wall time since the stream started, less the time the video lost
+/// (frames the render loop could not deliver, given by <c>videoLostTime</c>). FFmpeg numbers both tracks by
+/// count (samples and frames), so a stall that cost the picture two seconds must cost the sound the same two
+/// seconds, or the two drift apart for the rest of the stream. When the sound is behind (its output was
+/// blocked), the gap is filled with silence and the newest sound follows; when it is ahead, slices are dropped.
+/// </para>
 /// </summary>
 public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioControl
 {
@@ -33,6 +40,7 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
     private readonly Stream _audioPipeStream;
     private readonly long _streamStartTimestamp;
     private readonly ILogger? _logger;
+    private readonly Func<TimeSpan>? _videoLostTime;
 
     private readonly ConcurrentDictionary<string, ChannelState> _channels = new(StringComparer.OrdinalIgnoreCase);
     private readonly SilencePadder _padder;
@@ -43,19 +51,35 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
     private long _totalBytesWritten;
     private long _lastDataTimestamp;
     private volatile bool _isRunning;
-    private volatile bool _noiseSuppressionEnabled;
+    private volatile NoiseRemoval _noiseRemoval;
     private bool _disposed;
 
+    // For the log: how the sound was kept on the picture's clock.
+    private long _droppedAheadSlices;
+    private long _paddedSilenceBytes;
+    private long _resyncSilenceBytes;
+    private int _resyncs;
+    private long _slowWrites;
+    private long _longestWriteTicks;
+    private long _maxLagTicks;
+    private long _maxLeadTicks;
+
+    /// <param name="videoLostTime">
+    /// The time the picture has lost so far (frames the render loop could not deliver). The sound drops the same
+    /// time so both stay on one timeline. Null: the wall clock alone.
+    /// </param>
     public UnifiedAudioMixer(
         AudioCaptureHub hub,
         Stream audioPipeStream,
         long streamStartTimestamp = 0,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        Func<TimeSpan>? videoLostTime = null)
     {
         _hub = hub ?? throw new ArgumentNullException(nameof(hub));
         _audioPipeStream = audioPipeStream ?? throw new ArgumentNullException(nameof(audioPipeStream));
         _streamStartTimestamp = streamStartTimestamp > 0 ? streamStartTimestamp : Stopwatch.GetTimestamp();
         _logger = logger;
+        _videoLostTime = videoLostTime;
 
         _padder = new SilencePadder(BytesPerSec, BlockAlign, TimeSpan.FromMilliseconds(40));
     }
@@ -68,23 +92,49 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
     /// <summary>Most slices written in one tick to catch up (200 ms), so a long stall never floods the pipe.</summary>
     private const int MaxCatchUpSlices = 20;
 
-    private long _maxLagTicks;
+    /// <summary>
+    /// Behind the picture by more than this, the sound's output was blocked (FFmpeg stopped reading) or starved
+    /// for longer than the channels can hold (200 ms): what is missing is gone, and silence takes its place.
+    /// </summary>
+    internal static readonly TimeSpan ResyncThreshold = TimeSpan.FromMilliseconds(250);
 
     /// <summary>
-    /// How far the audio written so far trails the master clock the video is paced by. Positive: the sound
-    /// will play later than the picture it belongs to. Near zero while the mixer keeps up.
+    /// The picture's clock: time since the stream started, less what the video lost. Where the next sound
+    /// belongs on the stream's timeline.
     /// </summary>
-    public TimeSpan ClockLag =>
-        Stopwatch.GetElapsedTime(_streamStartTimestamp) - TimeSpan.FromSeconds((double)TotalBytesWritten / BytesPerSec);
+    private TimeSpan MediaElapsed(long now)
+    {
+        var elapsed = Stopwatch.GetElapsedTime(_streamStartTimestamp, now);
+        var lost = _videoLostTime?.Invoke() ?? TimeSpan.Zero;
+        return lost > TimeSpan.Zero ? elapsed - lost : elapsed;
+    }
 
-    /// <summary>The largest <see cref="ClockLag"/> seen since the mixer started.</summary>
+    /// <summary>
+    /// How far the sound written so far trails the picture. Positive: viewers hear it later than they see what
+    /// made it; negative: earlier. Near zero while everything keeps up.
+    /// </summary>
+    public TimeSpan ClockLag => MediaElapsed(Stopwatch.GetTimestamp()) - TimeSpan.FromSeconds((double)TotalBytesWritten / BytesPerSec);
+
+    /// <summary>The furthest the sound trailed the picture since the mixer started.</summary>
     public TimeSpan MaxClockLag => TimeSpan.FromTicks(Interlocked.Read(ref _maxLagTicks));
+
+    /// <summary>The furthest the sound ran ahead of the picture since the mixer started.</summary>
+    public TimeSpan MaxClockLead => TimeSpan.FromTicks(Interlocked.Read(ref _maxLeadTicks));
+
+    /// <summary>Times the sound fell so far behind that silence had to fill the gap.</summary>
+    public int Resyncs => Volatile.Read(ref _resyncs);
 
     private void NoteLag()
     {
         var lag = ClockLag.Ticks;
+        StoreMax(ref _maxLagTicks, lag);
+        StoreMax(ref _maxLeadTicks, -lag);
+    }
+
+    private static void StoreMax(ref long field, long value)
+    {
         long seen;
-        while (lag > (seen = Interlocked.Read(ref _maxLagTicks)) && Interlocked.CompareExchange(ref _maxLagTicks, lag, seen) != seen)
+        while (value > (seen = Interlocked.Read(ref field)) && Interlocked.CompareExchange(ref field, value, seen) != seen)
         {
         }
     }
@@ -93,9 +143,50 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
     /// A tick that arrives late (the OS timer is coarse, or the process was starved) writes only one slice, and
     /// the missed time was never made up while sound kept arriving: the audio fell further behind the video.
     /// Writes the slices that are due, as long as there is sound (or a gap to pad) to write.
+    /// <para>
+    /// Far behind (<see cref="ResyncThreshold"/>), the output was blocked and the sound of that time was dropped
+    /// by the full channels: it can't come back. Silence fills the gap up to where the sound still waiting in
+    /// the channels belongs, so that sound plays with its picture. Before, the gap was never filled and the
+    /// sound stayed late for the rest of the stream (42 s in a tester's log).
+    /// </para>
     /// </summary>
     internal async ValueTask CatchUpAsync(float[] mixFloatBuffer, byte[] outByteBuffer, byte[] silenceBuffer, CancellationToken ct)
     {
+        var lag = ClockLag;
+        if (lag > ResyncThreshold)
+        {
+            var waiting = TimeSpan.Zero;
+            foreach (var channel in _channels.Values)
+            {
+                var buffered = channel.BufferedDuration;
+                if (buffered > waiting)
+                {
+                    waiting = buffered;
+                }
+            }
+
+            var bytes = (long)((lag - waiting - TimeSpan.FromMilliseconds(10)).TotalSeconds * BytesPerSec);
+            bytes -= bytes % BlockAlign;
+            if (bytes > 0)
+            {
+                var written = 0L;
+                while (written < bytes)
+                {
+                    var chunk = (int)Math.Min(bytes - written, silenceBuffer.Length);
+                    chunk -= chunk % BlockAlign;
+                    await WriteAsync(silenceBuffer.AsMemory(0, chunk), ct).ConfigureAwait(false);
+                    written += chunk;
+                }
+
+                Interlocked.Add(ref _resyncSilenceBytes, written);
+                Interlocked.Increment(ref _resyncs);
+                if (_logger is not null)
+                {
+                    LogResynced(_logger, lag.TotalMilliseconds, written * 1000.0 / BytesPerSec, waiting.TotalMilliseconds);
+                }
+            }
+        }
+
         for (var i = 0; i < MaxCatchUpSlices && ClockLag > TimeSpan.FromSeconds((double)CatchUpThresholdSlices * BytesPerSlice / BytesPerSec); i++)
         {
             if (await MixOneSliceAsync(mixFloatBuffer, outByteBuffer, silenceBuffer, ct).ConfigureAwait(false) == 0)
@@ -105,9 +196,64 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
         }
     }
 
+    /// <summary>Writes to FFmpeg's audio pipe, timing it: a write that waits means FFmpeg is not reading.</summary>
+    private async ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct)
+    {
+        var began = Stopwatch.GetTimestamp();
+        await _audioPipeStream.WriteAsync(data, ct).ConfigureAwait(false);
+        var took = Stopwatch.GetTimestamp() - began;
+        Interlocked.Add(ref _totalBytesWritten, data.Length);
+        if (took > Stopwatch.Frequency / 10)
+        {
+            Interlocked.Increment(ref _slowWrites);
+            StoreMax(ref _longestWriteTicks, took);
+        }
+    }
+
+    /// <summary>
+    /// For the log: how the sound keeps to the picture, what each channel lost, and noise removal's work.
+    /// Counts since this mixer (this connection) started.
+    /// </summary>
+    public string Describe()
+    {
+        var inv = CultureInfo.InvariantCulture;
+        var lag = ClockLag;
+        var parts = new List<string>
+        {
+            string.Create(inv, $"audio {Math.Abs(lag.TotalMilliseconds):0} ms {(lag >= TimeSpan.Zero ? "behind" : "ahead of")} the picture (most behind {Math.Max(MaxClockLag.TotalMilliseconds, lag.TotalMilliseconds):0} ms, most ahead {Math.Max(MaxClockLead.TotalMilliseconds, -lag.TotalMilliseconds):0} ms)"),
+        };
+
+        var dropped = Interlocked.Read(ref _droppedAheadSlices);
+        var padded = Interlocked.Read(ref _paddedSilenceBytes);
+        var resync = Interlocked.Read(ref _resyncSilenceBytes);
+        if (dropped > 0 || padded > 0 || resync > 0)
+        {
+            parts.Add(string.Create(inv, $"audio kept in step: {dropped * 10} ms dropped while ahead, {padded * 1000.0 / BytesPerSec:0} ms silence while no sound came, {resync * 1000.0 / BytesPerSec:0} ms silence after {Resyncs} stall(s)"));
+        }
+
+        var slow = Interlocked.Read(ref _slowWrites);
+        if (slow > 0)
+        {
+            parts.Add(string.Create(inv, $"audio output waited {slow} time(s), longest {Stopwatch.GetElapsedTime(0, Interlocked.Read(ref _longestWriteTicks)).TotalMilliseconds:0} ms"));
+        }
+
+        foreach (var channel in _channels.Values)
+        {
+            if (channel.Describe() is { } line)
+            {
+                parts.Add(line);
+            }
+        }
+
+        return string.Join("; ", parts);
+    }
+
     public bool IsRunning => _isRunning;
 
-    public bool NoiseSuppressionEnabled => _noiseSuppressionEnabled;
+    public bool NoiseSuppressionEnabled => _noiseRemoval != NoiseRemoval.Off;
+
+    /// <summary>How much noise is removed from the microphone.</summary>
+    public NoiseRemoval NoiseRemoval => _noiseRemoval;
 
     /// <summary>
     /// Adds or attaches a captured audio source to the mixer.
@@ -145,6 +291,9 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
             throw;
         }
     }
+
+    /// <summary>True when the mixer has this channel.</summary>
+    public bool HasChannel(string channelName) => _channels.ContainsKey(channelName);
 
     /// <summary>Internal helper for unit testing channel data without a physical WASAPI device.</summary>
     internal void AddTestChannel(string channelName, double initialGain = 1.0, PcmFormat? format = null)
@@ -232,13 +381,13 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
         silenceBuffer ??= new byte[BytesPerSec];
 
         var now = Stopwatch.GetTimestamp();
-        var elapsed = Stopwatch.GetElapsedTime(_streamStartTimestamp, now);
+        var elapsed = MediaElapsed(now);
 
-        // Check if audio has run ahead of monotonic clock
+        // Ahead of the picture (a device clock that runs fast, or the video lost time): drop this slice.
         if (_padder.IsAhead(elapsed, Interlocked.Read(ref _totalBytesWritten), TimeSpan.FromMilliseconds(50)))
         {
-            // Drop this slice to stay locked to master clock
             DrainOneSliceFromAllChannels();
+            Interlocked.Increment(ref _droppedAheadSlices);
             return 0;
         }
 
@@ -269,21 +418,20 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
                 outByteBuffer[byteIndex + 1] = (byte)((clamped >> 8) & 0xFF);
             }
 
-            await _audioPipeStream.WriteAsync(outByteBuffer.AsMemory(0, BytesPerSlice), ct).ConfigureAwait(false);
-            Interlocked.Add(ref _totalBytesWritten, BytesPerSlice);
+            await WriteAsync(outByteBuffer.AsMemory(0, BytesPerSlice), ct).ConfigureAwait(false);
             return BytesPerSlice;
         }
         else
         {
             // Check if silence padding is required to preserve monotonic clock continuity
             var last = Volatile.Read(ref _lastDataTimestamp);
-            var sinceData = last == 0 ? elapsed : Stopwatch.GetElapsedTime(last, now);
+            var sinceData = last == 0 ? Stopwatch.GetElapsedTime(_streamStartTimestamp, now) : Stopwatch.GetElapsedTime(last, now);
             var pad = _padder.SilenceToWrite(elapsed, Interlocked.Read(ref _totalBytesWritten), sinceData);
 
             if (pad > 0)
             {
-                await _audioPipeStream.WriteAsync(silenceBuffer.AsMemory(0, pad), ct).ConfigureAwait(false);
-                Interlocked.Add(ref _totalBytesWritten, pad);
+                await WriteAsync(silenceBuffer.AsMemory(0, pad), ct).ConfigureAwait(false);
+                Interlocked.Add(ref _paddedSilenceBytes, pad);
                 return pad;
             }
             return 0;
@@ -309,9 +457,12 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
         return Task.FromResult(false);
     }
 
-    public Task<bool> SetNoiseSuppressionAsync(bool enabled, CancellationToken cancellationToken = default)
+    public Task<bool> SetNoiseSuppressionAsync(bool enabled, CancellationToken cancellationToken = default) =>
+        SetNoiseRemovalAsync(enabled ? NoiseRemoval.Standard : NoiseRemoval.Off, cancellationToken);
+
+    public Task<bool> SetNoiseRemovalAsync(NoiseRemoval level, CancellationToken cancellationToken = default)
     {
-        _noiseSuppressionEnabled = enabled;
+        _noiseRemoval = Enum.IsDefined(level) ? level : NoiseRemoval.Off;
         return Task.FromResult(true);
     }
 
@@ -344,10 +495,9 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
         private readonly Lock _gate = new();
         private readonly Queue<float> _buffer = new(TargetSampleRate); // Holds up to 1 second
         private volatile float _gain;
-        private readonly bool _isMicrophone;
         private readonly UnifiedAudioMixer _mixer;
-        private readonly SpeechGate? _noiseSuppressor;
-        private bool _noiseSuppressorWasOn;
+        private readonly MicrophoneNoiseRemover? _noiseRemover;
+        private long _overflowSamples;
 
         private float _lastSampleL;
         private float _lastSampleR;
@@ -358,10 +508,9 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
             Name = name;
             _gain = (float)Math.Clamp(initialGain, 0.0, 10.0);
             _mixer = mixer;
-            _isMicrophone = string.Equals(name, AudioChannels.Microphone, StringComparison.OrdinalIgnoreCase);
-            if (_isMicrophone)
+            if (string.Equals(name, AudioChannels.Microphone, StringComparison.OrdinalIgnoreCase))
             {
-                _noiseSuppressor = new SpeechGate();
+                _noiseRemover = new MicrophoneNoiseRemover();
             }
         }
 
@@ -377,6 +526,37 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
         {
             get => _gain;
             set => _gain = value;
+        }
+
+        /// <summary>Sound waiting to be mixed.</summary>
+        public TimeSpan BufferedDuration
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return TimeSpan.FromSeconds((double)_buffer.Count / (TargetSampleRate * TargetChannels));
+                }
+            }
+        }
+
+        /// <summary>For the log: sound this channel lost, and noise removal's work. Null when there is nothing to say.</summary>
+        public string? Describe()
+        {
+            var inv = CultureInfo.InvariantCulture;
+            var parts = new List<string>();
+            var overflow = Interlocked.Read(ref _overflowSamples);
+            if (overflow > 0)
+            {
+                parts.Add(string.Create(inv, $"{overflow * 1000.0 / (TargetSampleRate * TargetChannels):0} ms dropped (not mixed in time)"));
+            }
+
+            if (_noiseRemover is { BlocksProcessed: > 0 } nr)
+            {
+                parts.Add(string.Create(inv, $"noise removal {_mixer.NoiseRemoval} for {nr.BlocksProcessed / 100.0:0} s, speech in {nr.SpeechShare:P0}, CPU {nr.CoreShare:P1} of one core"));
+            }
+
+            return parts.Count == 0 ? null : $"sound '{Name}': {string.Join(", ", parts)}";
         }
 
         public void EnqueueData(ReadOnlySpan<byte> data, bool silent)
@@ -465,6 +645,7 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
                 while (_buffer.Count > maxCapacity)
                 {
                     _buffer.Dequeue();
+                    _overflowSamples++;
                 }
             }
         }
@@ -482,28 +663,20 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
                 Span<float> slice = stackalloc float[SamplesPerSlice];
                 for (int i = 0; i < SamplesPerSlice; i++)
                 {
-                    slice[i] = _buffer.Dequeue() * currentGain;
+                    slice[i] = _buffer.Dequeue();
                 }
 
-                // Apply real-time noise suppression on microphone channel when enabled
-                if (_isMicrophone && _noiseSuppressor is not null)
+                // Noise removal hears the microphone as it is, before the fader: the network was trained on
+                // ordinary recording levels, and a fader at 560 % must not change what it takes for noise.
+                if (_noiseRemover is not null)
                 {
-                    var on = _mixer.NoiseSuppressionEnabled;
-                    if (on && !_noiseSuppressorWasOn)
-                    {
-                        _noiseSuppressor.Reset(); // old audio in its delay line must not be replayed
-                    }
-
-                    _noiseSuppressorWasOn = on;
-                    if (on)
-                    {
-                        _noiseSuppressor.Process(slice);
-                    }
+                    _noiseRemover.Level = _mixer.NoiseRemoval;
+                    _noiseRemover.Process(slice);
                 }
 
                 for (int i = 0; i < SamplesPerSlice; i++)
                 {
-                    destination[i] += slice[i];
+                    destination[i] += slice[i] * currentGain;
                 }
 
                 return true;
@@ -528,6 +701,9 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
             Tap = null;
         }
     }
+
+    [LoggerMessage(LogLevel.Warning, "Audio was {Lag:0} ms behind the picture (its output was blocked); {Silence:0} ms of silence keep it in step, then the {Waiting:0} ms of sound still waiting.")]
+    private static partial void LogResynced(ILogger logger, double lag, double silence, double waiting);
 
     [LoggerMessage(LogLevel.Debug, "Audio output closed; the mixer loop ends ({Reason}).")]
     private static partial void LogOutputClosed(ILogger logger, string reason);

@@ -130,4 +130,63 @@ public class StreamStatsLoggerTests
         Assert.Contains(log.Lines, l => l.Contains("Live -> Reconnecting", StringComparison.Ordinal) && l.Contains("network.reset", StringComparison.Ordinal) && l.Contains("forcibly closed", StringComparison.Ordinal));
         Assert.Contains(log.Lines, l => l.StartsWith("Stream summary:", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void The_summary_counts_every_connection_not_only_the_last()
+    {
+        // A tester's log: 88 MB sent, then reconnects; the summary said "sent 0.5 MB" (the last connection's).
+        var log = new CaptureLogger();
+        var stats = new StreamStatsLogger(log);
+        stats.Begin();
+        for (var s = 1; s <= 20; s++)
+        {
+            stats.Observe(Sample(s, 5600, s * 700_000L, dropped: 3));
+        }
+
+        // The new connection and FFmpeg count from zero again.
+        for (var s = 1; s <= 5; s++)
+        {
+            var t = Sample(s, 5600, s * 700_000L, reconnects: 1, dropped: 1);
+            stats.Observe(t with { Uptime = TimeSpan.FromSeconds(20 + s) });
+        }
+
+        stats.StateChanged(new StreamStateChangedEventArgs(StreamState.Stopping, StreamState.Stopped, null));
+
+        var summary = Assert.Single(log.Lines, l => l.StartsWith("Stream summary:", StringComparison.Ordinal));
+        Assert.Contains("sent 16.7 MB", summary, StringComparison.Ordinal); // (20 + 5) × 700,000 bytes
+        Assert.Contains("dropped 4,", summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Backlog_maximum_is_never_below_the_backlog_now()
+    {
+        var log = new CaptureLogger();
+        var stats = new StreamStatsLogger(log);
+        stats.Begin();
+        for (var s = 1; s < 30; s++)
+        {
+            stats.Observe(Sample(s, 5000, s * 750_000L, buffered: 1 << 20));
+        }
+
+        // The last sample (a connection that just dropped) is not counted as live, but its backlog is shown.
+        stats.Observe(Sample(30, 5000, 30 * 750_000L, buffered: 3 << 20) with { State = StreamState.Connecting });
+
+        var line = Assert.Single(log.Lines);
+        Assert.Contains("backlog now 3.0 MB (max 3.0 MB", line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Stream_time_skipped_for_a_slow_upload_is_reported()
+    {
+        var log = new CaptureLogger();
+        var stats = new StreamStatsLogger(log);
+        stats.Begin();
+        for (var s = 1; s <= 30; s++)
+        {
+            var t = Sample(s, 2000, s * 750_000L);
+            stats.Observe(t with { Network = t.Network! with { DroppedDuration = TimeSpan.FromSeconds(s >= 25 ? 4.2 : 0) } });
+        }
+
+        Assert.Contains("skipped 4.2 s of the stream so far", Assert.Single(log.Lines), StringComparison.Ordinal);
+    }
 }

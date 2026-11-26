@@ -785,6 +785,7 @@ public sealed partial class MainViewModel
             {
                 Gain = GainOf(AudioChannels.Microphone),
                 NoiseSuppression = MicrophoneNoiseSuppression,
+                NoiseRemoval = MicrophoneNoiseRemoval,
             });
         }
 

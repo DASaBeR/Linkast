@@ -57,3 +57,21 @@ public sealed record ThemeOption(Linkast.Core.Settings.AppTheme Theme, string La
 
     public override string ToString() => Label;
 }
+
+/// <summary>A choice of microphone noise removal, with what it does and what it costs.</summary>
+public sealed record NoiseRemovalOption(Linkast.Core.Audio.NoiseRemoval Level, string Label, string Explanation)
+{
+    // The CPU share was measured on the RNNoise port: about 2 to 3 % of one core of a 2022 desktop CPU.
+    public static IReadOnlyList<NoiseRemovalOption> All { get; } =
+    [
+        new(Linkast.Core.Audio.NoiseRemoval.Off, "Off", "Your microphone as it is. Uses no extra CPU."),
+        new(Linkast.Core.Audio.NoiseRemoval.Standard, "Remove noise",
+            "A speech-trained neural network removes fans, hum, hiss, keyboards and street sound, also while you talk. Costs CPU: about 3 % of one core while live. Adds 10 ms delay to your voice."),
+        new(Linkast.Core.Audio.NoiseRemoval.Strong, "Remove noise and breaths",
+            "As \"Remove noise\", and what is left between your words (breaths, clicks, faint noise) is lowered further. Costs CPU: about 3 % of one core while live. Adds 10 ms delay to your voice."),
+    ];
+
+    public static NoiseRemovalOption For(Linkast.Core.Audio.NoiseRemoval level) => All.FirstOrDefault(o => o.Level == level) ?? All[0];
+
+    public override string ToString() => Label;
+}

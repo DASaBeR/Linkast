@@ -700,9 +700,13 @@
                                                                 </MultiBinding>
                                                             </ComboBox.IsEnabled>
                                                         </ComboBox>
-                                                        <CheckBox Content="Remove background _noise (fans, hum)" IsChecked="{Binding MicrophoneNoiseSuppression}" Margin="0,10,0,0"
+                                                        <TextBlock Text="Background noise removal" Margin="0,12,0,4" FontWeight="SemiBold" />
+                                                        <ComboBox ItemsSource="{Binding NoiseRemovalOptions}" SelectedItem="{Binding SelectedNoiseRemoval}"
                                                                   IsEnabled="{Binding MicrophoneEnabled}"
-                                                                  ToolTip="Filters steady noise out of your microphone on this PC. Can be switched while live." />
+                                                                  AutomationProperties.Name="Microphone noise removal"
+                                                                  ToolTip="Cleans your microphone on this PC with a speech-trained neural network. Can be changed while live." />
+                                                        <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,6,0,0" TextWrapping="Wrap"
+                                                                   Text="{Binding SelectedNoiseRemoval.Explanation}" />
                                                     </StackPanel>
                                                 </Grid>
                                             </StackPanel>

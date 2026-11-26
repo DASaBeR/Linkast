@@ -35,5 +35,27 @@ public class StreamEssentialsTests
         var (old, _) = SettingsSerializer.Deserialize("""{"schemaVersion":2,"stream":{"serverUrl":"rtmp://live.twitch.tv/app"}}""");
         Assert.Equal(StreamPlatform.Custom, old.Stream.Platform);
         Assert.False(old.Stream.MicrophoneNoiseSuppression);
+        Assert.Null(old.Stream.MicrophoneNoiseRemoval);
     }
+
+    [Fact]
+    public void Noise_removal_level_round_trips_and_older_settings_keep_their_on_off_choice()
+    {
+        var s = new LinkastSettings { Stream = new StreamSettings { MicrophoneNoiseSuppression = true, MicrophoneNoiseRemoval = Audio.NoiseRemoval.Strong } };
+        var (back, _) = SettingsSerializer.Deserialize(SettingsSerializer.Serialize(s));
+        Assert.Equal(Audio.NoiseRemoval.Strong, back.Stream.MicrophoneNoiseRemoval);
+
+        // Saved by 1.3.2: only the on/off switch. The app reads it as Standard.
+        var (old, _) = SettingsSerializer.Deserialize("""{"schemaVersion":2,"stream":{"microphoneNoiseSuppression":true}}""");
+        Assert.True(old.Stream.MicrophoneNoiseSuppression);
+        Assert.Null(old.Stream.MicrophoneNoiseRemoval);
+    }
+
+    [Theory]
+    [InlineData(false, Audio.NoiseRemoval.Off, Audio.NoiseRemoval.Off)]
+    [InlineData(true, Audio.NoiseRemoval.Off, Audio.NoiseRemoval.Standard)]
+    [InlineData(true, Audio.NoiseRemoval.Strong, Audio.NoiseRemoval.Strong)]
+    [InlineData(false, Audio.NoiseRemoval.Strong, Audio.NoiseRemoval.Strong)]
+    public void A_microphone_asks_for_the_level_or_else_the_switch(bool suppression, Audio.NoiseRemoval level, Audio.NoiseRemoval expected) =>
+        Assert.Equal(expected, new MicrophoneSource(null, "Mic") { NoiseSuppression = suppression, NoiseRemoval = level }.EffectiveNoiseRemoval);
 }

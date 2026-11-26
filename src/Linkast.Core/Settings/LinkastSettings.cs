@@ -74,8 +74,11 @@ public sealed record StreamSettings
 
     public double MicrophoneVolume { get; init; } = 100;
 
-    /// <summary>Remove steady background noise from the microphone.</summary>
+    /// <summary>Remove background noise from the microphone. Kept for versions before noise removal levels.</summary>
     public bool MicrophoneNoiseSuppression { get; init; }
+
+    /// <summary>How much noise is removed from the microphone. Null in settings saved before it existed: then <see cref="MicrophoneNoiseSuppression"/> decides.</summary>
+    public Audio.NoiseRemoval? MicrophoneNoiseRemoval { get; init; }
 
     public string? EncoderId { get; init; }
 

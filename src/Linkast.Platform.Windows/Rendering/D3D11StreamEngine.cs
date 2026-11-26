@@ -52,6 +52,14 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
     private readonly Lock _layoutLock = new();
     private SceneLayout _currentLayout = new();
 
+    // What the running stream shows now, changed live and kept across automatic reconnects. A reconnect used
+    // to rebuild everything from the session as it was at the start: layers dragged, hidden or switched while
+    // live jumped back, a closed game came back, and volume changes were lost.
+    private IReadOnlyList<CaptureBinding>? _liveCaptures;
+    private readonly ConcurrentDictionary<string, AudioSourceSpec> _liveAudio = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, double> _liveGains = new(StringComparer.OrdinalIgnoreCase);
+    private bool _layoutApplied;
+
     private CancellationTokenSource? _runCts;
     private Task? _runTask;
     private int _ffmpegProcessId;
@@ -59,6 +67,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
     private int _reconnectCount;
     private StreamError? _lastError;
     private EncoderProgress? _latestProgress;
+    private long? _liveSince;
 
     public D3D11StreamEngine(
         FfmpegInstallation ffmpeg,
@@ -153,6 +162,18 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
             _lastError = null;
             _latestProgress = null;
 
+            _liveCaptures = null;
+            _layoutApplied = false;
+            _liveAudio.Clear();
+            _liveGains.Clear();
+            foreach (var a in session.Audio)
+            {
+                _liveAudio.TryAdd(ChannelOf(a), a);
+            }
+
+            // The microphone's noise removal as the session asks; switching it live changes it from here on.
+            _noiseRemoval = session.Audio.OfType<MicrophoneSource>().FirstOrDefault()?.EffectiveNoiseRemoval ?? NoiseRemoval.Off;
+
             _state.TryTransition(StreamState.Preparing);
             var token = _runCts.Token;
             _runTask = Task.Run(() => RunSessionAsync(session, token), CancellationToken.None);
@@ -203,8 +224,10 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
         var backoff = new ReconnectBackoff(session.Reconnect);
         var captureRestarts = new ReconnectBackoff(_options.CaptureRestart);
         var attempt = 0;
+        var wasLive = false;
         try
         {
+            await PruneStaleSourcesAsync(session).ConfigureAwait(false);
             while (!ct.IsCancellationRequested)
             {
                 _state.TryTransition(StreamState.Connecting);
@@ -220,7 +243,16 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 {
                     LogAttemptEnded(_logger, attempt, _time.GetElapsedTime(attemptBegan).TotalSeconds,
                         error is null ? "stopped" : $"{error.Category}/{error.Code}", error is null ? string.Empty : Short(_redactor.Redact(error.Detail ?? error.UserMessage)));
+                    if (wasLive && error?.Detail?.Contains("right away", StringComparison.Ordinal) == true)
+                    {
+                        // Seen in testers' logs: after a dropped connection the server often still holds the old
+                        // publish for some seconds and refuses the same key; it is not a wrong key.
+                        LogRefusedAfterDrop(_logger);
+                    }
                 }
+
+                wasLive |= _state.Current == StreamState.Live || _liveSince is not null;
+                _liveSince = null;
 
                 if (error is null || ct.IsCancellationRequested)
                 {
@@ -283,6 +315,11 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
         FfmpegProcess? process = null;
         string? recordingPath = null;
 
+        // Each attempt starts a new FFmpeg whose frame count starts at 0. The last attempt's progress (frame
+        // 1800, say) left here made every new attempt look stalled: its frames never passed the old count,
+        // and the stream was cut 11 s into each reconnect ("no new frames for 10 s") in a tester's log.
+        Volatile.Write(ref _latestProgress, null);
+
         try
         {
             lease = session.Broadcast
@@ -306,13 +343,28 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 }
             }
 
+            // The compositor outlives a stream; a new stream may have another size (a vertical scene, a new
+            // resolution), and FFmpeg must get frames of the size it was told.
             _compositor ??= new D3D11SceneCompositor(_deviceManager, session.Encoder.Width, session.Encoder.Height);
+            _compositor.ResizeCanvas(session.Encoder.Width, session.Encoder.Height);
             _frameCache ??= new SourceFrameCache(_deviceManager);
 
             SetupSources(session);
 
+            if (_layoutApplied)
+            {
+                if (_logger is not null)
+                {
+                    lock (_layoutLock)
+                    {
+                        LogLayoutKept(_logger, _layerPlacements.Count, string.Join(", ", _layerPlacements.Keys.Order(StringComparer.Ordinal)));
+                    }
+                }
+            }
+            else
             lock (_layoutLock)
             {
+                _layoutApplied = true;
                 _layerPlacements.Clear();
                 _layerCrops.Clear();
                 _stackOrder = session.Stack.Count > 0 ? [.. session.Stack] : [];
@@ -509,21 +561,24 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
             // The audio clock starts only now that FFmpeg is reading both pipes: a start before the
             // handshake would make the mixer pad the handshake's duration as silence and put audio behind video.
+            // The sound follows the picture's clock: wall time less the time the render loop lost, so a stall
+            // costs both the same and they stay together.
             var streamStart = _time.GetTimestamp();
             await using var mixer = new UnifiedAudioMixer(
                 _audioHub,
                 audioPipe,
                 streamStart,
-                _logger);
+                _logger,
+                () => scheduler.LostTime);
 
             _audioMixer = mixer;
 
-            foreach (var a in session.Audio)
+            foreach (var a in _liveAudio.Values)
             {
-                var ch = a.Channel ?? (a is MicrophoneSource ? AudioChannels.Microphone : AudioChannels.System);
+                var ch = ChannelOf(a);
                 try
                 {
-                    mixer.AddSource(ch, a, a.Gain);
+                    mixer.AddSource(ch, a, _liveGains.TryGetValue(ch, out var liveGain) ? liveGain : a.Gain);
                 }
                 catch (Exception ex) when (a.Optional)
                 {
@@ -531,7 +586,12 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 }
             }
 
-            _ = mixer.SetNoiseSuppressionAsync(_noiseSuppression, ct);
+            _ = mixer.SetNoiseRemovalAsync(_noiseRemoval, ct);
+            if (_logger is not null)
+            {
+                LogAudioStarted(_logger, string.Join(", ", _liveAudio.Keys.Order(StringComparer.OrdinalIgnoreCase).Select(k =>
+                    string.Create(CultureInfo.InvariantCulture, $"{k} {(_liveGains.TryGetValue(k, out var g) ? g : _liveAudio[k].Gain) * 100:0}%"))), _noiseRemoval.ToString());
+            }
             scheduler.Start();
             mixer.Start();
 
@@ -642,6 +702,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 if (isLive)
                 {
                     liveSince = now;
+                    _liveSince = now;
                     if (_logger is not null)
                     {
                         LogWentLive(_logger, _time.GetElapsedTime(attemptStart, now).TotalSeconds, net.BytesSent, progress?.Frame ?? 0);
@@ -690,7 +751,9 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
     private void SetupSources(StreamSession session)
     {
-        var bindings = session.Captures.Count > 0 ? session.Captures
+        // After a live switch, the captures the stream has now, not those it started with.
+        var bindings = _liveCaptures is { } live ? live
+            : session.Captures.Count > 0 ? session.Captures
             : session.Video is not BlankCanvasSource
                 ? [new CaptureBinding("capture", session.Video, session.BasePlacement, session.BaseCrop, session.BaseFit, !session.ShowCapture)]
                 : [];
@@ -868,6 +931,12 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 return false;
             }
 
+            _liveCaptures = [.. captures];
+            foreach (var a in audio)
+            {
+                _liveAudio.TryAdd(ChannelOf(a), a);
+            }
+
             var activeKeys = new HashSet<string>(StringComparer.Ordinal);
             foreach (var c in captures)
             {
@@ -931,10 +1000,15 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
             {
                 foreach (var a in audio)
                 {
-                    var ch = a.Channel ?? (a is MicrophoneSource ? AudioChannels.Microphone : AudioChannels.System);
+                    var ch = ChannelOf(a);
+                    if (_audioMixer.HasChannel(ch))
+                    {
+                        continue;
+                    }
+
                     try
                     {
-                        _audioMixer.AddSource(ch, a, a.Gain);
+                        _audioMixer.AddSource(ch, a, _liveGains.TryGetValue(ch, out var liveGain) ? liveGain : a.Gain);
                     }
                     catch (Exception ex)
                     {
@@ -976,20 +1050,21 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
         var parts = new List<string>();
         if (mixer is not null)
         {
-            parts.Add(string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                $"audio {mixer.ClockLag.TotalMilliseconds:0} ms behind the clock (max {mixer.MaxClockLag.TotalMilliseconds:0} ms)"));
+            parts.Add(mixer.Describe());
         }
 
         if (scheduler is not null)
         {
-            parts.Add($"render loop skipped {scheduler.FramesDropped} frames");
+            parts.Add(string.Create(CultureInfo.InvariantCulture,
+                $"picture: {scheduler.FramesWritten} frames out, render loop skipped ahead {scheduler.FramesDropped} time(s), {scheduler.LostTime.TotalMilliseconds:0} ms of picture lost, {scheduler.SlowFrames} slow frame(s) (longest {scheduler.LongestFrame.TotalMilliseconds:0} ms)"));
         }
 
-        return string.Join(", ", parts);
+        return string.Join("; ", parts);
     }
 
     public Task<bool> SetCaptureAsync(string key, NormalizedRect? placement, NormalizedRect crop, BaseFit fit, CancellationToken cancellationToken = default)
     {
+        NoteLiveChange(key, placement is { } shown ? $"placed at {shown}, crop {crop}, {fit}" : "hidden");
         lock (_layoutLock)
         {
             _currentLayout = _currentLayout with
@@ -1018,6 +1093,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
     public Task<bool> MoveLayerAsync(string layerId, NormalizedRect placement, CancellationToken cancellationToken = default)
     {
+        NoteLiveChange(layerId, $"moved to {placement}");
         lock (_layoutLock)
         {
             _currentLayout = _currentLayout.WithPlacement(layerId, placement);
@@ -1028,6 +1104,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
     public Task<bool> HideLayerAsync(string layerId, CancellationToken cancellationToken = default)
     {
+        NoteLiveChange(layerId, "hidden");
         lock (_layoutLock)
         {
             _currentLayout = _currentLayout.Without(layerId);
@@ -1038,12 +1115,18 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
     public Task<bool> SetLayerCropAsync(string layerId, NormalizedRect crop, CancellationToken cancellationToken = default)
     {
+        NoteLiveChange(layerId, $"cropped to {crop}");
         _layerCrops[layerId] = crop;
         return Task.FromResult(true);
     }
 
     public Task<bool> SetGainAsync(string channel, double gain, CancellationToken cancellationToken = default)
     {
+        if (StreamStateMachine.IsActive(_state.Current))
+        {
+            _liveGains[channel] = gain; // kept for a reconnect's new mixer
+        }
+
         if (_audioMixer is not null)
         {
             return _audioMixer.SetGainAsync(channel, gain, cancellationToken);
@@ -1051,16 +1134,94 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
         return Task.FromResult(false);
     }
 
-    private volatile bool _noiseSuppression;
+    private volatile NoiseRemoval _noiseRemoval;
 
-    public Task<bool> SetNoiseSuppressionAsync(bool enabled, CancellationToken cancellationToken = default)
+    public Task<bool> SetNoiseSuppressionAsync(bool enabled, CancellationToken cancellationToken = default) =>
+        SetNoiseRemovalAsync(enabled ? NoiseRemoval.Standard : NoiseRemoval.Off, cancellationToken);
+
+    public Task<bool> SetNoiseRemovalAsync(NoiseRemoval level, CancellationToken cancellationToken = default)
     {
-        _noiseSuppression = enabled;
+        _noiseRemoval = level;
+        if (_logger is not null && StreamStateMachine.IsActive(_state.Current))
+        {
+            LogNoiseRemovalChanged(_logger, level.ToString());
+        }
+
         if (_audioMixer is not null)
         {
-            return _audioMixer.SetNoiseSuppressionAsync(enabled, cancellationToken);
+            return _audioMixer.SetNoiseRemovalAsync(level, cancellationToken);
         }
         return Task.FromResult(true);
+    }
+
+    private static string ChannelOf(AudioSourceSpec a) => a.Channel ?? (a is MicrophoneSource ? AudioChannels.Microphone : AudioChannels.System);
+
+    /// <summary>
+    /// Logs a change to the running stream's layout, and warns when the layer is not in the stream: the change
+    /// then shows nowhere, which is what a streamer sees as "my move did not apply".
+    /// </summary>
+    private void NoteLiveChange(string layerId, string what)
+    {
+        if (_logger is null || !StreamStateMachine.IsActive(_state.Current))
+        {
+            return;
+        }
+
+        if (_sources.ContainsKey(layerId))
+        {
+            LogLiveChange(_logger, layerId, what);
+        }
+        else
+        {
+            LogLiveChangeNoSource(_logger, layerId, what, string.Join(", ", _sources.Keys.Order(StringComparer.Ordinal)));
+        }
+    }
+
+    /// <summary>
+    /// Sources live as long as the engine, so a new stream reuses them. Those the new stream doesn't have are
+    /// released, and overlays and scene pictures are made again: they are drawn once when made, so an overlay
+    /// changed since the last stream (another picture, another page size) showed as it was before.
+    /// </summary>
+    private async Task PruneStaleSourcesAsync(StreamSession session)
+    {
+        var keep = new HashSet<string>(StringComparer.Ordinal);
+        if (session.Captures.Count > 0)
+        {
+            keep.UnionWith(session.Captures.Select(c => c.Key));
+        }
+        else if (session.Video is not BlankCanvasSource)
+        {
+            keep.Add("capture");
+        }
+
+        keep.UnionWith(session.CameraLayers.Select(b => b.Layer.LayerId));
+        var remade = new HashSet<string>(session.Overlays.Select(o => o.LayerId).Concat(session.Media.Select(m => m.LayerId)), StringComparer.Ordinal);
+
+        foreach (var key in _sources.Keys.ToArray())
+        {
+            if (keep.Contains(key) && !remade.Contains(key))
+            {
+                continue;
+            }
+
+            if (_sources.TryRemove(key, out var stale))
+            {
+                _frameCache?.Remove(key);
+                try
+                {
+                    await stale.DisposeAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException)
+                {
+                    // Already gone with its device or window.
+                }
+
+                if (_logger is not null)
+                {
+                    LogSourceReleased(_logger, key);
+                }
+            }
+        }
     }
 
     private void PublishTelemetry(StreamSession session, EncoderProgress? progress, NetworkSnapshot? net, TimeSpan? connectionUptime)
@@ -1157,6 +1318,27 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
     [LoggerMessage(LogLevel.Warning, "Sound '{Channel}' could not be added to the running stream: {Reason}")]
     private static partial void LogAudioNotAdded(ILogger logger, string channel, string reason);
+
+    [LoggerMessage(LogLevel.Debug, "Live layout: '{Layer}' {What}.")]
+    private static partial void LogLiveChange(ILogger logger, string layer, string what);
+
+    [LoggerMessage(LogLevel.Warning, "Live layout: '{Layer}' {What}, but that layer is not in the running stream, so viewers don't see it (the stream has: {Keys}).")]
+    private static partial void LogLiveChangeNoSource(ILogger logger, string layer, string what, string keys);
+
+    [LoggerMessage(LogLevel.Information, "Reconnect keeps the live layout: {Count} layer(s) shown ({Layers}).")]
+    private static partial void LogLayoutKept(ILogger logger, int count, string layers);
+
+    [LoggerMessage(LogLevel.Information, "Sound for this connection: {Channels}; microphone noise removal {NoiseRemoval}.")]
+    private static partial void LogAudioStarted(ILogger logger, string channels, string noiseRemoval);
+
+    [LoggerMessage(LogLevel.Information, "Microphone noise removal switched to {Level} while live.")]
+    private static partial void LogNoiseRemovalChanged(ILogger logger, string level);
+
+    [LoggerMessage(LogLevel.Information, "The server refused the new connection right after the previous one dropped. Servers often hold the old one for some seconds; the next tries wait longer.")]
+    private static partial void LogRefusedAfterDrop(ILogger logger);
+
+    [LoggerMessage(LogLevel.Debug, "Source '{Key}' released: the new stream does not use it as it was.")]
+    private static partial void LogSourceReleased(ILogger logger, string key);
 
     [LoggerMessage(LogLevel.Error, "Unexpected error occurred during D3D11 streaming session.")]
     private static partial void LogUnexpected(ILogger logger, Exception ex);

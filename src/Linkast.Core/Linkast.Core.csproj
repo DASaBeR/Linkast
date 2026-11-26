@@ -3,6 +3,8 @@
     <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
-
+    <!-- RNNoise v0.1 weights (BSD-3-Clause, Xiph.Org / Mozilla), used by microphone noise removal. -->
+    <EmbeddedResource Include="Audio\Noise\rnnoise-xiph-v0.1.bin" LogicalName="Linkast.Core.Audio.Noise.rnnoise-xiph-v0.1.bin" />
+    <InternalsVisibleTo Include="Linkast.Core.Tests" />
   </ItemGroup>
 </Project>

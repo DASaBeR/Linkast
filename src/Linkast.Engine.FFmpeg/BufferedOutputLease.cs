@@ -3,7 +3,6 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
-using System.Threading.Channels;
 using Linkast.Core;
 using Microsoft.Extensions.Logging;
 
@@ -16,13 +15,21 @@ namespace Linkast.Engine.FFmpeg;
 /// seconds a server takes to answer and every slow moment of the upload paused all of FFmpeg's inputs,
 /// and Windows drops a captured game's frames while its capture is paused (CS2 at 16 of 67 fps through
 /// Restream, 52 with the same server answering at once; a 4 s answer alone brought it down to 17).
+/// <para>
+/// When the upload can't carry the stream, the oldest seconds waiting are dropped (whole groups of pictures,
+/// sound with them, see <see cref="FlvBacklog"/>) rather than making the encoder wait: a waiting encoder
+/// stops reading its pipes, and sound and picture then lose different amounts and stay apart.
+/// </para>
 /// </summary>
 internal sealed partial class BufferedOutputLease : IOutputLease
 {
-    /// <summary>
-    /// More than this waiting (about 80 s at 6000 kbps) means the upload can't carry the stream; the encoder
-    /// then waits for the network again rather than filling the memory.
-    /// </summary>
+    /// <summary>More than this much stream time waiting means the upload can't carry it: the oldest is dropped.</summary>
+    internal static readonly TimeSpan MaxBacklog = TimeSpan.FromSeconds(8);
+
+    /// <summary>What is left waiting after a drop, so a drop is not followed at once by the next.</summary>
+    internal static readonly TimeSpan BacklogAfterDrop = TimeSpan.FromSeconds(4);
+
+    /// <summary>A memory bound as well (about 20 s at 6000 kbps), whatever the timestamps say.</summary>
     internal const long MaxBufferedBytes = 16L << 20;
 
     private const int ChunkSize = 64 * 1024;
@@ -31,8 +38,10 @@ internal sealed partial class BufferedOutputLease : IOutputLease
     private readonly ILogger _logger;
     private readonly TcpListener _encoderListener = new(IPAddress.Loopback, 0);
     private readonly TcpListener _senderListener = new(IPAddress.Loopback, 0);
-    private readonly Channel<ArraySegment<byte>> _queue = Channel.CreateUnbounded<ArraySegment<byte>>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
-    private readonly SemaphoreSlim _room = new(0);
+    private readonly FlvBacklog _backlog = new();
+    private readonly Lock _backlogGate = new();
+    private readonly SemaphoreSlim _available = new(0);
+    private bool _inputDone;
     private readonly CancellationTokenSource _cts = new();
     private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private FfmpegProcess? _sender;
@@ -62,7 +71,19 @@ internal sealed partial class BufferedOutputLease : IOutputLease
     /// <summary>Bytes the encoder has written that the server has not been sent yet.</summary>
     public long BufferedBytes => Interlocked.Read(ref _buffered);
 
-    public NetworkSnapshot Snapshot() => _inner.Snapshot() with { BufferedBytes = BufferedBytes };
+    /// <summary>Stream time dropped because the upload could not carry it.</summary>
+    public TimeSpan DroppedDuration
+    {
+        get
+        {
+            lock (_backlogGate)
+            {
+                return _backlog.DroppedDuration;
+            }
+        }
+    }
+
+    public NetworkSnapshot Snapshot() => _inner.Snapshot() with { BufferedBytes = BufferedBytes, DroppedDuration = DroppedDuration };
 
     /// <summary>Opens the buffer in front of <paramref name="inner"/> and starts the sending FFmpeg.</summary>
     public static BufferedOutputLease Start(FfmpegInstallation ffmpeg, IOutputLease inner, ILogger logger, Action<string> senderLine)
@@ -172,16 +193,16 @@ internal sealed partial class BufferedOutputLease : IOutputLease
         }
     }
 
-    /// <summary>Takes the encoder's output as fast as it comes; it only waits when the buffer is full.</summary>
+    /// <summary>Takes the encoder's output as fast as it comes and never makes it wait.</summary>
     private async Task FillAsync(NetworkStream from, CancellationToken ct)
     {
         var rate = Stopwatch.StartNew();
         long received = 0;
+        var chunk = new byte[ChunkSize];
         try
         {
             while (true)
             {
-                var chunk = new byte[ChunkSize];
                 var read = await from.ReadAsync(chunk, ct).ConfigureAwait(false);
                 if (read == 0)
                 {
@@ -189,9 +210,29 @@ internal sealed partial class BufferedOutputLease : IOutputLease
                 }
 
                 received += read;
-                var buffered = Interlocked.Add(ref _buffered, read);
-                _queue.Writer.TryWrite(new ArraySegment<byte>(chunk, 0, read));
+                long buffered;
+                TimeSpan dropped;
+                TimeSpan waiting;
+                TimeSpan droppedTotal;
+                lock (_backlogGate)
+                {
+                    _backlog.Append(chunk.AsSpan(0, read));
+                    dropped = _backlog.DropOldest(MaxBacklog, MaxBufferedBytes, BacklogAfterDrop);
+                    buffered = _backlog.Bytes;
+                    waiting = _backlog.Duration;
+                    droppedTotal = _backlog.DroppedDuration;
+                }
+
+                Interlocked.Exchange(ref _buffered, buffered);
+                Signal();
                 _upload.Sample(rate.Elapsed, _inner.Snapshot().BytesSent);
+                if (dropped > TimeSpan.Zero)
+                {
+                    var streamKbps = received * 8 / 1000.0 / Math.Max(1, rate.Elapsed.TotalSeconds);
+                    LogDropped(dropped.TotalSeconds, waiting.TotalSeconds, droppedTotal.TotalSeconds);
+                    _senderLine(DropWarning(dropped.TotalSeconds, streamKbps, _upload.Kbps));
+                }
+
                 if (buffered >= _warnAt)
                 {
                     var kbps = received * 8 / 1000.0 / Math.Max(1, rate.Elapsed.TotalSeconds);
@@ -200,17 +241,39 @@ internal sealed partial class BufferedOutputLease : IOutputLease
                     _senderLine(BacklogWarning(seconds, kbps, _upload.Kbps));
                     _warnAt *= 2;
                 }
-
-                while (Interlocked.Read(ref _buffered) > MaxBufferedBytes)
-                {
-                    await _room.WaitAsync(TimeSpan.FromMilliseconds(100), ct).ConfigureAwait(false);
-                }
             }
         }
         finally
         {
-            _queue.Writer.TryComplete();
+            lock (_backlogGate)
+            {
+                _inputDone = true;
+            }
+
+            Signal();
         }
+    }
+
+    private void Signal()
+    {
+        if (_available.CurrentCount == 0)
+        {
+            _available.Release();
+        }
+    }
+
+    /// <summary>Said when part of the stream was skipped: how much, and a bitrate the upload can carry.</summary>
+    internal static string DropWarning(double secondsDropped, double streamKbps, double? uploadKbps)
+    {
+        var inv = CultureInfo.InvariantCulture;
+        var head = string.Create(inv, $"[warning] The upload is not keeping up: {secondsDropped:0.0} s of the stream was skipped so viewers stay close to live (sound and picture stay together).");
+        if (uploadKbps is not { } up || up <= 0)
+        {
+            return head + " Lower the bitrate.";
+        }
+
+        var suggested = Math.Max(1000, Math.Floor(((up * 0.85) - 200) / 500) * 500);
+        return head + string.Create(inv, $" The connection sends about {up / 1000:0.0} Mbps; the stream needs {streamKbps / 1000:0.0}. Set the bitrate to {suggested:0} kbps or lower.");
     }
 
     /// <summary>
@@ -271,15 +334,32 @@ internal sealed partial class BufferedOutputLease : IOutputLease
 
     private readonly UploadRate _upload = new();
 
+    /// <summary>Sends whole FLV tags to the sending FFmpeg, oldest first.</summary>
     private async Task DrainAsync(NetworkStream to, CancellationToken ct)
     {
-        await foreach (var chunk in _queue.Reader.ReadAllAsync(ct).ConfigureAwait(false))
+        while (true)
         {
-            await to.WriteAsync(chunk, ct).ConfigureAwait(false);
-            if (Interlocked.Add(ref _buffered, -chunk.Count) <= MaxBufferedBytes && _room.CurrentCount == 0)
+            byte[]? unit;
+            bool done;
+            lock (_backlogGate)
             {
-                _room.Release();
+                unit = _backlog.TryTake();
+                done = _inputDone;
+                Interlocked.Exchange(ref _buffered, _backlog.Bytes);
             }
+
+            if (unit is null)
+            {
+                if (done)
+                {
+                    return;
+                }
+
+                await _available.WaitAsync(ct).ConfigureAwait(false);
+                continue;
+            }
+
+            await to.WriteAsync(unit, ct).ConfigureAwait(false);
         }
     }
 
@@ -312,7 +392,7 @@ internal sealed partial class BufferedOutputLease : IOutputLease
         await _inner.DisposeAsync().ConfigureAwait(false);
         _completion.TrySetResult();
         _cts.Dispose();
-        _room.Dispose();
+        _available.Dispose();
     }
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Buffer: the encoder connected after {Seconds:0.00} s.")]
@@ -323,6 +403,9 @@ internal sealed partial class BufferedOutputLease : IOutputLease
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Buffer: this connection ended because {Reason} (sender exit code {SenderExit}, {Buffered} bytes unsent, after {Seconds:0.0} s).")]
     private partial void LogEnded(string reason, int? senderExit, long buffered, double seconds);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "The upload is not keeping up: dropped the oldest {Seconds:0.0} s of the stream (whole groups of pictures with their sound) so the encoder never waits; {Left:0.0} s still waiting, {Total:0.0} s dropped on this connection.")]
+    private partial void LogDropped(double seconds, double left, double total);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "The upload is not keeping up: {Megabytes:0.0} MB (about {Seconds:0} s of the stream) waiting to be sent. Lower the bitrate.")]
     private partial void LogBacklog(double megabytes, double seconds);

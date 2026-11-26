@@ -876,9 +876,17 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     [ObservableProperty]
     public partial bool MicrophoneMuted { get; set; }
 
-    /// <summary>Remove steady background noise (fans, hum) from the microphone. Can be switched while live.</summary>
+    /// <summary>The noise removal choices, each with what it does and its CPU cost.</summary>
+    public IReadOnlyList<NoiseRemovalOption> NoiseRemovalOptions => NoiseRemovalOption.All;
+
+    /// <summary>How much noise is removed from the microphone (RNNoise on this PC). Can be changed while live.</summary>
     [ObservableProperty]
-    public partial bool MicrophoneNoiseSuppression { get; set; }
+    public partial NoiseRemovalOption SelectedNoiseRemoval { get; set; } = NoiseRemovalOption.All[0];
+
+    public NoiseRemoval MicrophoneNoiseRemoval => SelectedNoiseRemoval.Level;
+
+    /// <summary>True when any noise removal is on.</summary>
+    public bool MicrophoneNoiseSuppression => MicrophoneNoiseRemoval != NoiseRemoval.Off;
 
     [RelayCommand]
     private void ToggleMicrophoneMute() => MicrophoneMuted = !MicrophoneMuted;
@@ -916,11 +924,14 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         ApplyLiveGain(AudioChannels.System, GainOf(AudioChannels.System));
     }
 
-    partial void OnMicrophoneNoiseSuppressionChanged(bool value)
+    partial void OnSelectedNoiseRemovalChanged(NoiseRemovalOption value)
     {
+        OnPropertyChanged(nameof(MicrophoneNoiseRemoval));
+        OnPropertyChanged(nameof(MicrophoneNoiseSuppression));
         if (_engine is { } engine && IsActive)
         {
-            _ = engine.SetNoiseSuppressionAsync(value);
+            _ = engine.SetNoiseRemovalAsync(value.Level);
+            AppendLog($"Microphone noise removal: {value.Label}.");
         }
     }
 
@@ -1419,7 +1430,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     [
         nameof(SelectedSourceKind), nameof(SelectedMonitor), nameof(SelectedWindow), nameof(UseDesktopDuplication), nameof(CaptureCursor),
         nameof(SystemAudioEnabled), nameof(SelectedOutputDevice), nameof(SystemAudioVolume),
-        nameof(MicrophoneEnabled), nameof(SelectedInputDevice), nameof(MicrophoneVolume), nameof(MicrophoneNoiseSuppression),
+        nameof(MicrophoneEnabled), nameof(SelectedInputDevice), nameof(MicrophoneVolume), nameof(SelectedNoiseRemoval),
         nameof(SelectedEncoder), nameof(SelectedResolution), nameof(SelectedFrameRate), nameof(VideoBitrateKbps),
         nameof(KeyframeIntervalSeconds), nameof(AudioBitrateKbps), nameof(EncoderPreset),
         nameof(SelectedDestinationKind), nameof(SelectedPlatform), nameof(ServerUrl), nameof(SelectedNetwork), nameof(SelectedTheme),
@@ -1596,6 +1607,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 MicrophoneDeviceId = SelectedInputDevice?.Id,
                 MicrophoneVolume = MicrophoneVolume,
                 MicrophoneNoiseSuppression = MicrophoneNoiseSuppression,
+                MicrophoneNoiseRemoval = MicrophoneNoiseRemoval,
                 EncoderId = SelectedEncoder?.Id ?? _loaded.Stream.EncoderId,
                 Width = SelectedResolution.Width,
                 Height = SelectedResolution.Height,
@@ -1650,7 +1662,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         MicrophoneEnabled = s.MicrophoneEnabled;
         SelectedInputDevice = InputDevices.FirstOrDefault(d => d.Id == s.MicrophoneDeviceId) ?? SelectedInputDevice;
         MicrophoneVolume = s.MicrophoneVolume;
-        MicrophoneNoiseSuppression = s.MicrophoneNoiseSuppression;
+        SelectedNoiseRemoval = NoiseRemovalOption.For(s.MicrophoneNoiseRemoval ?? (s.MicrophoneNoiseSuppression ? NoiseRemoval.Standard : NoiseRemoval.Off));
         SelectedResolution = Resolutions.FirstOrDefault(r => r.Width == s.Width && r.Height == s.Height) ?? Resolutions[0];
         SelectedFrameRate = FrameRates.Contains(s.FrameRate) ? s.FrameRate : 60;
         VideoBitrateKbps = s.VideoBitrateKbps;

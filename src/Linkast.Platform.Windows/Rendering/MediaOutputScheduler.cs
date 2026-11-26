@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+﻿// SPDX-License-Identifier: GPL-3.0-or-later
 using System.Diagnostics;
 using System.IO;
 using Linkast.Core.Camera;
@@ -32,6 +32,10 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
 
     private long _framesRendered;
     private long _framesDropped;
+    private long _framesWritten;
+    private long _lostTicks;
+    private long _slowFrames;
+    private long _longestFrameTicks;
     private byte[]? _blackFrame;
 
     private IReadOnlyList<string>? _lastStackOrder;
@@ -66,7 +70,37 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
 
     public long FramesRendered => Interlocked.Read(ref _framesRendered);
 
+    /// <summary>Times the render loop fell more than two frames behind and skipped ahead.</summary>
     public long FramesDropped => Interlocked.Read(ref _framesDropped);
+
+    /// <summary>Frames that reached FFmpeg.</summary>
+    public long FramesWritten => Interlocked.Read(ref _framesWritten);
+
+    /// <summary>
+    /// The time the picture lost against the wall clock: frame slots that were skipped or not delivered.
+    /// FFmpeg times frames by count, so this is how far the picture's timeline trails real time; the sound
+    /// drops the same time to stay with it.
+    /// </summary>
+    public TimeSpan LostTime => Stopwatch.GetElapsedTime(0, Interlocked.Read(ref _lostTicks));
+
+    /// <summary>Frames that took longer than 100 ms to render and hand over (FFmpeg not reading, or a busy GPU).</summary>
+    public long SlowFrames => Interlocked.Read(ref _slowFrames);
+
+    /// <summary>The longest a single frame took to render and hand over.</summary>
+    public TimeSpan LongestFrame => Stopwatch.GetElapsedTime(0, Interlocked.Read(ref _longestFrameTicks));
+
+    private void NoteFrameTime(long ticks)
+    {
+        if (ticks > Stopwatch.Frequency / 10)
+        {
+            Interlocked.Increment(ref _slowFrames);
+        }
+
+        long seen;
+        while (ticks > (seen = Interlocked.Read(ref _longestFrameTicks)) && Interlocked.CompareExchange(ref _longestFrameTicks, ticks, seen) != seen)
+        {
+        }
+    }
 
     public bool IsRunning => _isRunning;
 
@@ -103,15 +137,23 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
             {
                 long currentTicks = Stopwatch.GetTimestamp();
 
-                // If running behind by more than 2 frames, catch up to prevent runaway pipeline backlog
+                // If running behind by more than 2 frames, catch up to prevent runaway pipeline backlog.
+                // The slots skipped are time the picture's timeline loses; the sound loses it too.
                 if (currentTicks > nextFrameTicks + 2 * targetIntervalTicks)
                 {
                     Interlocked.Increment(ref _framesDropped);
+                    Interlocked.Add(ref _lostTicks, currentTicks - nextFrameTicks);
                     nextFrameTicks = currentTicks;
                 }
 
                 // Render current frame
-                RenderSingleFrame();
+                var began = Stopwatch.GetTimestamp();
+                if (!RenderSingleFrame())
+                {
+                    Interlocked.Add(ref _lostTicks, targetIntervalTicks); // the slot stays empty
+                }
+
+                NoteFrameTime(Stopwatch.GetTimestamp() - began);
                 Interlocked.Increment(ref _framesRendered);
 
                 nextFrameTicks += targetIntervalTicks;
@@ -158,7 +200,10 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
                     LogRenderFrameFailed(_logger, ex);
                 }
 
-                PumpBlackFrame();
+                if (!PumpBlackFrame())
+                {
+                    Interlocked.Add(ref _lostTicks, targetIntervalTicks);
+                }
 
                 if (_compositor.DeviceManager is { } dm && (!dm.CheckDeviceStatus() || dm.IsDeviceLost))
                 {
@@ -186,7 +231,15 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
                     break;
                 }
 
-                nextFrameTicks = Stopwatch.GetTimestamp();
+                // One slot was filled (black); the wait loses the rest up to now.
+                var resumed = Stopwatch.GetTimestamp();
+                nextFrameTicks += targetIntervalTicks;
+                if (resumed > nextFrameTicks)
+                {
+                    Interlocked.Add(ref _lostTicks, resumed - nextFrameTicks);
+                }
+
+                nextFrameTicks = resumed;
             }
         }
 
@@ -197,14 +250,15 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
     /// <summary>
     /// Renders a single composited frame according to the current layout and outputs it to the video stream.
     /// Supports full scene Z-stacking (captures, cameras, overlays, media backgrounds) and live placement updates.
+    /// False when no frame reached FFmpeg (the device is lost or the frame could not begin).
     /// </summary>
-    public void RenderSingleFrame()
+    public bool RenderSingleFrame()
     {
         lock (_compositor.RenderGate)
         {
             if (_compositor.DeviceManager.IsDeviceLost)
             {
-                return;
+                return false;
             }
 
             var layout = _layoutProvider();
@@ -216,7 +270,7 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
             // 1. Begin frame with clear color (navy or black)
             if (!_compositor.BeginFrame(new Color4(0.05f, 0.05f, 0.08f, 1.0f)))
             {
-                return;
+                return false;
             }
 
             if (placements is not null)
@@ -272,7 +326,13 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
             }
 
             // 4. Convert composited frame to NV12 and write to video pipe stream
-            _compositor.ConvertToNv12(_videoPipeStream);
+            if (_compositor.ConvertToNv12(_videoPipeStream) <= 0)
+            {
+                return false;
+            }
+
+            Interlocked.Increment(ref _framesWritten);
+            return true;
         }
     }
 
@@ -349,7 +409,7 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
         }
     }
 
-    private void PumpBlackFrame()
+    private bool PumpBlackFrame()
     {
         int requiredSize = (int)_compositor.Nv12ByteSize;
         if (_blackFrame is null || _blackFrame.Length != requiredSize)
@@ -363,10 +423,13 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
         try
         {
             _videoPipeStream.Write(_blackFrame);
+            Interlocked.Increment(ref _framesWritten);
+            return true;
         }
         catch
         {
             // If the pipe is broken or disconnected, the outer cancellation/stop flow handles it
+            return false;
         }
     }
 

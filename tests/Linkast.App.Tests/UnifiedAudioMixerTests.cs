@@ -108,31 +108,135 @@ public class UnifiedAudioMixerTests
         Assert.True(mixer.TotalBytesWritten > 0);
         Assert.Equal(0, mixer.TotalBytesWritten % 4);
     }
+    /// <summary>Float32 stereo 48 kHz of a constant, non-silent level.</summary>
+    private static byte[] Sound(int milliseconds, float level = 0.25f)
+    {
+        var samples = new float[48000 * milliseconds / 1000 * 2];
+        Array.Fill(samples, level);
+        return MemoryMarshal.AsBytes(samples.AsSpan()).ToArray();
+    }
+
     [Fact]
-    public async Task UnifiedAudioMixer_catches_up_when_the_audio_trails_the_master_clock()
+    public async Task UnifiedAudioMixer_catches_up_with_waiting_sound_when_slightly_late()
     {
         var hub = new AudioCaptureHub();
         using var memoryStream = new MemoryStream();
 
-        // The stream began 1 s ago and nothing has been written: the mixer is a full second late.
-        var mixer = new UnifiedAudioMixer(hub, memoryStream, Stopwatch.GetTimestamp() - Stopwatch.Frequency);
+        // 200 ms late (a late timer tick), with 150 ms of sound waiting: no gap to fill, the sound catches up.
+        var mixer = new UnifiedAudioMixer(hub, memoryStream, Stopwatch.GetTimestamp() - Stopwatch.Frequency / 5);
         mixer.AddTestChannel("game", 1.0);
-
-        // 150 ms of sound (float32 stereo 48 kHz) is waiting in the channel.
-        var frames = 48000 * 150 / 1000;
-        var bytes = new byte[frames * 2 * sizeof(float)];
-        mixer.EnqueueTestChannelData("game", bytes);
+        mixer.EnqueueTestChannelData("game", Sound(150));
 
         var before = mixer.ClockLag;
-        Assert.True(before > TimeSpan.FromMilliseconds(900));
+        await mixer.CatchUpAsync(new float[960], new byte[1920], new byte[192000], CancellationToken.None);
+
+        Assert.True(mixer.TotalBytesWritten >= 1920 * 10);
+        Assert.True(mixer.TotalBytesWritten <= 150 * 192, "below the resync threshold only real sound is written");
+        Assert.True(mixer.ClockLag < before);
+        Assert.Equal(0, mixer.Resyncs);
+        Assert.Equal(0, mixer.TotalBytesWritten % 4);
+
+        await mixer.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task UnifiedAudioMixer_fills_a_blocked_output_gap_with_silence_and_then_plays_the_waiting_sound()
+    {
+        var hub = new AudioCaptureHub();
+        using var memoryStream = new MemoryStream();
+
+        // The output was blocked for a second: 1 s late, with the newest 150 ms of sound waiting in the channel.
+        // Before, the gap was never filled and the sound stayed a second late for the rest of the stream.
+        var mixer = new UnifiedAudioMixer(hub, memoryStream, Stopwatch.GetTimestamp() - Stopwatch.Frequency);
+        mixer.AddTestChannel("game", 1.0);
+        mixer.EnqueueTestChannelData("game", Sound(150));
 
         await mixer.CatchUpAsync(new float[960], new byte[1920], new byte[192000], CancellationToken.None);
 
-        // One tick wrote far more than one 10 ms slice, but never more than the sound there was.
-        Assert.True(mixer.TotalBytesWritten >= 1920 * 10);
-        Assert.True(mixer.TotalBytesWritten <= frames * 4);
-        Assert.True(mixer.ClockLag < before);
-        Assert.Equal(0, mixer.TotalBytesWritten % 4);
+        Assert.Equal(1, mixer.Resyncs);
+        Assert.InRange(mixer.ClockLag.TotalMilliseconds, -30, 30);
+
+        // Silence first, then the waiting sound at the end, where it belongs on the timeline.
+        var written = memoryStream.ToArray();
+        Assert.Equal(0, written.Length % 4);
+        var samples = MemoryMarshal.Cast<byte, short>(written);
+        Assert.Equal(0, samples[0]);
+        Assert.True(samples[^2] > 8000, "the last thing written is the waiting sound");
+        Assert.Contains("silence after 1 stall(s)", mixer.Describe(), StringComparison.Ordinal);
+
+        await mixer.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task UnifiedAudioMixer_keeps_to_the_picture_when_the_video_lost_time()
+    {
+        var hub = new AudioCaptureHub();
+        using var memoryStream = new MemoryStream();
+
+        // A second of wall time has passed, but the picture lost all of it: the sound is on time, not late.
+        var mixer = new UnifiedAudioMixer(hub, memoryStream, Stopwatch.GetTimestamp() - Stopwatch.Frequency,
+            videoLostTime: () => TimeSpan.FromSeconds(1));
+        mixer.AddTestChannel("game", 1.0);
+        mixer.EnqueueTestChannelData("game", Sound(200));
+
+        Assert.InRange(mixer.ClockLag.TotalMilliseconds, -20, 50);
+        await mixer.CatchUpAsync(new float[960], new byte[1920], new byte[192000], CancellationToken.None);
+        Assert.Equal(0, mixer.Resyncs);
+        Assert.True(mixer.TotalBytesWritten <= 1920 * 5, "nothing to catch up: the picture is not ahead");
+
+        await mixer.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task UnifiedAudioMixer_drops_sound_that_is_ahead_of_the_picture()
+    {
+        var hub = new AudioCaptureHub();
+        using var memoryStream = new MemoryStream();
+
+        // The picture lost more than the wall time since the start: the sound would play early.
+        var mixer = new UnifiedAudioMixer(hub, memoryStream, Stopwatch.GetTimestamp() - Stopwatch.Frequency / 10,
+            videoLostTime: () => TimeSpan.FromMilliseconds(400));
+        mixer.AddTestChannel("game", 1.0);
+        mixer.EnqueueTestChannelData("game", Sound(100));
+
+        Assert.Equal(0, await mixer.MixOneSliceAsync());
+        Assert.Equal(0, mixer.TotalBytesWritten);
+        Assert.Contains("dropped while ahead", mixer.Describe(), StringComparison.Ordinal);
+
+        await mixer.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task UnifiedAudioMixer_cleans_the_microphone_before_its_fader()
+    {
+        var hub = new AudioCaptureHub();
+        using var memoryStream = new MemoryStream();
+        // Started 10 s ago, so mixing two seconds at once is never "ahead of the picture".
+        var mixer = new UnifiedAudioMixer(hub, memoryStream, Stopwatch.GetTimestamp() - 10 * Stopwatch.Frequency);
+        mixer.AddTestChannel(AudioChannels.Microphone, 5.6);
+        Assert.True(await mixer.SetNoiseRemovalAsync(NoiseRemoval.Strong));
+        Assert.Equal(NoiseRemoval.Strong, mixer.NoiseRemoval);
+
+        // Two seconds of steady hiss, mixed slice by slice.
+        var random = new Random(2);
+        var hiss = new float[48000 * 2 * 2];
+        for (var i = 0; i < hiss.Length; i += 2)
+        {
+            hiss[i] = hiss[i + 1] = (float)(random.NextDouble() * 2 - 1) * 0.01f;
+        }
+
+        var slices = 0;
+        for (var at = 0; at < hiss.Length; at += 960)
+        {
+            mixer.EnqueueTestChannelData(AudioChannels.Microphone, MemoryMarshal.AsBytes(hiss.AsSpan(at, 960)));
+            slices += await mixer.MixOneSliceAsync() > 0 ? 1 : 0;
+        }
+
+        Assert.True(slices > 150);
+        var last = MemoryMarshal.Cast<byte, short>(memoryStream.ToArray())[^1920..];
+        var rms = Math.Sqrt(last.ToArray().Average(s => (double)s * s)) / 32768;
+        Assert.True(rms < 0.01 * 5.6 / 10, $"the hiss at 560 % should be at least 20 dB quieter; it is {20 * Math.Log10(rms / (0.01 * 5.6 / Math.Sqrt(3))):0.0} dB");
+        Assert.Contains("noise removal Strong", mixer.Describe(), StringComparison.Ordinal);
 
         await mixer.DisposeAsync();
     }

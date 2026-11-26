@@ -14,12 +14,14 @@ Linkast is licensed under GPL-3.0-or-later. It uses the components below. Versio
 | Source | License | Where |
 |---|---|---|
 | Microsoft Windows-Camera, VirtualCamera sample (github.com/microsoft/Windows-Camera, Samples/VirtualCamera), Copyright (C) Microsoft Corporation | MIT | The structure of the Linkast Camera media source in `native/Linkast.VirtualCamera`: media source, stream and activator, stream attributes, sample allocator handling and virtual camera registration. Rewritten for Linkast with WRL instead of C++/WinRT and WIL. |
+| RNNoise v0.1 (denoise.c, pitch.c, celt_lpc.c, rnn.c), Copyright (c) 2017 Mozilla, (c) 2005-2017 Xiph.Org Foundation, (c) 2007-2008 CSIRO, (c) 2008-2011 Octasic Inc., (c) Jean-Marc Valin; as found in FFmpeg af_arnndn.c, (c) 2018 Gregor Richards, (c) 2019 Paul B Mahol | BSD-3-Clause | Microphone noise removal, ported to C# in `src/Linkast.Core/Audio/Noise` (RnNoiseDenoiser.cs). The license text is in `src/Linkast.Core/Audio/Noise/RNNOISE-LICENSE.txt`. |
 
 ## AI models
 
 | Model | Version | License | Notes |
 |---|---|---|---|
 | RobustVideoMatting, MobileNetV3, fp32 (Lin, Ryabtsev, Sengupta, Curless, Seitz, Kemelmacher-Shlizerman, 2021) | v1.0.0 release, SHA-256 `88D4531297118F595BF2FD60F6F566AEC2E559393802D1F436C380F0CBBD2828` | GPL-3.0 | Shipped in `models/` with `RVM-LICENSE.txt`. Source: https://github.com/PeterL1n/RobustVideoMatting |
+| RNNoise speech/noise model (Valin, Mozilla, Xiph.Org) | v0.1 (`src/rnn_data.c` at tag v0.1), converted to signed bytes, SHA-256 `85A2B1D85147DEC0DF3B05E0F05B0E041BDE9974D28814FFFB275B70D7740247` | BSD-3-Clause | Embedded in `Linkast.Core.dll` (`rnnoise-xiph-v0.1.bin`), license in `RNNOISE-LICENSE.txt` next to it. Source: https://gitlab.xiph.org/xiph/rnnoise |
 
 ## NuGet packages
 

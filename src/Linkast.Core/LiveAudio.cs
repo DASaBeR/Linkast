@@ -39,4 +39,10 @@ public interface ILiveAudioControl
 
     /// <summary>Switches microphone noise removal. False when nothing is live or there is no microphone.</summary>
     Task<bool> SetNoiseSuppressionAsync(bool enabled, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets how much noise is removed from the microphone. An engine without levels only switches it on or off.
+    /// </summary>
+    Task<bool> SetNoiseRemovalAsync(Audio.NoiseRemoval level, CancellationToken cancellationToken = default) =>
+        SetNoiseSuppressionAsync(level != Audio.NoiseRemoval.Off, cancellationToken);
 }

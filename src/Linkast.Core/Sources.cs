@@ -39,8 +39,18 @@ public abstract record AudioSourceSpec
     /// <summary>Linear gain. 1.0 = unchanged.</summary>
     public double Gain { get; init; } = 1.0;
 
-    /// <summary>Remove steady background noise (fans, hum) with FFmpeg's afftdn. Used for the microphone.</summary>
+    /// <summary>Remove background noise. Used for the microphone (FFmpeg's afftdn in the FFmpeg engine).</summary>
     public bool NoiseSuppression { get; init; }
+
+    /// <summary>
+    /// How much noise is removed from the microphone (RNNoise in the Direct3D engine). Off with
+    /// <see cref="NoiseSuppression"/> on means <see cref="Audio.NoiseRemoval.Standard"/>.
+    /// </summary>
+    public Audio.NoiseRemoval NoiseRemoval { get; init; }
+
+    /// <summary>The level actually asked for, from <see cref="NoiseRemoval"/> or else <see cref="NoiseSuppression"/>.</summary>
+    public Audio.NoiseRemoval EffectiveNoiseRemoval =>
+        NoiseRemoval != Audio.NoiseRemoval.Off ? NoiseRemoval : NoiseSuppression ? Audio.NoiseRemoval.Standard : Audio.NoiseRemoval.Off;
 
     /// <summary>
     /// The mixer channel this source is (see <see cref="AudioChannels"/>), used to change its volume live.

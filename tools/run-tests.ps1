@@ -39,6 +39,7 @@ if (-not $UnitOnly) {
     # Through cmd: Windows PowerShell turns Docker's harmless stderr warnings into errors
     cmd /c "docker info >nul 2>&1"
     if ($LASTEXITCODE -eq 0) {
+        $ingest = "Docker runs, but the MediaMTX container could not start (image pull or compose failed): streaming tests skipped"
         cmd /c "docker compose -f tools/test-ingest/docker-compose.yml up -d >nul 2>&1"
         if ($LASTEXITCODE -eq 0) { $ingest = "MediaMTX container (tools/test-ingest)" }
     }
