@@ -116,6 +116,28 @@ public sealed record StreamSettings
     /// <summary>Recordings are turned into MP4 files when they finish.</summary>
     public bool RemuxRecordingsToMp4 { get; init; }
 
+    /// <summary>Same as the stream (written by the stream's own encoder), or its own resolution and bitrate.</summary>
+    public RecordingQuality RecordingQuality { get; init; } = RecordingQuality.SameAsStream;
+
+    /// <summary>Landscape recording size when <see cref="RecordingQuality"/> is Custom (a vertical scene rotates it).</summary>
+    public int RecordingWidth { get; init; } = 1920;
+
+    public int RecordingHeight { get; init; } = 1080;
+
+    public int RecordingBitrateKbps { get; init; } = 12000;
+
+    /// <summary>Also records a vertical canvas (for Shorts, Reels and TikTok) whenever it streams or records.</summary>
+    public bool VerticalRecordingEnabled { get; init; }
+
+    /// <summary>The vertical scene the vertical recording shows, or null for the first vertical scene.</summary>
+    public Guid? VerticalRecordingSceneId { get; init; }
+
+    public int VerticalRecordingWidth { get; init; } = 1080;
+
+    public int VerticalRecordingHeight { get; init; } = 1920;
+
+    public int VerticalRecordingBitrateKbps { get; init; } = 10000;
+
     public string ServerUrl { get; init; } = string.Empty;
 
     /// <summary>Per-platform destination settings, so each tab remembers its own values.</summary>

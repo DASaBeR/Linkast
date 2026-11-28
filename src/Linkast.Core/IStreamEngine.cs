@@ -48,6 +48,9 @@ public sealed record StreamSession(
 
     /// <summary>Also writes the stream to a local file, or null.</summary>
     public RecordingSpec? Recording { get; init; }
+
+    /// <summary>Also records a separate vertical canvas to a local file, or null.</summary>
+    public VerticalRecordingSpec? VerticalRecording { get; init; }
 }
 
 /// <summary>One captured game, window or display in a stream, and where it starts on the canvas.</summary>

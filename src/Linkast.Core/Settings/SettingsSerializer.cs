@@ -257,6 +257,13 @@ public static class SettingsSerializer
                 VideoBitrateKbps = Math.Clamp(stream.VideoBitrateKbps, 200, 100_000),
                 KeyframeIntervalSeconds = Math.Clamp(stream.KeyframeIntervalSeconds, 1, 10),
                 AudioBitrateKbps = Math.Clamp(stream.AudioBitrateKbps, 32, 512),
+                RecordingQuality = Enum.IsDefined(stream.RecordingQuality) ? stream.RecordingQuality : RecordingQuality.SameAsStream,
+                RecordingWidth = ClampEven(stream.RecordingWidth, SessionValidator.MinWidth, SessionValidator.MaxWidth),
+                RecordingHeight = ClampEven(stream.RecordingHeight, SessionValidator.MinHeight, SessionValidator.MaxHeight),
+                RecordingBitrateKbps = Math.Clamp(stream.RecordingBitrateKbps, 200, 100_000),
+                VerticalRecordingWidth = ClampEven(stream.VerticalRecordingWidth, SessionValidator.MinWidth, SessionValidator.MaxWidth),
+                VerticalRecordingHeight = ClampEven(stream.VerticalRecordingHeight, SessionValidator.MinHeight, SessionValidator.MaxHeight),
+                VerticalRecordingBitrateKbps = Math.Clamp(stream.VerticalRecordingBitrateKbps, 200, 100_000),
                 ServerUrl = stream.ServerUrl ?? string.Empty,
                 Destinations = stream.Destinations is not { Count: > 0 } destinations
                     ? StreamSettings.NoDestinations
@@ -360,6 +367,8 @@ public static class SettingsSerializer
     }
 
     private static double Finite(double v, double fallback) => double.IsFinite(v) ? v : fallback;
+
+    private static int ClampEven(int value, int min, int max) => Math.Clamp(value, min, max) & ~1;
 
     /// <summary>A mixer channel name: lower-case letters, digits and '_' (it becomes part of an FFmpeg filter name).</summary>
     private static bool IsChannel(string? name) =>

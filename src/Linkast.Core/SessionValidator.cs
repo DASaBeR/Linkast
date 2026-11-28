@@ -125,21 +125,56 @@ public static partial class SessionValidator
 
     private static void ValidateRecording(StreamSession s, List<StreamError> errors)
     {
-        if (s.Recording is null)
+        if (s.Recording is null && !s.Broadcast)
         {
-            if (!s.Broadcast)
-            {
-                errors.Add(Config("recording.none", "Nothing to do: the session neither streams nor records."));
-            }
-
-            return;
+            errors.Add(Config("recording.none", "Nothing to do: the session neither streams nor records."));
         }
 
-        var folder = s.Recording.Folder;
+        if (s.Recording is { } rec)
+        {
+            ValidateRecordingFolder(rec.Folder, "recording.folder", errors);
+            if (rec.Encoder is { } recEncoder)
+            {
+                ValidateEncoder(recEncoder, errors);
+                if (recEncoder.Fps != s.Encoder.Fps)
+                {
+                    errors.Add(Config("recording.fps", "The recording frame rate must match the stream frame rate."));
+                }
+
+                if (recEncoder.Height > 0 && s.Encoder.Height > 0)
+                {
+                    var rw = recEncoder.Width / (double)recEncoder.Height;
+                    var sw = s.Encoder.Width / (double)s.Encoder.Height;
+                    if (Math.Abs(rw - sw) > 0.01 * sw)
+                    {
+                        errors.Add(Config("recording.aspect", "The recording must have the same shape as the stream."));
+                    }
+                }
+            }
+        }
+
+        if (s.VerticalRecording is { } vert)
+        {
+            ValidateRecordingFolder(vert.Folder, "vertical.folder", errors);
+            ValidateEncoder(vert.Encoder, errors);
+            if (vert.Encoder.Width >= vert.Encoder.Height)
+            {
+                errors.Add(Config("vertical.shape", "The vertical recording must be taller than it is wide."));
+            }
+
+            if (vert.Encoder.Fps != s.Encoder.Fps)
+            {
+                errors.Add(Config("vertical.fps", "The vertical recording frame rate must match the stream frame rate."));
+            }
+        }
+    }
+
+    private static void ValidateRecordingFolder(string? folder, string code, List<StreamError> errors)
+    {
         if (string.IsNullOrWhiteSpace(folder) || !Path.IsPathFullyQualified(folder) || folder.StartsWith('-')
             || folder.Any(char.IsControl) || folder.IndexOfAny(Path.GetInvalidPathChars()) >= 0)
         {
-            errors.Add(new StreamError(ErrorCategory.Configuration, "recording.folder", "Choose a folder for recordings."));
+            errors.Add(new StreamError(ErrorCategory.Configuration, code, "Choose a folder for recordings."));
         }
     }
 

@@ -423,6 +423,102 @@ public class SettingsSerializerTests
         Assert.Equal(StreamPlatform.YouTube, s.Stream.Platform);
         Assert.Equal("rtmps://a.rtmps.youtube.com/live2", s.Stream.ServerUrl);
     }
+
+    [Fact]
+    public void Recording_quality_and_vertical_settings_have_expected_defaults()
+    {
+        var s = new StreamSettings();
+        Assert.Equal(RecordingQuality.SameAsStream, s.RecordingQuality);
+        Assert.Equal(1920, s.RecordingWidth);
+        Assert.Equal(1080, s.RecordingHeight);
+        Assert.Equal(12000, s.RecordingBitrateKbps);
+        Assert.False(s.VerticalRecordingEnabled);
+        Assert.Null(s.VerticalRecordingSceneId);
+        Assert.Equal(1080, s.VerticalRecordingWidth);
+        Assert.Equal(1920, s.VerticalRecordingHeight);
+        Assert.Equal(10000, s.VerticalRecordingBitrateKbps);
+    }
+
+    [Fact]
+    public void Recording_quality_and_vertical_settings_round_trip()
+    {
+        var sceneId = Guid.NewGuid();
+        var settings = new LinkastSettings
+        {
+            Stream = new StreamSettings
+            {
+                RecordingQuality = RecordingQuality.Custom,
+                RecordingWidth = 2560,
+                RecordingHeight = 1440,
+                RecordingBitrateKbps = 20000,
+                VerticalRecordingEnabled = true,
+                VerticalRecordingSceneId = sceneId,
+                VerticalRecordingWidth = 720,
+                VerticalRecordingHeight = 1280,
+                VerticalRecordingBitrateKbps = 8000,
+            },
+        };
+
+        var json = SettingsSerializer.Serialize(settings);
+        var (back, outcome) = SettingsSerializer.Deserialize(json);
+
+        Assert.Equal(SettingsLoadOutcome.Loaded, outcome);
+        Assert.Contains("\"recordingQuality\": \"Custom\"", json, StringComparison.Ordinal);
+        Assert.Equal(RecordingQuality.Custom, back.Stream.RecordingQuality);
+        Assert.Equal(2560, back.Stream.RecordingWidth);
+        Assert.Equal(1440, back.Stream.RecordingHeight);
+        Assert.Equal(20000, back.Stream.RecordingBitrateKbps);
+        Assert.True(back.Stream.VerticalRecordingEnabled);
+        Assert.Equal(sceneId, back.Stream.VerticalRecordingSceneId);
+        Assert.Equal(720, back.Stream.VerticalRecordingWidth);
+        Assert.Equal(1280, back.Stream.VerticalRecordingHeight);
+        Assert.Equal(8000, back.Stream.VerticalRecordingBitrateKbps);
+    }
+
+    [Fact]
+    public void Legacy_settings_without_recording_quality_load_with_defaults()
+    {
+        var json = """
+            {"schemaVersion":4,
+             "stream":{"recordWhenLive":true,"remuxRecordingsToMp4":true}}
+            """;
+        var (s, outcome) = SettingsSerializer.Deserialize(json);
+        Assert.Equal(SettingsLoadOutcome.Loaded, outcome);
+        Assert.Equal(RecordingQuality.SameAsStream, s.Stream.RecordingQuality);
+        Assert.Equal(1920, s.Stream.RecordingWidth);
+        Assert.Equal(1080, s.Stream.RecordingHeight);
+        Assert.Equal(12000, s.Stream.RecordingBitrateKbps);
+        Assert.False(s.Stream.VerticalRecordingEnabled);
+        Assert.Null(s.Stream.VerticalRecordingSceneId);
+        Assert.Equal(1080, s.Stream.VerticalRecordingWidth);
+        Assert.Equal(1920, s.Stream.VerticalRecordingHeight);
+        Assert.Equal(10000, s.Stream.VerticalRecordingBitrateKbps);
+    }
+
+    [Fact]
+    public void Out_of_range_recording_settings_are_clamped()
+    {
+        var json = """
+            {"schemaVersion":4,
+             "stream":{
+               "recordingQuality":99,
+               "recordingWidth":1921,
+               "recordingHeight":50,
+               "recordingBitrateKbps":999999,
+               "verticalRecordingWidth":99999,
+               "verticalRecordingHeight":1921,
+               "verticalRecordingBitrateKbps":10}}
+            """;
+        var (s, outcome) = SettingsSerializer.Deserialize(json);
+        Assert.Equal(SettingsLoadOutcome.Loaded, outcome);
+        Assert.Equal(RecordingQuality.SameAsStream, s.Stream.RecordingQuality);
+        Assert.Equal(1920, s.Stream.RecordingWidth);
+        Assert.Equal(SessionValidator.MinHeight, s.Stream.RecordingHeight);
+        Assert.Equal(100_000, s.Stream.RecordingBitrateKbps);
+        Assert.Equal(SessionValidator.MaxWidth, s.Stream.VerticalRecordingWidth);
+        Assert.Equal(1920, s.Stream.VerticalRecordingHeight);
+        Assert.Equal(200, s.Stream.VerticalRecordingBitrateKbps);
+    }
 }
 
 public class CameraPresetTests
