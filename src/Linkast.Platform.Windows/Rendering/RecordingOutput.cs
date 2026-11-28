@@ -228,7 +228,13 @@ public sealed class RecordingOutput : IAsyncDisposable
         }
     }
 
-    public Task StopAsync(TimeSpan grace) => Process.StopAsync(grace);
+    public async Task StopAsync(TimeSpan grace)
+    {
+        Target.TryDetach();
+        await VideoPipe.DisposeAsync().ConfigureAwait(false);
+        await AudioPipe.DisposeAsync().ConfigureAwait(false);
+        await Process.StopAsync(grace).ConfigureAwait(false);
+    }
 
     public async ValueTask DisposeAsync()
     {

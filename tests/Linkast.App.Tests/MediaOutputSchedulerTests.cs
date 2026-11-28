@@ -391,4 +391,164 @@ public class MediaOutputSchedulerTests
         public override void Write(byte[] buffer, int offset, int count) => throw new IOException("Broken pipe");
         public override void Write(ReadOnlySpan<byte> buffer) => throw new IOException("Broken pipe");
     }
+
+    [Fact]
+    public void MediaOutputScheduler_acquires_shared_source_once_across_two_canvases()
+    {
+        using var manager = new D3D11DeviceManager();
+        using var mainCompositor = new D3D11SceneCompositor(manager, 64, 64);
+        using var vertCompositor = new D3D11SceneCompositor(manager, 64, 112);
+        using var cache = new SourceFrameCache(manager);
+
+        using var shared = new CountingWhiteSource("shared", manager);
+        using var vertOnly = new CountingWhiteSource("vert-only", manager);
+        var sources = new Dictionary<string, ID3D11SceneSource>(StringComparer.Ordinal)
+        {
+            ["shared"] = shared,
+            ["vert-only"] = vertOnly,
+        };
+
+        var mainPlacements = new Dictionary<string, NormalizedRect>(StringComparer.Ordinal)
+        {
+            ["shared"] = NormalizedRect.Full,
+        };
+        var vertPlacements = new Dictionary<string, NormalizedRect>(StringComparer.Ordinal)
+        {
+            ["shared"] = new NormalizedRect(0, 0, 1, 0.5),
+            ["vert-only"] = new NormalizedRect(0, 0.5, 1, 0.5),
+        };
+        var emptyCrops = new Dictionary<string, NormalizedRect>(StringComparer.Ordinal);
+        IReadOnlyList<string> mainStack = ["shared"];
+        IReadOnlyList<string> vertStack = ["shared", "vert-only"];
+
+        using var mainStream = new MemoryStream();
+        using var vertStream = new MemoryStream();
+        using var mainTarget = new D3D11OutputTarget(manager, "stream", 64, 64, mainStream, isPrimary: true);
+        using var vertTarget = new D3D11OutputTarget(manager, "vertical", 64, 112, vertStream, isPrimary: false);
+
+        var scheduler = new MediaOutputScheduler(
+            mainCompositor,
+            cache,
+            () => new SceneLayout { Name = "Main", ShowCapture = false },
+            () => sources,
+            [mainTarget],
+            targetFps: 60,
+            cropsProvider: () => emptyCrops,
+            placementsProvider: () => mainPlacements,
+            stackOrderProvider: () => mainStack);
+
+        scheduler.AddCanvas(new SchedulerCanvas(
+            "vertical",
+            vertCompositor,
+            () => vertPlacements,
+            () => emptyCrops,
+            () => vertStack,
+            [vertTarget]));
+
+        // Run 2 ticks because NV12 staging readback is double-buffered.
+        Assert.True(scheduler.RenderSingleFrame());
+        mainStream.SetLength(0);
+        vertStream.SetLength(0);
+        Assert.True(scheduler.RenderSingleFrame());
+
+        Assert.Equal(2, shared.AcquireCount);
+        Assert.Equal(2, vertOnly.AcquireCount);
+        Assert.Equal((long)mainTarget.Nv12ByteSize, mainStream.Length);
+        Assert.Equal((long)vertTarget.Nv12ByteSize, vertStream.Length);
+    }
+
+    [Fact]
+    public void MediaOutputScheduler_draws_vertical_only_source_only_on_vertical_canvas()
+    {
+        using var manager = new D3D11DeviceManager();
+        using var mainCompositor = new D3D11SceneCompositor(manager, 64, 64);
+        using var vertCompositor = new D3D11SceneCompositor(manager, 64, 64);
+        using var cache = new SourceFrameCache(manager);
+
+        using var vertOnly = new CountingWhiteSource("vert-only", manager);
+        var sources = new Dictionary<string, ID3D11SceneSource>(StringComparer.Ordinal) { ["vert-only"] = vertOnly };
+        var mainPlacements = new Dictionary<string, NormalizedRect>(StringComparer.Ordinal);
+        var vertPlacements = new Dictionary<string, NormalizedRect>(StringComparer.Ordinal) { ["vert-only"] = NormalizedRect.Full };
+        var emptyCrops = new Dictionary<string, NormalizedRect>(StringComparer.Ordinal);
+        IReadOnlyList<string> mainStack = [];
+        IReadOnlyList<string> vertStack = ["vert-only"];
+
+        using var mainStream = new MemoryStream();
+        using var vertStream = new MemoryStream();
+        using var mainTarget = new D3D11OutputTarget(manager, "stream", 64, 64, mainStream, isPrimary: true);
+        using var vertTarget = new D3D11OutputTarget(manager, "vertical", 64, 64, vertStream, isPrimary: false);
+
+        var scheduler = new MediaOutputScheduler(
+            mainCompositor,
+            cache,
+            () => new SceneLayout { Name = "Main", ShowCapture = false },
+            () => sources,
+            [mainTarget],
+            targetFps: 60,
+            cropsProvider: () => emptyCrops,
+            placementsProvider: () => mainPlacements,
+            stackOrderProvider: () => mainStack);
+
+        scheduler.AddCanvas(new SchedulerCanvas(
+            "vertical",
+            vertCompositor,
+            () => vertPlacements,
+            () => emptyCrops,
+            () => vertStack,
+            [vertTarget]));
+
+        scheduler.RenderSingleFrame();
+        mainStream.SetLength(0);
+        vertStream.SetLength(0);
+        scheduler.RenderSingleFrame();
+
+        // Main canvas has no placement for vert-only -> black (Y=16); vertical canvas -> white (Y=235).
+        byte mainY = mainStream.ToArray()[64 * 32 + 32];
+        byte vertY = vertStream.ToArray()[64 * 32 + 32];
+        Assert.True(mainY <= 17, $"Main Y was {mainY}");
+        Assert.True(vertY >= 230, $"Vertical Y was {vertY}");
+    }
+
+    private sealed class CountingWhiteSource : ID3D11SceneSource, IDisposable
+    {
+        private readonly Vortice.Direct3D11.ID3D11Texture2D _texture;
+
+        public CountingWhiteSource(string id, D3D11DeviceManager manager)
+        {
+            Id = id;
+            var desc = new Vortice.Direct3D11.Texture2DDescription
+            {
+                Width = 16,
+                Height = 16,
+                MipLevels = 1,
+                ArraySize = 1,
+                Format = Vortice.DXGI.Format.B8G8R8A8_UNorm,
+                SampleDescription = new Vortice.DXGI.SampleDescription(1, 0),
+                Usage = Vortice.Direct3D11.ResourceUsage.Default,
+                BindFlags = Vortice.Direct3D11.BindFlags.ShaderResource | Vortice.Direct3D11.BindFlags.RenderTarget,
+            };
+            _texture = manager.Device.CreateTexture2D(desc);
+            using var rtv = manager.Device.CreateRenderTargetView(_texture);
+            manager.Context.ClearRenderTargetView(rtv, new Vortice.Mathematics.Color4(1, 1, 1, 1));
+        }
+
+        public string Id { get; }
+        public Linkast.Core.Rendering.SceneSourceState State => Linkast.Core.Rendering.SceneSourceState.Capturing;
+        public event EventHandler<Linkast.Core.Rendering.SceneSourceState>? StateChanged { add { } remove { } }
+        public int AcquireCount { get; private set; }
+
+        public ValueTask<Vortice.Direct3D11.ID3D11Texture2D?> AcquireFrameAsync(CancellationToken ct = default)
+        {
+            AcquireCount++;
+            return ValueTask.FromResult<Vortice.Direct3D11.ID3D11Texture2D?>(_texture);
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            _texture.Dispose();
+            return ValueTask.CompletedTask;
+        }
+
+        public void Dispose() => _texture.Dispose();
+    }
 }

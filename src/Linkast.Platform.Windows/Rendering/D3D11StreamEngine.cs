@@ -41,6 +41,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
     private readonly IFramingService? _framing;
     private readonly AudioLevelBus? _audioLevels;
     private D3D11SceneCompositor? _compositor;
+    private D3D11SceneCompositor? _verticalCompositor;
     private SourceFrameCache? _frameCache;
     private MediaOutputScheduler? _scheduler;
     private UnifiedAudioMixer? _audioMixer;
@@ -210,6 +211,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
         _runCts?.Dispose();
         _frameCache?.Dispose();
         _compositor?.Dispose();
+        _verticalCompositor?.Dispose();
 
         foreach (var src in _sources.Values)
         {
@@ -366,10 +368,43 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
             var primaryEncoder = session.Broadcast ? session.Encoder : (session.Recording?.Encoder ?? session.Encoder);
             var (canvasWidth, canvasHeight) = ResolveMainCanvasSize(session, primaryEncoder);
 
+            string? verticalPath = null;
+            VerticalRecordingSpec? verticalSpec = null;
+            if (session.VerticalRecording is { } vertical)
+            {
+                if (canvasWidth <= canvasHeight)
+                {
+                    if (_logger is not null)
+                    {
+                        LogVerticalSkipped(_logger);
+                    }
+                    DiagnosticLine?.Invoke(this, "Vertical recording skipped: the stream is already vertical.");
+                }
+                else
+                {
+                    try
+                    {
+                        Directory.CreateDirectory(vertical.Folder);
+                        verticalPath = RecordingFiles.NewPath(vertical.Folder, attemptNow, "vertical");
+                        verticalSpec = vertical;
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+                    {
+                        var folderError = new StreamError(ErrorCategory.Configuration, "recording.folder", "The recordings folder can't be created. Choose another folder.", _redactor.Redact(ex.Message));
+                        RecordingFailed?.Invoke(this, new RecordingFailedEventArgs("vertical", folderError));
+                    }
+                }
+            }
+
             // The compositor outlives a stream; a new stream may have another size (a vertical scene, a new
             // resolution), and FFmpeg must get frames of the size it was told.
             _compositor ??= new D3D11SceneCompositor(_deviceManager, canvasWidth, canvasHeight);
             _compositor.ResizeCanvas(canvasWidth, canvasHeight);
+            if (verticalSpec is not null)
+            {
+                _verticalCompositor ??= new D3D11SceneCompositor(_deviceManager, verticalSpec.Encoder.Width, verticalSpec.Encoder.Height);
+                _verticalCompositor.ResizeCanvas(verticalSpec.Encoder.Width, verticalSpec.Encoder.Height);
+            }
             _frameCache ??= new SourceFrameCache(_deviceManager);
 
             SetupSources(session, canvasWidth, canvasHeight);
@@ -630,7 +665,22 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
             if (session.Broadcast && session.Recording is { Encoder: { } recEncoder } && primaryRecordingPath is not null)
             {
                 await TryStartSecondaryRecordingAsync(
-                    "recording", primaryRecordingPath, recEncoder, scheduler, mixer, secondaryOutputs, savedRecordingPaths, ct).ConfigureAwait(false);
+                    "recording", "main", primaryRecordingPath, recEncoder, scheduler, mixer, secondaryOutputs, savedRecordingPaths, ct).ConfigureAwait(false);
+            }
+
+            // Secondary vertical recording (portrait canvas alongside a landscape stream or recording).
+            if (verticalSpec is not null && verticalPath is not null && _verticalCompositor is not null)
+            {
+                var vLayout = verticalSpec.Layout;
+                scheduler.AddCanvas(new SchedulerCanvas(
+                    "vertical",
+                    _verticalCompositor,
+                    () => vLayout.Placements,
+                    () => vLayout.Crops,
+                    () => vLayout.Stack,
+                    []));
+                await TryStartSecondaryRecordingAsync(
+                    "vertical", "vertical", verticalPath, verticalSpec.Encoder, scheduler, mixer, secondaryOutputs, savedRecordingPaths, ct).ConfigureAwait(false);
             }
 
             if (_logger is not null)
@@ -672,7 +722,10 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 () => Volatile.Read(ref _latestProgress),
                 secondaryOutputs,
                 secondaryWakeup,
+                scheduler,
                 mixer,
+                videoPipe,
+                audioPipe,
                 ct).ConfigureAwait(false);
         }
         catch (StreamFailureException ex)
@@ -736,7 +789,10 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
         Func<EncoderProgress?> latestProgress,
         List<RecordingOutput> secondaryOutputs,
         SemaphoreSlim secondaryWakeup,
+        MediaOutputScheduler scheduler,
         UnifiedAudioMixer mixer,
+        NamedPipeServerStream primaryVideoPipe,
+        NamedPipeServerStream primaryAudioPipe,
         CancellationToken ct)
     {
         var attemptStart = _time.GetTimestamp();
@@ -775,6 +831,13 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
             if (ct.IsCancellationRequested)
             {
+                // Stop producers first so every output ends on the exact same video frame and audio slice,
+                // then close pipes (EOF) so no FFmpeg blocks on ReadFile while finalizing its container.
+                await scheduler.DisposeAsync().ConfigureAwait(false);
+                await mixer.DisposeAsync().ConfigureAwait(false);
+                await primaryVideoPipe.DisposeAsync().ConfigureAwait(false);
+                await primaryAudioPipe.DisposeAsync().ConfigureAwait(false);
+
                 var stops = new List<Task>(1 + secondaryOutputs.Count) { process.StopAsync(_options.GracefulStopTimeout) };
                 foreach (var r in secondaryOutputs)
                 {
@@ -898,6 +961,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
     private async Task TryStartSecondaryRecordingAsync(
         string name,
+        string canvasName,
         string path,
         EncoderSettings encoder,
         MediaOutputScheduler scheduler,
@@ -919,6 +983,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 line => DiagnosticLine?.Invoke(this, line),
                 _logger);
 
+            scheduler.AddTarget(canvasName, output.Target);
             var error = await output.HandshakeAsync(scheduler, _options.ConnectTimeout, ct).ConfigureAwait(false);
             if (error is not null)
             {
@@ -927,12 +992,12 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                     LogSecondaryRecordingFailed(_logger, name, error.Code, error.UserMessage);
                 }
 
+                output.Target.TryDetach();
                 await output.DisposeAsync().ConfigureAwait(false);
                 RecordingFailed?.Invoke(this, new RecordingFailedEventArgs(name, error));
                 return;
             }
 
-            scheduler.AddTarget(output.Target);
             mixer.AddSink(output.Name, output.AudioPipe);
             secondaryOutputs.Add(output);
             savedRecordingPaths.Add(output.Path);
@@ -941,6 +1006,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
         {
             if (output is not null)
             {
+                output.Target.TryDetach();
                 await output.DisposeAsync().ConfigureAwait(false);
             }
 
@@ -950,6 +1016,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
         {
             if (output is not null)
             {
+                output.Target.TryDetach();
                 await output.DisposeAsync().ConfigureAwait(false);
             }
 
@@ -1079,13 +1146,23 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 }
 
                 var px = LayerGeometry.ToPixels(b.Placement, canvasWidth, canvasHeight);
+                var camWidth = px.Width;
+                var camHeight = px.Height;
+                if (session.VerticalRecording is { } vert
+                    && vert.Layout.Placements.TryGetValue(b.Layer.LayerId, out var vPlacement))
+                {
+                    var vPx = LayerGeometry.ToPixels(vPlacement, vert.Encoder.Width, vert.Encoder.Height);
+                    camWidth = Math.Max(camWidth, vPx.Width);
+                    camHeight = Math.Max(camHeight, vPx.Height);
+                }
+
                 var camSource = new CameraD3D11SceneSource(
                     b.Layer.LayerId,
                     _deviceManager,
                     b.Layer,
                     _cameraService,
-                    Math.Max(64, px.Width),
-                    Math.Max(64, px.Height),
+                    Math.Max(64, camWidth),
+                    Math.Max(64, camHeight),
                     _segmentation,
                     _backgroundImages,
                     _framing,
@@ -1672,4 +1749,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
     [LoggerMessage(LogLevel.Warning, "Secondary recording '{Name}' stopped ({Code}): {Message}")]
     private static partial void LogSecondaryRecordingFailed(ILogger logger, string name, string code, string message);
+
+    [LoggerMessage(LogLevel.Information, "Vertical recording skipped: the stream is already vertical.")]
+    private static partial void LogVerticalSkipped(ILogger logger);
 }

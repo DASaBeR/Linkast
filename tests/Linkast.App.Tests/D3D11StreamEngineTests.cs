@@ -601,4 +601,85 @@ public class D3D11StreamEngineTests
         public Task Completion { get; } = new TaskCompletionSource().Task;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
+
+    [SkippableFact]
+    public async Task D3D11StreamEngine_records_main_1080p_and_vertical_1080x1920_in_sync()
+    {
+        FfmpegInstallation? ffmpeg = null;
+        try { ffmpeg = await FfmpegLocator.LocateAsync(); } catch { }
+        Skip.If(ffmpeg is null, "FFmpeg not available on machine.");
+
+        using var deviceManager = new D3D11DeviceManager();
+        var tempFolder = Path.Combine(Path.GetTempPath(), "linkast_vert_" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(tempFolder);
+        try
+        {
+            await using var engine = new D3D11StreamEngine(
+                ffmpeg,
+                new TestOutputTransport(),
+                deviceManager: deviceManager,
+                options: new EngineOptions { ConnectTimeout = TimeSpan.FromSeconds(10) });
+
+            var saved = new List<string>();
+            engine.RecordingSaved += (_, path) => saved.Add(path);
+
+            var vertLayout = new CanvasLayout(
+                new Dictionary<string, NormalizedRect>(),
+                new Dictionary<string, NormalizedRect>(),
+                []);
+
+            var session = ValidSession() with
+            {
+                Encoder = new EncoderSettings("libx264", 1920, 1080, 30, 4000, Preset: "ultrafast"),
+                Broadcast = false,
+                CanvasWidth = 1920,
+                CanvasHeight = 1080,
+                Recording = new RecordingSpec(tempFolder),
+                VerticalRecording = new VerticalRecordingSpec(
+                    tempFolder,
+                    new EncoderSettings("libx264", 1080, 1920, 30, 4000, Preset: "ultrafast"),
+                    vertLayout),
+                Reconnect = ReconnectPolicy.Disabled,
+            };
+
+            await engine.StartAsync(session);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (engine.State != StreamState.Live && engine.State != StreamState.Failed && sw.ElapsedMilliseconds < 10000)
+            {
+                await Task.Delay(50);
+            }
+
+            Assert.Equal(StreamState.Live, engine.State);
+            await Task.Delay(1200);
+            await engine.StopAsync();
+
+            Assert.Equal(2, saved.Count);
+            var mainFile = Assert.Single(saved, p => !p.Contains("vertical.mkv", StringComparison.OrdinalIgnoreCase));
+            var vertFile = Assert.Single(saved, p => p.EndsWith(" vertical.mkv", StringComparison.OrdinalIgnoreCase));
+
+            var mainInfo = await ProbeOutputAsync(ffmpeg.Path, mainFile);
+            var vertInfo = await ProbeOutputAsync(ffmpeg.Path, vertFile);
+            Assert.Contains("1920x1080", mainInfo, StringComparison.Ordinal);
+            Assert.Contains("1080x1920", vertInfo, StringComparison.Ordinal);
+
+            var mainDur = ParseDuration(mainInfo);
+            var vertDur = ParseDuration(vertInfo);
+            Assert.True(mainDur.TotalSeconds > 0.5);
+            Assert.InRange(Math.Abs((mainDur - vertDur).TotalSeconds), 0, 0.25);
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder))
+            {
+                try { Directory.Delete(tempFolder, true); } catch { }
+            }
+        }
+    }
+
+    private static TimeSpan ParseDuration(string ffmpegInfo)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(ffmpegInfo, @"Duration: (\d\d:\d\d:\d\d\.\d\d)");
+        Assert.True(m.Success, ffmpegInfo);
+        return TimeSpan.ParseExact(m.Groups[1].Value, @"hh\:mm\:ss\.ff", System.Globalization.CultureInfo.InvariantCulture);
+    }
 }
