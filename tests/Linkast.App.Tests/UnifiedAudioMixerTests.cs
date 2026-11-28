@@ -448,4 +448,66 @@ public class UnifiedAudioMixerTests
         var self = (uint)Environment.ProcessId;
         Assert.Contains(ProgramProcesses.Snapshot(), p => p.ProcessId == self && p.ExeName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
     }
+
+    [Fact]
+    public async Task UnifiedAudioMixer_fans_out_identical_audio_and_resync_silence_to_secondary_sinks()
+    {
+        var hub = new AudioCaptureHub();
+        using var primary = new MemoryStream();
+        using var secondary = new MemoryStream();
+
+        var mixer = new UnifiedAudioMixer(hub, primary, Stopwatch.GetTimestamp() - Stopwatch.Frequency);
+        mixer.AddSink("recording", secondary);
+        mixer.AddTestChannel("game", 1.0);
+        mixer.EnqueueTestChannelData("game", Sound(150));
+
+        await mixer.CatchUpAsync(new float[960], new byte[1920], new byte[192000], CancellationToken.None);
+
+        Assert.True(primary.Length > 0);
+        Assert.Equal(primary.ToArray(), secondary.ToArray());
+
+        await mixer.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task UnifiedAudioMixer_detaches_failing_secondary_sink_without_stopping_primary()
+    {
+        var hub = new AudioCaptureHub();
+        using var primary = new MemoryStream();
+        using var failing = new ThrowingAudioSinkStream();
+
+        var mixer = new UnifiedAudioMixer(hub, primary, Stopwatch.GetTimestamp() - 10 * Stopwatch.Frequency);
+        mixer.AddSink("recording", failing);
+        var detached = new List<string>();
+        mixer.SinkDetached += (_, name) => detached.Add(name);
+
+        mixer.AddTestChannel("game", 1.0);
+        mixer.EnqueueTestChannelData("game", Sound(20));
+
+        Assert.True(await mixer.MixOneSliceAsync() > 0);
+        Assert.True(await mixer.MixOneSliceAsync() > 0);
+
+        Assert.Equal(["recording"], detached);
+        Assert.Equal(2 * 1920, primary.Length);
+
+        await mixer.DisposeAsync();
+    }
+
+    private sealed class ThrowingAudioSinkStream : Stream
+    {
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => 0;
+        public override long Position { get => 0; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new IOException("Broken audio pipe");
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            Task.FromException(new IOException("Broken audio pipe"));
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) =>
+            ValueTask.FromException(new IOException("Broken audio pipe"));
+    }
 }

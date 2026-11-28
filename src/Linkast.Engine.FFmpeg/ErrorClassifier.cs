@@ -19,7 +19,7 @@ public static class ErrorClassifier
         // Encoder
         new(ErrorCategory.Encoder, "encoder.nvenc.unavailable", "The NVIDIA encoder is unavailable. Update the GPU driver or choose another encoder.",
             ["No NVENC capable devices found", "Cannot load nvcuda.dll", "Cannot load nvEncodeAPI", "Driver does not support the required nvenc API version"]),
-        new(ErrorCategory.Encoder, "encoder.nvenc.session", "The NVIDIA encoder could not start a session. Close other apps using NVENC or choose another encoder.",
+        new(ErrorCategory.Encoder, "encoder.nvenc.session", "Your graphics card refused another encoder. Update the graphics driver or turn off one recording.",
             ["OpenEncodeSessionEx failed", "InitializeEncoder failed", "incompatible client key"]),
         new(ErrorCategory.Encoder, "encoder.amf.unavailable", "The AMD encoder is unavailable on this system.",
             ["amfrt64.dll failed to open", "Failed to create  hardware device context (AMF)", "Failed to create hardware device context (AMF)"]),
@@ -45,6 +45,10 @@ public static class ErrorClassifier
         // Audio
         new(ErrorCategory.Audio, "audio.pipe", "An audio source stopped delivering data.",
             [@"\\.\pipe\linkast-", "pipe\\linkast-"]),
+
+        // Storage (checked before Network because FFmpeg often mentions av_interleaved_write_frame on the same or next line)
+        new(ErrorCategory.Configuration, "recording.disk_full", "The disk is full. Free some space or choose another recordings folder.",
+            ["No space left on device"]),
 
         // Network (as seen from FFmpeg; the relay usually reports a more precise reason)
         new(ErrorCategory.Network, "network.closed.early", "The server is still closing the previous connection with this stream key. Linkast will retry in a moment.",

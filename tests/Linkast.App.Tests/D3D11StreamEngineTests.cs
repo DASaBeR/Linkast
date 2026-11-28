@@ -448,4 +448,157 @@ public class D3D11StreamEngineTests
             }
         }
     }
+
+    [SkippableFact]
+    public async Task D3D11StreamEngine_record_only_uses_custom_recording_encoder_size()
+    {
+        FfmpegInstallation? ffmpeg = null;
+        try { ffmpeg = await FfmpegLocator.LocateAsync(); } catch { }
+        Skip.If(ffmpeg is null, "FFmpeg not available on machine.");
+
+        using var deviceManager = new D3D11DeviceManager();
+        var tempFolder = Path.Combine(Path.GetTempPath(), "linkast_rec_custom_" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(tempFolder);
+        try
+        {
+            await using var engine = new D3D11StreamEngine(
+                ffmpeg,
+                new TestOutputTransport(),
+                deviceManager: deviceManager,
+                options: new EngineOptions { ConnectTimeout = TimeSpan.FromSeconds(5) });
+
+            var saved = new List<string>();
+            engine.RecordingSaved += (_, path) => saved.Add(path);
+
+            var session = ValidSession() with
+            {
+                Encoder = EncoderSettings.Default1080p60("libx264"),
+                Broadcast = false,
+                Recording = new RecordingSpec(tempFolder)
+                {
+                    Encoder = new EncoderSettings("libx264", 1280, 720, 60, 4000, Preset: "ultrafast"),
+                },
+                Reconnect = ReconnectPolicy.Disabled,
+            };
+
+            await engine.StartAsync(session);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (engine.State != StreamState.Live && engine.State != StreamState.Failed && sw.ElapsedMilliseconds < 8000)
+            {
+                await Task.Delay(50);
+            }
+
+            Assert.Equal(StreamState.Live, engine.State);
+            await Task.Delay(500);
+            await engine.StopAsync();
+
+            var file = Assert.Single(saved);
+            Assert.True(File.Exists(file));
+            Assert.True(await MediaProbe.HasAudioAsync(ffmpeg.Path, file));
+            var info = await ProbeOutputAsync(ffmpeg.Path, file);
+            Assert.Contains("1280x720", info, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder))
+            {
+                try { Directory.Delete(tempFolder, true); } catch { }
+            }
+        }
+    }
+
+    [SkippableFact]
+    public async Task D3D11StreamEngine_keeps_stream_live_when_secondary_recording_fails()
+    {
+        FfmpegInstallation? ffmpeg = null;
+        try { ffmpeg = await FfmpegLocator.LocateAsync(); } catch { }
+        Skip.If(ffmpeg is null, "FFmpeg not available on machine.");
+
+        using var deviceManager = new D3D11DeviceManager();
+        var tempFolder = Path.Combine(Path.GetTempPath(), "linkast_sec_fail_" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(tempFolder);
+        var streamFile = Path.Combine(tempFolder, "stream.flv");
+        try
+        {
+            await using var engine = new D3D11StreamEngine(
+                ffmpeg,
+                new LocalFileTransport(streamFile),
+                deviceManager: deviceManager,
+                options: new EngineOptions { ConnectTimeout = TimeSpan.FromSeconds(5), MinBytesForLive = 100 });
+
+            var failed = new List<RecordingFailedEventArgs>();
+            engine.RecordingFailed += (_, e) => failed.Add(e);
+
+            var session = ValidSession() with
+            {
+                Encoder = new EncoderSettings("libx264", 640, 360, 30, 1000, Preset: "ultrafast"),
+                Broadcast = true,
+                Recording = new RecordingSpec(tempFolder)
+                {
+                    Encoder = new EncoderSettings("not_a_real_encoder", 640, 360, 30, 1000),
+                },
+                Reconnect = ReconnectPolicy.Disabled,
+            };
+
+            await engine.StartAsync(session);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (engine.State != StreamState.Live && engine.State != StreamState.Failed && sw.ElapsedMilliseconds < 8000)
+            {
+                await Task.Delay(50);
+            }
+
+            Assert.Equal(StreamState.Live, engine.State);
+            var failure = Assert.Single(failed);
+            Assert.Equal("recording", failure.OutputName);
+
+            await Task.Delay(300);
+            Assert.Equal(StreamState.Live, engine.State);
+            await engine.StopAsync();
+            Assert.Equal(StreamState.Stopped, engine.State);
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder))
+            {
+                try { Directory.Delete(tempFolder, true); } catch { }
+            }
+        }
+    }
+
+    private static async Task<string> ProbeOutputAsync(string ffmpegPath, string file)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo(ffmpegPath)
+        {
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var a in new[] { "-hide_banner", "-nostdin", "-i", file })
+        {
+            psi.ArgumentList.Add(a);
+        }
+
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        _ = p.StandardOutput.ReadToEndAsync();
+        var err = await p.StandardError.ReadToEndAsync();
+        await p.WaitForExitAsync();
+        return err;
+    }
+
+    private sealed class LocalFileTransport(string publishFile) : IOutputTransport
+    {
+        public Task<IOutputLease> OpenAsync(Destination destination, NetworkSelection network, CancellationToken cancellationToken) =>
+            Task.FromResult<IOutputLease>(new LocalFileLease(publishFile));
+    }
+
+    private sealed class LocalFileLease(string publishFile) : IOutputLease
+    {
+        public string PublishUrl => publishFile;
+        public string TcUrl => string.Empty;
+        public bool IsMeasured => true;
+        public NetworkSnapshot Snapshot() => new(1024, 0, 0, null, null, null, true);
+        public Task Completion { get; } = new TaskCompletionSource().Task;
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
 }

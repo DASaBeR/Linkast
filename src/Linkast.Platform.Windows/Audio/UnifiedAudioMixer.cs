@@ -36,8 +36,11 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
     private const int SamplesPerSlice = 480 * TargetChannels;
     private const int BytesPerSlice = 480 * BlockAlign;
 
+    private sealed record AudioSink(string Name, Stream Pipe, bool IsPrimary);
+
     private readonly AudioCaptureHub _hub;
-    private readonly Stream _audioPipeStream;
+    private readonly Lock _sinksLock = new();
+    private AudioSink[] _sinks;
     private readonly long _streamStartTimestamp;
     private readonly ILogger? _logger;
     private readonly Func<TimeSpan>? _videoLostTime;
@@ -78,6 +81,9 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
     private long _maxLagTicks;
     private long _maxLeadTicks;
 
+    /// <summary>Raised when a secondary audio sink's pipe fails and is detached without stopping the primary output.</summary>
+    public event EventHandler<string>? SinkDetached;
+
     /// <param name="videoLostTime">
     /// The time the picture has lost so far (frames the render loop could not deliver). The sound drops the same
     /// time so both stay on one timeline. Null: the wall clock alone.
@@ -90,12 +96,49 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
         Func<TimeSpan>? videoLostTime = null)
     {
         _hub = hub ?? throw new ArgumentNullException(nameof(hub));
-        _audioPipeStream = audioPipeStream ?? throw new ArgumentNullException(nameof(audioPipeStream));
+        ArgumentNullException.ThrowIfNull(audioPipeStream);
+        _sinks = [new AudioSink("stream", audioPipeStream, IsPrimary: true)];
         _streamStartTimestamp = streamStartTimestamp > 0 ? streamStartTimestamp : Stopwatch.GetTimestamp();
         _logger = logger;
         _videoLostTime = videoLostTime;
 
         _padder = new SilencePadder(BytesPerSec, BlockAlign, TimeSpan.FromMilliseconds(40));
+    }
+
+    /// <summary>Attaches a secondary audio pipe that receives the same mixed PCM slices starting from the next slice.</summary>
+    public void AddSink(string name, Stream pipe)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(pipe);
+
+        lock (_sinksLock)
+        {
+            var filtered = _sinks.Where(s => !string.Equals(s.Name, name, StringComparison.Ordinal)).ToArray();
+            _sinks = [.. filtered, new AudioSink(name, pipe, IsPrimary: false)];
+        }
+    }
+
+    /// <summary>Detaches a secondary audio sink by name.</summary>
+    public void RemoveSink(string name) => TryRemoveSink(name);
+
+    private bool TryRemoveSink(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+
+        lock (_sinksLock)
+        {
+            var current = _sinks;
+            if (!current.Any(s => !s.IsPrimary && string.Equals(s.Name, name, StringComparison.Ordinal)))
+            {
+                return false;
+            }
+
+            _sinks = [.. current.Where(s => s.IsPrimary || !string.Equals(s.Name, name, StringComparison.Ordinal))];
+            return true;
+        }
     }
 
     public long TotalBytesWritten => Interlocked.Read(ref _totalBytesWritten);
@@ -210,17 +253,38 @@ public sealed partial class UnifiedAudioMixer : IAsyncDisposable, ILiveAudioCont
         }
     }
 
-    /// <summary>Writes to FFmpeg's audio pipe, timing it: a write that waits means FFmpeg is not reading.</summary>
+    /// <summary>Writes to every attached audio pipe, timing the primary sink: a write that waits means FFmpeg is not reading.</summary>
     private async ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct)
     {
-        var began = Stopwatch.GetTimestamp();
-        await _audioPipeStream.WriteAsync(data, ct).ConfigureAwait(false);
-        var took = Stopwatch.GetTimestamp() - began;
-        Interlocked.Add(ref _totalBytesWritten, data.Length);
-        if (took > Stopwatch.Frequency / 10)
+        var sinks = Volatile.Read(ref _sinks);
+        foreach (var sink in sinks)
         {
-            Interlocked.Increment(ref _slowWrites);
-            StoreMax(ref _longestWriteTicks, took);
+            if (sink.IsPrimary)
+            {
+                var began = Stopwatch.GetTimestamp();
+                await sink.Pipe.WriteAsync(data, ct).ConfigureAwait(false);
+                var took = Stopwatch.GetTimestamp() - began;
+                Interlocked.Add(ref _totalBytesWritten, data.Length);
+                if (took > Stopwatch.Frequency / 10)
+                {
+                    Interlocked.Increment(ref _slowWrites);
+                    StoreMax(ref _longestWriteTicks, took);
+                }
+            }
+            else
+            {
+                try
+                {
+                    await sink.Pipe.WriteAsync(data, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+                {
+                    if (TryRemoveSink(sink.Name))
+                    {
+                        SinkDetached?.Invoke(this, sink.Name);
+                    }
+                }
+            }
         }
     }
 

@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using Linkast.Core;
 using Linkast.Engine.FFmpeg;
 using Linkast.Networking;
+using Linkast.Platform.Windows.Rendering;
 using Xunit.Abstractions;
 
 namespace Linkast.IntegrationTests;
@@ -104,6 +105,53 @@ public sealed partial class RecordingIntegrationTests(ITestOutputHelper output) 
         Assert.False(File.Exists(saved[1]));
         var remuxed = await DurationAsync(mp4!);
         Assert.InRange(remuxed.TotalSeconds, only.TotalSeconds - 0.5, only.TotalSeconds + 0.5);
+    }
+
+    [SkippableFact]
+    public async Task Streams_720p_and_records_1080p_simultaneously_with_synced_audio()
+    {
+        Skip.If(_ffmpeg is null, "ffmpeg not found.");
+        Skip.IfNot(IngestReachable(), "MediaMTX not running.");
+
+        using var deviceManager = new D3D11DeviceManager();
+        var key = "dual-" + Guid.NewGuid().ToString("N")[..8];
+        await using var engine = new D3D11StreamEngine(
+            _ffmpeg!,
+            new RelayOutputTransport(),
+            deviceManager: deviceManager,
+            options: new EngineOptions { ConnectTimeout = TimeSpan.FromSeconds(20) });
+
+        var saved = new List<string>();
+        engine.RecordingSaved += (_, path) => saved.Add(path);
+        engine.StateChanged += (_, e) => output.WriteLine($"state {e.Previous} -> {e.Current} {e.Error}");
+
+        var session = new StreamSession(
+            new BlankCanvasSource(),
+            [new SystemAudioSource(null, "Desktop") { Optional = true }],
+            new EncoderSettings("libx264", 1280, 720, 30, 3000, Preset: "ultrafast"),
+            new Destination("MediaMTX", new Uri("rtmp://127.0.0.1:1935/live"), new Secret(key)),
+            NetworkSelection.SystemDefault,
+            ReconnectPolicy.Default)
+        {
+            CanvasWidth = 1920,
+            CanvasHeight = 1080,
+            Recording = new RecordingSpec(_folder)
+            {
+                Encoder = new EncoderSettings("libx264", 1920, 1080, 30, 6000, Preset: "ultrafast"),
+            },
+        };
+
+        await engine.StartAsync(session);
+        await WaitUntilAsync(() => engine.State == StreamState.Live, TimeSpan.FromSeconds(25));
+        await Task.Delay(5000);
+        await engine.StopAsync();
+
+        var file = Assert.Single(saved);
+        Assert.True(await MediaProbe.HasAudioAsync(_ffmpeg!.Path, file));
+        var (_, info) = await RunAsync("-hide_banner", "-nostdin", "-i", file);
+        Assert.Contains("1920x1080", info, StringComparison.Ordinal);
+        var duration = await DurationAsync(file);
+        Assert.True(duration.TotalSeconds > 3);
     }
 
     private async Task<TimeSpan> DurationAsync(string file)

@@ -51,6 +51,19 @@ public sealed record StreamSession(
 
     /// <summary>Also records a separate vertical canvas to a local file, or null.</summary>
     public VerticalRecordingSpec? VerticalRecording { get; init; }
+
+    /// <summary>Main compositor canvas size (largest output that uses it), or 0 to derive from the encoder.</summary>
+    public int CanvasWidth { get; init; }
+
+    public int CanvasHeight { get; init; }
+}
+
+/// <summary>Raised when a secondary recording output fails while the primary session continues.</summary>
+public sealed class RecordingFailedEventArgs(string outputName, StreamError error) : EventArgs
+{
+    public string OutputName { get; } = outputName;
+
+    public StreamError Error { get; } = error;
 }
 
 /// <summary>One captured game, window or display in a stream, and where it starts on the canvas.</summary>

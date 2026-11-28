@@ -44,6 +44,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
     private SourceFrameCache? _frameCache;
     private MediaOutputScheduler? _scheduler;
     private UnifiedAudioMixer? _audioMixer;
+    private volatile IReadOnlyList<RecordingOutput> _secondaryOutputs = [];
 
     private readonly ConcurrentDictionary<string, ID3D11SceneSource> _sources = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, NormalizedRect> _layerCrops = new(StringComparer.Ordinal);
@@ -132,6 +133,8 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
     public event EventHandler<string>? DiagnosticLine;
 
     public event EventHandler<string>? RecordingSaved;
+
+    public event EventHandler<RecordingFailedEventArgs>? RecordingFailed;
 
     public void RegisterSource(string key, ID3D11SceneSource source)
     {
@@ -314,7 +317,9 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
     {
         IOutputLease? lease = null;
         FfmpegProcess? process = null;
-        string? recordingPath = null;
+        D3D11OutputTarget? primaryTarget = null;
+        var secondaryOutputs = new List<RecordingOutput>();
+        var savedRecordingPaths = new List<string>();
 
         // Each attempt starts a new FFmpeg whose frame count starts at 0. The last attempt's progress (frame
         // 1800, say) left here made every new attempt look stalled: its frames never passed the old count,
@@ -331,26 +336,43 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 })
                 : new RecordOnlyLease();
 
+            var attemptNow = _time.GetLocalNow().DateTime;
+            string? primaryRecordingPath = null;
             if (session.Recording is { } recording)
             {
                 try
                 {
                     Directory.CreateDirectory(recording.Folder);
-                    recordingPath = RecordingFiles.NewPath(recording.Folder, _time.GetLocalNow().DateTime);
+                    primaryRecordingPath = RecordingFiles.NewPath(recording.Folder, attemptNow);
+                    if (!session.Broadcast || recording.Encoder is null)
+                    {
+                        savedRecordingPaths.Add(primaryRecordingPath);
+                    }
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
                 {
-                    return new StreamError(ErrorCategory.Configuration, "recording.folder", "The recordings folder can't be created. Choose another folder.", _redactor.Redact(ex.Message));
+                    if (!session.Broadcast)
+                    {
+                        return new StreamError(ErrorCategory.Configuration, "recording.folder", "The recordings folder can't be created. Choose another folder.", _redactor.Redact(ex.Message));
+                    }
+
+                    // A recording folder failure while broadcasting must not prevent going live.
+                    var folderError = new StreamError(ErrorCategory.Configuration, "recording.folder", "The recordings folder can't be created. Choose another folder.", _redactor.Redact(ex.Message));
+                    RecordingFailed?.Invoke(this, new RecordingFailedEventArgs("recording", folderError));
+                    primaryRecordingPath = null;
                 }
             }
 
+            var primaryEncoder = session.Broadcast ? session.Encoder : (session.Recording?.Encoder ?? session.Encoder);
+            var (canvasWidth, canvasHeight) = ResolveMainCanvasSize(session, primaryEncoder);
+
             // The compositor outlives a stream; a new stream may have another size (a vertical scene, a new
             // resolution), and FFmpeg must get frames of the size it was told.
-            _compositor ??= new D3D11SceneCompositor(_deviceManager, session.Encoder.Width, session.Encoder.Height);
-            _compositor.ResizeCanvas(session.Encoder.Width, session.Encoder.Height);
+            _compositor ??= new D3D11SceneCompositor(_deviceManager, canvasWidth, canvasHeight);
+            _compositor.ResizeCanvas(canvasWidth, canvasHeight);
             _frameCache ??= new SourceFrameCache(_deviceManager);
 
-            SetupSources(session);
+            SetupSources(session, canvasWidth, canvasHeight);
 
             if (_layoutApplied)
             {
@@ -429,6 +451,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
             var videoPipePath = @"\\.\pipe\" + videoPipeName;
             var audioPipePath = @"\\.\pipe\" + audioPipeName;
 
+            var primaryNv12Size = (int)(primaryEncoder.Width * primaryEncoder.Height * 1.5);
             await using var videoPipe = new NamedPipeServerStream(
                 videoPipeName,
                 PipeDirection.Out,
@@ -436,7 +459,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 PipeTransmissionMode.Byte,
                 PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly,
                 0,
-                (int)_compositor.Nv12ByteSize * 4);
+                primaryNv12Size * 4);
 
             await using var audioPipe = new NamedPipeServerStream(
                 audioPipeName,
@@ -447,16 +470,23 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 0,
                 192000);
 
+            var primaryName = session.Broadcast ? "stream" : "recording";
+            primaryTarget = new D3D11OutputTarget(_deviceManager, primaryName, primaryEncoder.Width, primaryEncoder.Height, videoPipe, isPrimary: true, _logger);
+
+            var primaryRecordingArg = session.Broadcast
+                ? (session.Recording is { Encoder: null } ? primaryRecordingPath : null)
+                : primaryRecordingPath;
+
             var job = new SinglePipeFfmpegJob(
                 VideoPipePath: videoPipePath,
-                Width: session.Encoder.Width,
-                Height: session.Encoder.Height,
-                Fps: session.Encoder.Fps,
+                Width: primaryEncoder.Width,
+                Height: primaryEncoder.Height,
+                Fps: primaryEncoder.Fps,
                 AudioPipePath: audioPipePath,
-                Encoder: session.Encoder,
+                Encoder: primaryEncoder,
                 PublishUrl: session.Broadcast ? lease.PublishUrl : null,
                 TcUrl: session.Broadcast && lease.TcUrl.Length > 0 ? lease.TcUrl : null,
-                RecordingPath: recordingPath);
+                RecordingPath: primaryRecordingArg);
 
             var args = FfmpegArgumentBuilder.BuildSinglePipe(job);
             DiagnosticLine?.Invoke(this, _redactor.Redact("ffmpeg: " + string.Join(' ', args)));
@@ -489,8 +519,8 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 _frameCache,
                 () => { lock (_layoutLock) return _currentLayout; },
                 () => _sources,
-                videoPipe,
-                session.Encoder.Fps,
+                [primaryTarget],
+                primaryEncoder.Fps,
                 _logger,
                 cropsProvider: () => _layerCrops,
                 placementsProvider: () => _layerPlacements,
@@ -594,10 +624,56 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 LogAudioStarted(_logger, string.Join(", ", _liveAudio.Keys.Order(StringComparer.OrdinalIgnoreCase).Select(k =>
                     string.Create(CultureInfo.InvariantCulture, $"{k} {(_liveGains.TryGetValue(k, out var g) ? g : _liveAudio[k].Gain) * 100:0}%"))), _noiseRemoval.ToString());
             }
+
+            // Secondary main recording (separate quality while broadcasting). Started after the stream's handshake
+            // and before the scheduler/mixer loops tick so every output begins on the exact same frame and slice.
+            if (session.Broadcast && session.Recording is { Encoder: { } recEncoder } && primaryRecordingPath is not null)
+            {
+                await TryStartSecondaryRecordingAsync(
+                    "recording", primaryRecordingPath, recEncoder, scheduler, mixer, secondaryOutputs, savedRecordingPaths, ct).ConfigureAwait(false);
+            }
+
+            if (_logger is not null)
+            {
+                LogOutputsStarted(_logger, FormatOutputsSummary(primaryName, primaryEncoder, secondaryOutputs));
+            }
+
+            using var secondaryWakeup = new SemaphoreSlim(0);
+            scheduler.OutputDetached += (_, e) =>
+            {
+                if (secondaryOutputs.FirstOrDefault(r => string.Equals(r.Name, e.Name, StringComparison.Ordinal)) is { } rec)
+                {
+                    rec.NoteDetachReason(e.Reason);
+                    mixer.RemoveSink(rec.Name);
+                    secondaryWakeup.Release();
+                }
+            };
+            mixer.SinkDetached += (_, name) =>
+            {
+                if (secondaryOutputs.FirstOrDefault(r => string.Equals(r.Name, name, StringComparison.Ordinal)) is { } rec)
+                {
+                    rec.NoteDetachReason("Audio pipe closed.");
+                    rec.Target.TryDetach();
+                    secondaryWakeup.Release();
+                }
+            };
+
+            _secondaryOutputs = [.. secondaryOutputs];
             scheduler.Start();
             mixer.Start();
 
-            return await SuperviseAsync(session, backoffs, lease, process, recentLines, () => Volatile.Read(ref _latestProgress), recordingPath, ct).ConfigureAwait(false);
+            return await SuperviseAsync(
+                primaryEncoder,
+                session.Broadcast,
+                backoffs,
+                lease,
+                process,
+                recentLines,
+                () => Volatile.Read(ref _latestProgress),
+                secondaryOutputs,
+                secondaryWakeup,
+                mixer,
+                ct).ConfigureAwait(false);
         }
         catch (StreamFailureException ex)
         {
@@ -609,9 +685,26 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
         }
         finally
         {
+            _secondaryOutputs = [];
             _scheduler = null;
             _audioMixer = null;
             Volatile.Write(ref _ffmpegProcessId, 0);
+
+            var runningSecondaryStops = secondaryOutputs
+                .Where(r => !r.Exited.IsCompleted)
+                .Select(r => r.StopAsync(_options.GracefulStopTimeout))
+                .ToArray();
+            if (runningSecondaryStops.Length > 0)
+            {
+                await Task.WhenAll(runningSecondaryStops).ConfigureAwait(false);
+            }
+
+            foreach (var r in secondaryOutputs)
+            {
+                await r.DisposeAsync().ConfigureAwait(false);
+            }
+
+            primaryTarget?.Dispose();
 
             if (process is not null)
             {
@@ -623,21 +716,27 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 await lease.DisposeAsync().ConfigureAwait(false);
             }
 
-            if (recordingPath is not null && File.Exists(recordingPath))
+            foreach (var path in savedRecordingPaths)
             {
-                RecordingSaved?.Invoke(this, recordingPath);
+                if (File.Exists(path))
+                {
+                    RecordingSaved?.Invoke(this, path);
+                }
             }
         }
     }
 
     private async Task<StreamError?> SuperviseAsync(
-        StreamSession session,
+        EncoderSettings primaryEncoder,
+        bool broadcast,
         ReconnectBackoff[] backoffs,
         IOutputLease lease,
         FfmpegProcess process,
         ConcurrentQueue<string> recent,
         Func<EncoderProgress?> latestProgress,
-        string? recordingPath,
+        List<RecordingOutput> secondaryOutputs,
+        SemaphoreSlim secondaryWakeup,
+        UnifiedAudioMixer mixer,
         CancellationToken ct)
     {
         var attemptStart = _time.GetTimestamp();
@@ -649,11 +748,43 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
         while (true)
         {
             var tick = Task.Delay(_options.TelemetryInterval, _time, ct);
-            var done = await Task.WhenAny(process.Exited, lease.Completion, tick).ConfigureAwait(false);
+            Task done;
+            if (secondaryOutputs.Count == 0)
+            {
+                done = await Task.WhenAny(process.Exited, lease.Completion, tick).ConfigureAwait(false);
+            }
+            else
+            {
+                var waitTasks = new List<Task>(4 + secondaryOutputs.Count)
+                {
+                    process.Exited,
+                    lease.Completion,
+                    tick,
+                    secondaryWakeup.WaitAsync(ct),
+                };
+                foreach (var r in secondaryOutputs)
+                {
+                    if (!r.HasFailed)
+                    {
+                        waitTasks.Add(r.Exited);
+                    }
+                }
+
+                done = await Task.WhenAny(waitTasks).ConfigureAwait(false);
+            }
 
             if (ct.IsCancellationRequested)
             {
-                await process.StopAsync(_options.GracefulStopTimeout).ConfigureAwait(false);
+                var stops = new List<Task>(1 + secondaryOutputs.Count) { process.StopAsync(_options.GracefulStopTimeout) };
+                foreach (var r in secondaryOutputs)
+                {
+                    if (!r.HasFailed && !r.Exited.IsCompleted)
+                    {
+                        stops.Add(r.StopAsync(_options.GracefulStopTimeout));
+                    }
+                }
+
+                await Task.WhenAll(stops).ConfigureAwait(false);
                 return null;
             }
 
@@ -679,6 +810,20 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 return LeaseError(lease) ?? new StreamError(ErrorCategory.Network, "network.closed", "The server closed the connection.");
             }
 
+            if (secondaryOutputs.Count > 0)
+            {
+                while (secondaryWakeup.CurrentCount > 0)
+                {
+                    secondaryWakeup.Wait(0, CancellationToken.None);
+                }
+
+                await HandleSecondaryOutputsAsync(secondaryOutputs, mixer).ConfigureAwait(false);
+                if (done != tick)
+                {
+                    continue;
+                }
+            }
+
             var now = _time.GetTimestamp();
             var progress = latestProgress();
             var net = lease.Snapshot();
@@ -697,9 +842,9 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
             if (_state.Current == StreamState.Connecting)
             {
-                var isLive = session.Broadcast
+                var isLive = broadcast
                     ? net.BytesSent >= _options.MinBytesForLive && progress is { Frame: > 0 }
-                    : (progress?.Frame ?? 0) > session.Encoder.Fps;
+                    : (progress?.Frame ?? 0) > primaryEncoder.Fps;
 
                 if (isLive)
                 {
@@ -747,11 +892,161 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 }
             }
 
-            PublishTelemetry(session, progress, net, liveSince is { } s2 ? _time.GetElapsedTime(s2, now) : TimeSpan.Zero);
+            PublishTelemetry(primaryEncoder.Fps, progress, net, liveSince is { } s2 ? _time.GetElapsedTime(s2, now) : TimeSpan.Zero);
         }
     }
 
-    private void SetupSources(StreamSession session)
+    private async Task TryStartSecondaryRecordingAsync(
+        string name,
+        string path,
+        EncoderSettings encoder,
+        MediaOutputScheduler scheduler,
+        UnifiedAudioMixer mixer,
+        List<RecordingOutput> secondaryOutputs,
+        List<string> savedRecordingPaths,
+        CancellationToken ct)
+    {
+        RecordingOutput? output = null;
+        try
+        {
+            output = RecordingOutput.Start(
+                _deviceManager,
+                _ffmpeg.Path,
+                _redactor,
+                name,
+                path,
+                encoder,
+                line => DiagnosticLine?.Invoke(this, line),
+                _logger);
+
+            var error = await output.HandshakeAsync(scheduler, _options.ConnectTimeout, ct).ConfigureAwait(false);
+            if (error is not null)
+            {
+                if (_logger is not null)
+                {
+                    LogSecondaryRecordingFailed(_logger, name, error.Code, error.UserMessage);
+                }
+
+                await output.DisposeAsync().ConfigureAwait(false);
+                RecordingFailed?.Invoke(this, new RecordingFailedEventArgs(name, error));
+                return;
+            }
+
+            scheduler.AddTarget(output.Target);
+            mixer.AddSink(output.Name, output.AudioPipe);
+            secondaryOutputs.Add(output);
+            savedRecordingPaths.Add(output.Path);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            if (output is not null)
+            {
+                await output.DisposeAsync().ConfigureAwait(false);
+            }
+
+            throw;
+        }
+        catch (StreamFailureException ex)
+        {
+            if (output is not null)
+            {
+                await output.DisposeAsync().ConfigureAwait(false);
+            }
+
+            if (_logger is not null)
+            {
+                LogSecondaryRecordingFailed(_logger, name, ex.Error.Code, ex.Error.UserMessage);
+            }
+
+            RecordingFailed?.Invoke(this, new RecordingFailedEventArgs(name, ex.Error));
+        }
+    }
+
+    private async Task HandleSecondaryOutputsAsync(List<RecordingOutput> secondaryOutputs, UnifiedAudioMixer mixer)
+    {
+        foreach (var r in secondaryOutputs)
+        {
+            if (r.HasFailed)
+            {
+                continue;
+            }
+
+            if (!r.Exited.IsCompleted && r.Target.IsAttached && r.DetachReason is null)
+            {
+                continue;
+            }
+
+            r.Target.TryDetach();
+            mixer.RemoveSink(r.Name);
+            if (!r.Exited.IsCompleted)
+            {
+                await r.StopAsync(_options.GracefulStopTimeout).ConfigureAwait(false);
+            }
+
+            if (r.TryMarkFailed())
+            {
+                var error = r.Exited.IsCompleted
+                    ? ClassifySecondaryExit(r)
+                    : new StreamError(ErrorCategory.Process, "recording.pipe", "The recording stopped unexpectedly.", r.DetachReason);
+                if (_logger is not null)
+                {
+                    LogSecondaryRecordingFailed(_logger, r.Name, error.Code, error.UserMessage);
+                }
+
+                RecordingFailed?.Invoke(this, new RecordingFailedEventArgs(r.Name, error));
+            }
+        }
+    }
+
+    private static StreamError ClassifySecondaryExit(RecordingOutput output)
+    {
+        var exitCode = output.Exited.Result;
+        var classified = ErrorClassifier.ClassifyExit(exitCode, output.RecentLines);
+        if (classified.Code != "process.exit")
+        {
+            return classified;
+        }
+
+        return new StreamError(
+            ErrorCategory.Process,
+            "recording.exit",
+            $"The recording encoder exited unexpectedly (exit code {exitCode}).",
+            classified.Detail);
+    }
+
+    private static (int Width, int Height) ResolveMainCanvasSize(StreamSession session, EncoderSettings primaryEncoder)
+    {
+        if (session.CanvasWidth > 0 && session.CanvasHeight > 0)
+        {
+            return (session.CanvasWidth, session.CanvasHeight);
+        }
+
+        var w = primaryEncoder.Width;
+        var h = primaryEncoder.Height;
+        if (session.Recording?.Encoder is { } rec && (long)rec.Width * rec.Height > (long)w * h)
+        {
+            w = rec.Width;
+            h = rec.Height;
+        }
+
+        return (w, h);
+    }
+
+    private static string FormatOutputsSummary(string primaryName, EncoderSettings primaryEncoder, List<RecordingOutput> secondaryOutputs)
+    {
+        var parts = new List<string>(1 + secondaryOutputs.Count)
+        {
+            string.Create(CultureInfo.InvariantCulture, $"{primaryName} {primaryEncoder.Width}x{primaryEncoder.Height} {primaryEncoder.VideoKbps} kbps ({primaryEncoder.EncoderId})"),
+        };
+        foreach (var r in secondaryOutputs)
+        {
+            parts.Add(string.Create(CultureInfo.InvariantCulture, $"{r.Name} {r.Encoder.Width}x{r.Encoder.Height} {r.Encoder.VideoKbps} kbps ({r.Encoder.EncoderId})"));
+        }
+
+        return string.Join("; ", parts);
+    }
+
+    private void SetupSources(StreamSession session, int canvasWidth, int canvasHeight)
     {
         // After a live switch, the captures the stream has now, not those it started with.
         var bindings = _liveCaptures is { } live ? live
@@ -783,7 +1078,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                     continue;
                 }
 
-                var px = LayerGeometry.ToPixels(b.Placement, session.Encoder.Width, session.Encoder.Height);
+                var px = LayerGeometry.ToPixels(b.Placement, canvasWidth, canvasHeight);
                 var camSource = new CameraD3D11SceneSource(
                     b.Layer.LayerId,
                     _deviceManager,
@@ -807,7 +1102,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 continue;
             }
 
-            var px = LayerGeometry.ToPixels(overlay.Placement, session.Encoder.Width, session.Encoder.Height);
+            var px = LayerGeometry.ToPixels(overlay.Placement, canvasWidth, canvasHeight);
             int w = Math.Max(64, px.Width);
             int h = Math.Max(64, px.Height);
 
@@ -830,7 +1125,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 continue;
             }
 
-            var src = MediaSourceFactory?.Invoke(media, session.Encoder.Width, session.Encoder.Height);
+            var src = MediaSourceFactory?.Invoke(media, canvasWidth, canvasHeight);
             if (src is null && !string.IsNullOrWhiteSpace(media.FilePath))
             {
                 src = new ImageD3D11SceneSource(media.LayerId, _deviceManager, media.FilePath, _backgroundImages, _logger);
@@ -1061,6 +1356,11 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                 $"picture: {scheduler.FramesWritten} frames out, render loop skipped ahead {scheduler.FramesDropped} time(s), {scheduler.LostTime.TotalMilliseconds:0} ms of picture lost, {scheduler.SlowFrames} slow frame(s) (longest {scheduler.LongestFrame.TotalMilliseconds:0} ms)"));
         }
 
+        foreach (var rec in _secondaryOutputs)
+        {
+            parts.Add(string.Create(CultureInfo.InvariantCulture, $"{rec.Name}: {rec.Target.FramesWritten} frames out{(rec.HasFailed ? " (stopped)" : string.Empty)}"));
+        }
+
         return string.Join("; ", parts);
     }
 
@@ -1241,11 +1541,17 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
     private void PublishTelemetry(StreamSession session, EncoderProgress? progress, NetworkSnapshot? net, TimeSpan? connectionUptime)
     {
+        var primaryFps = (session.Broadcast ? session.Encoder : session.Recording?.Encoder ?? session.Encoder).Fps;
+        PublishTelemetry(primaryFps, progress, net, connectionUptime);
+    }
+
+    private void PublishTelemetry(int fps, EncoderProgress? progress, NetworkSnapshot? net, TimeSpan? connectionUptime)
+    {
         var telemetry = new StreamTelemetry(
             _state.Current,
             _time.GetElapsedTime(_sessionStart),
             connectionUptime ?? TimeSpan.Zero,
-            session.Encoder.Fps,
+            fps,
             progress,
             net,
             _reconnectCount,
@@ -1360,4 +1666,10 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
     [LoggerMessage(LogLevel.Warning, "Failed to initialize capture source '{Key}'.")]
     private static partial void LogSourceInitFailed(ILogger logger, string key, Exception ex);
+
+    [LoggerMessage(LogLevel.Information, "Outputs: {Summary}")]
+    private static partial void LogOutputsStarted(ILogger logger, string summary);
+
+    [LoggerMessage(LogLevel.Warning, "Secondary recording '{Name}' stopped ({Code}): {Message}")]
+    private static partial void LogSecondaryRecordingFailed(ILogger logger, string name, string code, string message);
 }

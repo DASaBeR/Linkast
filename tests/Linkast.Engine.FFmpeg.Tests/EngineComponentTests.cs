@@ -573,6 +573,8 @@ public class ErrorClassifierTests
     [InlineData("[Parsed_ddagrab_0 @ 01] [error] AcquireNextFrame failed: 887a0005", ErrorCategory.Capture, "capture.dda")]
     [InlineData("[AVFilterGraph @ 01] [error] No such filter: 'foo'", ErrorCategory.Configuration, "config.ffmpeg")]
     [InlineData(@"[in#1 @ 01] [error] Error opening input \\.\pipe\linkast-abc: Broken pipe", ErrorCategory.Audio, "audio.pipe")]
+    [InlineData("[h264_nvenc @ 01] [error] incompatible client key", ErrorCategory.Encoder, "encoder.nvenc.session")]
+    [InlineData("[matroska @ 01] [error] av_interleaved_write_frame(): No space left on device", ErrorCategory.Configuration, "recording.disk_full")]
     public void Classifies_known_errors(string line, ErrorCategory category, string code)
     {
         var e = ErrorClassifier.Classify(line);
