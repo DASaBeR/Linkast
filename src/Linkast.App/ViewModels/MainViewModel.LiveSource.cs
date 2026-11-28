@@ -23,6 +23,7 @@ public sealed partial class MainViewModel
     private DispatcherTimer? _windowWatch;
     private IReadOnlyList<CaptureBinding> _liveCaptures = [];
     private IReadOnlyList<AudioSourceSpec> _liveAudio = [];
+    private Guid? _liveVerticalSceneId;
     private SceneCapture? _pendingCapture;
 
     /// <summary>What a scene without its own capture uses: the last capture chosen on the card.</summary>
@@ -187,12 +188,19 @@ public sealed partial class MainViewModel
 
     /// <summary>
     /// Every distinct capture of the stream's scenes, the active scene's first (shown; the others start
-    /// hidden). A scene whose game isn't running is left out, as are captures beyond the limit.
+    /// hidden), plus any capture needed by the active vertical recording scene. A scene whose game isn't
+    /// running is left out, as are captures beyond the limit.
     /// </summary>
-    private List<CaptureBinding> BuildCaptures(SceneLayout active)
+    private List<CaptureBinding> BuildCaptures(SceneLayout active, Guid? verticalSceneId = null)
     {
+        var scenes = StreamScenes(active);
+        if (verticalSceneId is { } vId && Webcam.Layouts.FirstOrDefault(s => s.Id == vId) is { } vScene && vScene.Orientation != active.Orientation)
+        {
+            scenes = scenes.Concat([vScene]);
+        }
+
         var list = new List<CaptureBinding>();
-        foreach (var scene in StreamScenes(active))
+        foreach (var scene in scenes)
         {
             if (Resolve(CaptureOf(scene)) is not { } r || list.Any(c => c.Key == r.Key))
             {
@@ -234,11 +242,12 @@ public sealed partial class MainViewModel
     // ---- While live ---------------------------------------------------------------------------
 
     /// <summary>Remembers what the running session captures, so only a real change restarts it.</summary>
-    private void RememberLiveSources(StreamSession session)
+    private void RememberLiveSources(StreamSession session, Guid? verticalSceneId = null)
     {
         _liveCaptures = session.Captures;
         _liveAudio = session.Audio;
         _liveStack = session.Stack;
+        _liveVerticalSceneId = verticalSceneId;
     }
 
     private void ScheduleLiveSourceSwitch()
@@ -271,7 +280,7 @@ public sealed partial class MainViewModel
             return;
         }
 
-        var captures = BuildCaptures(Webcam.ActiveLayout);
+        var captures = BuildCaptures(Webcam.ActiveLayout, _liveVerticalSceneId);
         var audio = BuildAudioSources();
         var sameSources = captures.Select(c => (c.Key, c.Source)).SequenceEqual(_liveCaptures.Select(c => (c.Key, c.Source))) && SameSounds(audio, _liveAudio);
         if (sameSources && LiveStackFits(Webcam.ActiveLayout))

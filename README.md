@@ -33,7 +33,7 @@ It is made for streamers who find OBS Studio too complicated: fewer settings, cl
 - **Scenes that switch instantly while live:** Starting soon, Gaming, Just chatting, Be right back and Ending are ready to use, and you can add your own. Each scene has its own game or screen, cameras, overlays, background (a branded card, a picture or a looping video) and sounds.
 - **Starting soon and Ending automation:** Go live can start on your Starting soon scene, and End stream can show a goodbye scene first and then end by itself.
 - **Game capture, window capture and screen capture** with Windows Graphics Capture or Desktop Duplication, and a warning with a one-click fix when a game would capture as black.
-- **Record to your PC** alone or while streaming, with a single encode for both. Recordings are crash-safe MKV, with an optional MP4 copy.
+- **Record to your PC** alone or while streaming — with a single encode for both, at a different recording quality, or simultaneously to a second vertical (9:16) file for Shorts, Reels and TikTok. Recordings are crash-safe MKV, with an optional MP4 copy.
 - **Find the best settings:** Linkast tests your encoders and your upload speed, then suggests resolution, frame rate and bitrate.
 - **Import from OBS Studio:** your server and key, quality, capture, cameras, alerts, pictures, audio, recordings and network adapter, item by item.
 

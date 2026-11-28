@@ -46,7 +46,8 @@ public sealed partial class MainViewModel
         $"network {(BuildProxy() is { } proxy ? proxy.Label : SelectedNetwork.IsAutomatic ? "Windows default" : SelectedNetwork.Name)}; " +
         $"video {SelectedResolution.Width}x{SelectedResolution.Height}@{SelectedFrameRate} {VideoBitrateKbps} kbps, keyframe every {KeyframeIntervalSeconds} s, preset {EncoderPreset ?? "default"}; " +
         $"audio {AudioBitrateKbps} kbps, desktop {SystemAudioVolume:0}%, microphone {(MicrophoneEnabled ? MicrophoneVolume.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + "%" : "off")}, noise removal {MicrophoneNoiseRemoval}, boost +{MicrophoneBoostDb.ToString("0", System.Globalization.CultureInfo.InvariantCulture)} dB, apps {(AppAudioSources.Count == 0 ? "none" : string.Join(", ", AppAudioSources.Select(a => a.Program)))}; " +
-        $"record {RecordWhenLive} ({(SelectedRecordingQuality.IsCustom ? $"{SelectedRecordingQuality.Width}x{SelectedRecordingQuality.Height} {RecordingBitrateKbps} kbps" : "same as stream")})";
+        $"record {RecordWhenLive} ({(SelectedRecordingQuality.IsCustom ? $"{SelectedRecordingQuality.Width}x{SelectedRecordingQuality.Height} {RecordingBitrateKbps} kbps" : "same as stream")}); " +
+        $"vertical {(VerticalRecordingEnabled ? $"on ({SelectedVerticalScene?.Name ?? "none"}, {SelectedVerticalSize.Width}x{SelectedVerticalSize.Height} {VerticalRecordingBitrateKbps} kbps)" : "off")}";
 
     /// <summary>Logs what each capture of a starting stream is: the window, its state and its monitor.</summary>
     private void LogStreamContext(StreamSession session)

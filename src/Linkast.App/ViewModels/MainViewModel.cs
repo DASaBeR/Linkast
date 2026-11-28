@@ -93,6 +93,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         SelectedSourceKind = SourceKinds[0];
         SelectedResolution = Resolutions[0];
         SelectedRecordingQuality = RecordingQualities[0];
+        SelectedVerticalSize = VerticalSizes[0];
         SelectedDestinationKind = DestinationKinds[0];
 
         _audioHub = audioHub;
@@ -1463,6 +1464,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         nameof(SelectedDestinationKind), nameof(SelectedPlatform), nameof(ServerUrl), nameof(SelectedNetwork), nameof(SelectedTheme),
         nameof(SelectedProxyKind), nameof(ProxyHost), nameof(ProxyPortText), nameof(ProxyUsername),
         nameof(RecordingFolder), nameof(RecordWhenLive), nameof(SelectedRecordingQuality), nameof(RecordingBitrateKbps), nameof(RemuxRecordingsToMp4),
+        nameof(VerticalRecordingEnabled), nameof(SelectedVerticalScene), nameof(SelectedVerticalSize), nameof(VerticalRecordingBitrateKbps),
     ];
 
     protected override void OnPropertyChanged(System.ComponentModel.PropertyChangedEventArgs e)
@@ -1553,7 +1555,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     public bool IsCustomRecordingQuality => SelectedRecordingQuality.IsCustom;
 
-    public bool ShowSoftwareExtraOutputWarning => SelectedEncoder?.Kind == EncoderKind.Software && IsCustomRecordingQuality;
+    public bool ShowSoftwareExtraOutputWarning => SelectedEncoder?.Kind == EncoderKind.Software && (IsCustomRecordingQuality || VerticalRecordingEnabled);
 
     partial void OnSelectedRecordingQualityChanged(RecordingQualityOption value)
     {
@@ -1594,22 +1596,41 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
+    private readonly List<string> _sessionSavedFiles = [];
+
     /// <summary>A recording file was closed: report it, and turn it into an MP4 when asked to.</summary>
     private async Task OnRecordingSavedAsync(string path)
     {
         AppendLog("Recording saved: " + path);
-        LastRecordingText = "Saved " + Path.GetFileName(path);
+        var name = Path.GetFileName(path);
+        var index = _sessionSavedFiles.Count;
+        _sessionSavedFiles.Add(name);
+        LastRecordingText = FormatSavedFiles(_sessionSavedFiles);
         if (!RemuxRecordingsToMp4 || _engine is null)
         {
             return;
         }
 
-        LastRecordingText = "Making an MP4 of " + Path.GetFileName(path) + "…";
+        LastRecordingText = "Making an MP4 of " + name + "…";
         var ffmpeg = _engine.Installation.Path;
         var mp4 = await Task.Run(() => FfmpegRemuxer.RemuxToMp4Async(ffmpeg, path));
-        LastRecordingText = mp4 is null ? "Saved " + Path.GetFileName(path) + " (the MP4 copy failed; the MKV was kept)" : "Saved " + Path.GetFileName(mp4);
+        if (mp4 is not null)
+        {
+            _sessionSavedFiles[index] = Path.GetFileName(mp4);
+        }
+
+        LastRecordingText = mp4 is null
+            ? FormatSavedFiles(_sessionSavedFiles) + " (the MP4 copy failed; the MKV was kept)"
+            : FormatSavedFiles(_sessionSavedFiles);
         AppendLog(mp4 is null ? "MP4 copy failed; kept " + path : "Recording saved as MP4: " + mp4);
     }
+
+    private static string FormatSavedFiles(List<string> files) => files.Count switch
+    {
+        0 => string.Empty,
+        1 => "Saved " + files[0],
+        _ => "Saved " + string.Join(" and ", files),
+    };
 
     private void OnRecordingFailed(RecordingFailedEventArgs e)
     {
@@ -1691,6 +1712,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 RecordingWidth = SelectedRecordingQuality.IsCustom ? SelectedRecordingQuality.Width : _loaded.Stream.RecordingWidth,
                 RecordingHeight = SelectedRecordingQuality.IsCustom ? SelectedRecordingQuality.Height : _loaded.Stream.RecordingHeight,
                 RecordingBitrateKbps = RecordingBitrateKbps,
+                VerticalRecordingEnabled = VerticalRecordingEnabled,
+                VerticalRecordingSceneId = SelectedVerticalScene?.Id ?? _pendingVerticalSceneId,
+                VerticalRecordingWidth = SelectedVerticalSize.Width,
+                VerticalRecordingHeight = SelectedVerticalSize.Height,
+                VerticalRecordingBitrateKbps = VerticalRecordingBitrateKbps,
                 StartSceneId = StartSceneChoice?.Id,
                 EndSceneId = EndSceneChoice?.Id,
                 EndSceneSeconds = EndSceneSeconds,
@@ -1763,6 +1789,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         RemuxRecordingsToMp4 = s.RemuxRecordingsToMp4;
         SelectedRecordingQuality = RecordingQualityOption.For(s.RecordingQuality, s.RecordingWidth, s.RecordingHeight);
         RecordingBitrateKbps = s.RecordingBitrateKbps;
+        VerticalRecordingEnabled = s.VerticalRecordingEnabled;
+        _pendingVerticalSceneId = s.VerticalRecordingSceneId;
+        SelectedVerticalSize = VerticalResolutionOption.For(s.VerticalRecordingWidth, s.VerticalRecordingHeight);
+        VerticalRecordingBitrateKbps = s.VerticalRecordingBitrateKbps;
+        RebuildVerticalScenes(s.VerticalRecordingSceneId);
         EndSceneSeconds = s.EndSceneSeconds;
         SeparateGameAudio = s.SeparateGameAudio;
         _channelVolumes.Clear();
@@ -2224,9 +2255,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         LogStreamContext(session);
+        _sessionSavedFiles.Clear();
         _recordOnly = recordOnly;
-        _recording = session.Recording is not null;
-        RememberLiveSources(session);
+        _recording = session.Recording is not null || session.VerticalRecording is not null;
+        RememberLiveSources(session, _builtVerticalSceneId);
         try
         {
             await _engine.StartAsync(session);
@@ -2274,6 +2306,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         sb.AppendLine(CultureInfo.InvariantCulture, $"State: {State}; last error: {LastError}");
         sb.AppendLine(CultureInfo.InvariantCulture, $"Recording: when live {RecordWhenLive}, quality {SelectedRecordingQuality.Label}{(SelectedRecordingQuality.IsCustom ? $" ({RecordingBitrateKbps} kbps)" : string.Empty)}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Vertical recording: {(VerticalRecordingEnabled ? $"on, scene '{SelectedVerticalScene?.Name ?? "none"}', {SelectedVerticalSize.Width}x{SelectedVerticalSize.Height} {VerticalRecordingBitrateKbps} kbps" : "off")}");
         sb.AppendLine(CultureInfo.InvariantCulture, $"Scene: {Webcam.ActiveLayout.Name} ({Webcam.CanvasDescription}); scenes: {string.Join(", ", Webcam.Layouts.Select(l => l.Name))}");
         sb.AppendLine(CultureInfo.InvariantCulture, $"Mixer: {string.Join(", ", Mixer.Channels.Select(c => $"{c.Key} {c.Volume:0}%{(c.Muted ? " muted" : string.Empty)}{(c.SceneMuted ? " scene-muted" : string.Empty)}"))}");
         foreach (var l in Webcam.Layers)
@@ -2297,9 +2330,12 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     // ---- Helpers ---------------------------------------------------------------------------
 
+    private Guid? _builtVerticalSceneId;
+
     private StreamSession? BuildSession(bool recordOnly, out StreamError? error)
     {
         error = null;
+        _builtVerticalSceneId = null;
 
         // Every scene's own game, window or display; the starting scene's must be there.
         var starting = Webcam.ActiveLayout;
@@ -2310,7 +2346,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             return null;
         }
 
-        var captures = BuildCaptures(starting);
+        var preset = string.IsNullOrWhiteSpace(EncoderPreset) ? null : EncoderPreset.Trim();
+        var verticalSpec = BuildVerticalRecording(starting, preset, out var verticalScene);
+        _builtVerticalSceneId = verticalScene?.Id;
+
+        var captures = BuildCaptures(starting, verticalScene?.Id);
         var video = captures.Count > 0 ? captures[0].Source : new BlankCanvasSource();
         var audio = BuildAudioSources();
 
@@ -2324,7 +2364,6 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         // A vertical layout streams the configured resolution rotated, for example 1080 × 1920.
         var layout = Webcam.ActiveLayout;
         var (streamWidth, streamHeight) = layout.CanvasSize(SelectedResolution.Width, SelectedResolution.Height);
-        var preset = string.IsNullOrWhiteSpace(EncoderPreset) ? null : EncoderPreset.Trim();
         var encoder = new EncoderSettings(
             SelectedEncoder!.Id,
             streamWidth,
@@ -2374,7 +2413,12 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         _restartOffered.Clear();
-        var overlays = Overlays.Bindings(canvasWidth, canvasHeight);
+        var overlays = Overlays.Bindings(canvasWidth, canvasHeight).ToList();
+        if (verticalSpec is not null && verticalScene is not null)
+        {
+            AppendVerticalSources(verticalScene, verticalSpec, cameras, overlays, media);
+        }
+
         _liveCameraIds.UnionWith(cameras.Select(c => c.Layer.LayerId));
         _liveLayerIds.UnionWith(_liveCameraIds);
         _liveLayerIds.UnionWith(overlays.Select(o => o.LayerId));
@@ -2403,6 +2447,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             Recording = recordOnly || RecordWhenLive
                 ? new RecordingSpec(RecordingFolder) { RemuxToMp4 = RemuxRecordingsToMp4, Encoder = recordingEncoder }
                 : null,
+            VerticalRecording = verticalSpec,
         };
 
         var validationErrors = SessionValidator.Validate(session);

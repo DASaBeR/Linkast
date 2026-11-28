@@ -34,10 +34,9 @@ The UI talks only to `IStreamEngine`. Replacing WPF, or replacing the FFmpeg eng
 
 ## Media pipeline
 
-- **Video capture happens inside FFmpeg.** FFmpeg's `gfxcapture` filter uses Windows Graphics Capture (monitors and individual windows). Its `ddagrab` filter uses the Desktop Duplication API (monitors only). Both are Windows-native capture APIs; Linkast needs no capture code or hooks of its own. See ADR 0002.
-- Captured D3D11 frames are downloaded once, converted to constant frame rate with `fps` (WGC only delivers frames when the screen changes), scaled and letterboxed to the output size, then encoded.
-- **Audio capture happens in Linkast.** FFmpeg has no WASAPI loopback input, so Linkast captures each device with NAudio, converts it to 48 kHz float stereo through the shared-mode audio engine, and serves raw PCM over a current-user-only named pipe. The pipe writer keeps each stream locked to wall-clock rate: it pads silence when the device delivers nothing (loopback is silent when nothing plays) and drops data when the device clock runs ahead. See ADR 0003.
-- FFmpeg mixes the inputs with `amix`, encodes AAC, and muxes FLV.
+- **In-app D3D11 GPU compositor and capture (`D3D11StreamEngine`).** Display and window capture (`WindowsGraphicsCaptureSource`), cameras (`CameraD3D11SceneSource`), images/scene backgrounds (`ImageD3D11SceneSource`), and web overlays (`WebOverlayD3D11SceneSource`) are composited directly on the GPU in `D3D11SceneCompositor` and converted to BT.709 NV12 on a dedicated monotonic render thread (`MediaOutputScheduler`). See [ADR 0010](adr/0010-d3d11-scene-compositor.md).
+- **Audio capture and mixing in Linkast (`UnifiedAudioMixer`).** Linkast captures each WASAPI device and process loopback with NAudio, normalizes to 48 kHz stereo float, applies noise removal (RNNoise), peak limiting and jitter buffering, and writes s16le PCM locked to the video timeline.
+- **One FFmpeg process per output (`RecordingOutput`).** The primary output streams FLV (through `BufferedOutputLease` and `RelayOutputTransport`), records MKV in record-only mode, or writes both at once via `tee` when recording quality is "Same as stream". When a separate recording quality or a simultaneous vertical 9:16 canvas is enabled, each extra output gets its own `D3D11OutputTarget` (scaled on GPU if needed), audio sink fan-out, and `ffmpeg.exe` process so a recording failure never interrupts the live stream. See [ADR 0011](adr/0011-extra-recording-outputs.md).
 - With no audio sources selected, a silent track is still sent, because most ingests require audio.
 
 ## Camera layers (Webcam Studio)

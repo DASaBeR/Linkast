@@ -186,6 +186,8 @@ public sealed partial class MainViewModel
         {
             _loading = was;
         }
+
+        RebuildVerticalScenes(SelectedVerticalScene?.Id ?? _pendingVerticalSceneId);
     }
 
     // ---- Be right back, start and end ---------------------------------------------------------

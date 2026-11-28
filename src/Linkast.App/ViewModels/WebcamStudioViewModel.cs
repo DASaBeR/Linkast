@@ -645,6 +645,36 @@ public sealed partial class WebcamStudioViewModel : ObservableObject, IAsyncDisp
         SwitchTo(scene.Id);
     }
 
+    /// <summary>Adds a ready-made scene of <paramref name="kind"/> with <paramref name="orientation"/> and returns its ID.</summary>
+    public Guid? AddScene(SceneKind kind, OutputOrientation orientation, bool switchTo = true)
+    {
+        if (!CanAddScene)
+        {
+            return null;
+        }
+
+        var scene = SceneLayout.Create(kind, Layers.FirstOrDefault()?.LayerId, orientation);
+        var (cw, ch) = scene.CanvasSize(_landscapeWidth, _landscapeHeight);
+        foreach (var layer in Layers)
+        {
+            if (scene.CameraPlacements.TryGetValue(layer.LayerId, out var p))
+            {
+                scene = scene.WithPlacement(layer.LayerId, LayerGeometry.FitInside(p, layer.LayerAspectRatio, cw, ch));
+            }
+        }
+
+        var added = scene with { Name = UniqueName(scene.Name) };
+        _layouts.Insert(ActiveIndex() + 1, added);
+        RebuildSceneOptions();
+        SceneListChanged();
+        if (switchTo)
+        {
+            SwitchTo(added.Id);
+        }
+
+        return added.Id;
+    }
+
     private string UniqueName(string name)
     {
         var candidate = name;

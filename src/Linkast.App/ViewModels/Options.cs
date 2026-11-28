@@ -112,3 +112,18 @@ public sealed record RecordingQualityOption(
 
     public override string ToString() => Label;
 }
+
+/// <summary>Portrait size choice for the simultaneous vertical recording.</summary>
+public sealed record VerticalResolutionOption(int Width, int Height)
+{
+    public static IReadOnlyList<VerticalResolutionOption> All { get; } =
+    [
+        new(1080, 1920),
+        new(720, 1280),
+    ];
+
+    public static VerticalResolutionOption For(int width, int height) =>
+        All.FirstOrDefault(o => o.Width == width && o.Height == height) ?? All[0];
+
+    public override string ToString() => $"{Width} × {Height}  ({Width}p vertical)";
+}

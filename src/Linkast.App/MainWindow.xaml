@@ -1328,6 +1328,38 @@
                                                 <TextBlock Style="{StaticResource Linkast.Text.Hint}"
                                                            Visibility="{Binding IsCustomRecordingQuality, Converter={StaticResource BoolToVis}}"
                                                            Text="The recording is encoded separately, which uses more of the graphics card." />
+                                                <CheckBox Style="{StaticResource Linkast.ToggleSwitch}" Content="Also record vertical (Shorts, Reels, TikTok)"
+                                                          IsChecked="{Binding VerticalRecordingEnabled}" HorizontalAlignment="Left" Margin="0,12,0,0"
+                                                          ToolTip="Records a vertical 9:16 file from a vertical scene at the same time as your landscape stream or recording." />
+                                                <StackPanel Visibility="{Binding VerticalRecordingEnabled, Converter={StaticResource BoolToVis}}" Margin="0,10,0,0">
+                                                    <Grid Visibility="{Binding HasVerticalScene, Converter={StaticResource BoolToVis}}">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="2*" />
+                                                            <ColumnDefinition Width="12" />
+                                                            <ColumnDefinition Width="2*" />
+                                                            <ColumnDefinition Width="12" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel>
+                                                            <Label Content="Vertical scene" Target="{Binding ElementName=VerticalSceneBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
+                                                            <ComboBox x:Name="VerticalSceneBox" ItemsSource="{Binding VerticalScenes}" SelectedItem="{Binding SelectedVerticalScene}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="2">
+                                                            <Label Content="Vertical size" Target="{Binding ElementName=VerticalSizeBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
+                                                            <ComboBox x:Name="VerticalSizeBox" ItemsSource="{Binding VerticalSizes}" SelectedItem="{Binding SelectedVerticalSize}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="4">
+                                                            <Label Content="Vertical bitrate (kbps)" Target="{Binding ElementName=VerticalBitrateBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
+                                                            <TextBox x:Name="VerticalBitrateBox" Text="{Binding VerticalRecordingBitrateKbps, UpdateSourceTrigger=PropertyChanged}" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                    <StackPanel Visibility="{Binding HasVerticalScene, Converter={x:Static vm:Converters.InverseBoolToVisibility}}">
+                                                        <Button Style="{StaticResource Linkast.Button.Secondary}" Content="Add a vertical scene" HorizontalAlignment="Left"
+                                                                Command="{Binding AddVerticalSceneCommand}" />
+                                                    </StackPanel>
+                                                    <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,6,0,0"
+                                                               Text="To change what the vertical recording shows, open its scene in the scene strip before going live. Changes made while live apply to the next recording." />
+                                                </StackPanel>
                                                 <TextBlock Style="{StaticResource Linkast.Text.Hint}" Foreground="{DynamicResource Linkast.Warning}"
                                                            Visibility="{Binding ShowSoftwareExtraOutputWarning, Converter={StaticResource BoolToVis}}"
                                                            Text="Recording separately with the CPU encoder uses a lot of CPU. A graphics card encoder is recommended." />
