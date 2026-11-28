@@ -48,6 +48,10 @@ public static partial class SessionValidator
         {
             errors.Add(Config("encoder.resolution.even", "Width and height must be even numbers."));
         }
+        else if (e.Width % 4 != 0)
+        {
+            errors.Add(Config("encoder.resolution.width4", "Width must be a multiple of 4."));
+        }
 
         if (e.Fps is < 1 or > 240)
         {

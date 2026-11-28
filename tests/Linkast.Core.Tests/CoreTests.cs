@@ -146,6 +146,13 @@ public class SessionValidatorTests
         Assert.Contains("encoder.preset", codes);
         Assert.All(errors, e => Assert.Equal(ErrorCategory.Configuration, e.Category));
     }
+
+    [Fact]
+    public void Rejects_width_not_divisible_by_4()
+    {
+        var errors = SessionValidator.Validate(Session(enc: new EncoderSettings("libx264", 854, 480, 30, 1500)));
+        Assert.Contains(errors, e => e.Code == "encoder.resolution.width4");
+    }
 }
 
 public class SilencePadderTests

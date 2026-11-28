@@ -1086,7 +1086,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     public partial string EncoderNote { get; set; } = string.Empty;
 
     public IReadOnlyList<ResolutionOption> Resolutions { get; } =
-        [new(1920, 1080), new(1600, 900), new(1280, 720), new(2560, 1440), new(854, 480)];
+        [new(1920, 1080), new(1600, 900), new(1280, 720), new(2560, 1440), new(852, 480)];
 
     [ObservableProperty]
     public partial ResolutionOption SelectedResolution { get; set; }
@@ -1690,7 +1690,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         MicrophoneVolume = s.MicrophoneVolume;
         MicrophoneBoostDb = s.MicrophoneBoostDb;
         SelectedNoiseRemoval = NoiseRemovalOption.For(s.MicrophoneNoiseRemoval ?? (s.MicrophoneNoiseSuppression ? NoiseRemoval.Standard : NoiseRemoval.Off));
-        SelectedResolution = Resolutions.FirstOrDefault(r => r.Width == s.Width && r.Height == s.Height) ?? Resolutions[0];
+        var streamWidth = s.Width == 854 && s.Height == 480 ? 852 : s.Width;
+        SelectedResolution = Resolutions.FirstOrDefault(r => r.Width == streamWidth && r.Height == s.Height) ?? Resolutions[0];
         SelectedFrameRate = FrameRates.Contains(s.FrameRate) ? s.FrameRate : 60;
         VideoBitrateKbps = s.VideoBitrateKbps;
         KeyframeIntervalSeconds = s.KeyframeIntervalSeconds;

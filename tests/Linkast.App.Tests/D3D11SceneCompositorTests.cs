@@ -101,4 +101,31 @@ public class D3D11SceneCompositorTests
             Assert.Equal(235, data[i]);
         }
     }
+
+    [Theory]
+    [InlineData(1280, 720)]
+    [InlineData(852, 480)]
+    public void D3D11SceneCompositor_solid_red_has_uniform_Y_across_rows(int width, int height)
+    {
+        using var manager = new D3D11DeviceManager();
+        using var compositor = new D3D11SceneCompositor(manager, width, height);
+
+        byte[] nv12 = new byte[compositor.Nv12ByteSize];
+        compositor.BeginFrame(new Color4(1, 0, 0, 1));
+        compositor.ConvertToNv12(nv12);
+        compositor.BeginFrame(new Color4(1, 0, 0, 1));
+        int written = compositor.ConvertToNv12(nv12);
+        Assert.Equal((int)compositor.Nv12ByteSize, written);
+
+        byte expected = nv12[0];
+        Assert.NotEqual(0, expected);
+        foreach (int row in new[] { 0, 1, 2, 3, height - 1 })
+        {
+            int offset = row * width;
+            for (int x = 0; x < width; x++)
+            {
+                Assert.True(nv12[offset + x] == expected, $"Row {row}, x={x}: expected Y={expected}, got {nv12[offset + x]}");
+            }
+        }
+    }
 }

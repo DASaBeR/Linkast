@@ -56,14 +56,14 @@ public static class QualityAdvisor
             >= 5500 => (1920, 1080, 60, MaxBitrateKbps(platform)),
             >= 4000 => (1280, 720, 60, 4500),
             >= 2500 => (1280, 720, 30, 3000),
-            _ => (854, 480, 30, 1500),
+            _ => (852, 480, 30, 1500),
         };
 
         // The test encodes 1080p; fewer pixels or frames run proportionally faster.
         var margin = best.IsHardware ? SpeedMargin : SoftwareSpeedMargin;
         double Needed(int width, int height, int f) => f * margin * width * height / (1920.0 * 1080);
         var lowered = false;
-        while (best.FramesPerSecond < Needed(w, h, fps) && (w, h, fps) != (854, 480, 30))
+        while (best.FramesPerSecond < Needed(w, h, fps) && (w, h, fps) != (852, 480, 30))
         {
             lowered = true;
             (w, h, fps, ideal) = (w, h, fps) switch
@@ -71,7 +71,7 @@ public static class QualityAdvisor
                 (1920, 1080, 60) => (1920, 1080, 30, 4500),
                 (1920, 1080, 30) => (1280, 720, 60, 4500),
                 (1280, 720, 60) => (1280, 720, 30, 3000),
-                _ => (854, 480, 30, 1500),
+                _ => (852, 480, 30, 1500),
             };
         }
 

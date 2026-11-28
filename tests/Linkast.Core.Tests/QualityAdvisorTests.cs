@@ -23,8 +23,8 @@ public class QualityAdvisorTests
     [Theory]
     [InlineData(6500, 1280, 720, 60, 4500)]   // 4875 kbps budget
     [InlineData(4000, 1280, 720, 30, 3000)]   // 3000 budget
-    [InlineData(2000, 854, 480, 30, 1500)]    // 1500 budget
-    [InlineData(1200, 854, 480, 30, 900)]     // the stream must fit the upload, even below the ideal
+    [InlineData(2000, 852, 480, 30, 1500)]    // 1500 budget
+    [InlineData(1200, 852, 480, 30, 900)]     // the stream must fit the upload, even below the ideal
     public void Slower_uploads_step_down(int upload, int w, int h, int fps, int kbps)
     {
         var r = QualityAdvisor.Recommend(StreamPlatform.Twitch, upload, [FastNvenc])!;
