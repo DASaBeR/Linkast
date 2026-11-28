@@ -428,6 +428,23 @@
                                         <TextBlock Text="Layout editor" />
                                     </StackPanel>
                                 </Button>
+                                <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Subtle}" MinHeight="28" Padding="10,3" Margin="0,0,6,0"
+                                        Command="{Binding VerticalPreview.ToggleExpandedSmallPreviewCommand}"
+                                        Visibility="{Binding VerticalPreview.ShowTooSmallBar, Converter={StaticResource BoolToVis}}"
+                                        AutomationProperties.Name="Vertical preview hidden — window too small"
+                                        ToolTip="Window is narrow — click to view the vertical preview on its own">
+                                    <TextBlock Text="{Binding VerticalPreview.TooSmallButtonText}" Foreground="{DynamicResource Linkast.TextSecondary}" FontSize="12" />
+                                </Button>
+                                <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Subtle}" MinHeight="28" Padding="10,3" Margin="0,0,6,0"
+                                        Command="{Binding VerticalPreview.ShowPreviewAgainCommand}"
+                                        Visibility="{Binding VerticalPreview.ShowHiddenRestoreChip, Converter={StaticResource BoolToVis}}"
+                                        AutomationProperties.Name="Show vertical preview"
+                                        ToolTip="Vertical preview is hidden (recording still runs). Click to show it again.">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE7B3;" FontSize="12" Margin="0,0,6,0" />
+                                        <TextBlock Text="Show vertical preview" FontSize="12" />
+                                    </StackPanel>
+                                </Button>
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                     <TextBlock Text="Preview" FontWeight="SemiBold" VerticalAlignment="Center" />
                                     <TextBlock Text="{Binding ActiveSceneName}" Foreground="{DynamicResource Linkast.TextSecondary}" Margin="8,0,0,0" VerticalAlignment="Center" />
@@ -456,27 +473,144 @@
                                 </DockPanel>
                             </Border>
 
+                            <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource Linkast.Text.Hint}" Margin="2,4,0,0" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource Linkast.Warning}" Text="{Binding VerticalPreview.LiveSourceNote}"
+                                       Visibility="{Binding VerticalPreview.LiveSourceNote, Converter={x:Static vm:Converters.NotNullToVisibility}}" />
+
                             <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource Linkast.Text.Hint}" Margin="2,8,0,0" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
                                        ToolTip="The screen picture here refreshes every 2 seconds; the stream itself runs at full frame rate."
-                                       Text="Drag to move · drag a corner to resize · Alt + drag an edge to trim · the screen picture refreshes every 2 s" />
+                                       Text="{Binding VerticalPreview.PreviewHintText}" />
 
-                            <!-- Output preview: the same scene the stream draws. Overlays, cameras and the game picture can be dragged here. -->
-                            <Border CornerRadius="{StaticResource Linkast.Radius.Control}" BorderBrush="{DynamicResource Linkast.BorderStrong}"
-                                    BorderThickness="1" Background="#FF05060E" Padding="1">
-                                <Grid DataContext="{Binding Webcam}">
-                                    <views:SceneEditor x:Name="OutputPreview" Layers="{Binding Layers}" SelectedLayer="{Binding Selected, Mode=TwoWay}"
-                                                       CanvasWidth="{Binding CanvasWidth}" CanvasHeight="{Binding CanvasHeight}"
-                                                       BasePlacement="{Binding BasePlacement, Mode=TwoWay}" BaseFit="{Binding BaseFit}" BaseCrop="{Binding BaseCrop, Mode=TwoWay}"
-                                                       BackgroundSource="{Binding EditorBackground}" ShowBase="{Binding ShowCapture}" IsPreviewOnly="True"
-                                                       StackOrder="{Binding DataContext.PreviewStack, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                       ShowOverlayNames="{Binding IsSelected, ElementName=TabOverlays}"
-                                                       Overlays="{Binding DataContext.Overlays.Items, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                       SelectedOverlay="{Binding DataContext.Overlays.Selected, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}"
-                                                       SceneBackground="{Binding DataContext.ScenePreviewImage, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                       SceneVideo="{Binding DataContext.ScenePreviewVideo, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                       AutomationProperties.Name="Output preview" />
-                                </Grid>
-                            </Border>
+                            <!-- Output previews: main stream (left) and optional editable 9:16 vertical recording (right). -->
+                            <Grid x:Name="PreviewHost" SizeChanged="OnPreviewHostSizeChanged">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition x:Name="MainPreviewColumn" Width="*" />
+                                    <ColumnDefinition x:Name="PreviewGapColumn" Width="0" />
+                                    <ColumnDefinition x:Name="VerticalPreviewColumn" Width="0" />
+                                </Grid.ColumnDefinitions>
+
+                                <Border x:Name="MainPreviewBorder" Grid.Column="0" SizeChanged="OnMainPreviewSizeChanged"
+                                        CornerRadius="{StaticResource Linkast.Radius.Control}" BorderBrush="{DynamicResource Linkast.BorderStrong}"
+                                        BorderThickness="1" Background="#FF05060E" Padding="1"
+                                        Visibility="{Binding VerticalPreview.ShowMainPreview, Converter={StaticResource BoolToVis}}">
+                                    <Grid>
+                                        <Grid DataContext="{Binding Webcam}">
+                                            <views:SceneEditor x:Name="OutputPreview" Layers="{Binding Layers}" SelectedLayer="{Binding Selected, Mode=TwoWay}"
+                                                               CanvasWidth="{Binding CanvasWidth}" CanvasHeight="{Binding CanvasHeight}"
+                                                               BasePlacement="{Binding BasePlacement, Mode=TwoWay}" BaseFit="{Binding BaseFit}" BaseCrop="{Binding BaseCrop, Mode=TwoWay}"
+                                                               BackgroundSource="{Binding EditorBackground}" ShowBase="{Binding ShowCapture}" IsPreviewOnly="True"
+                                                               StackOrder="{Binding DataContext.PreviewStack, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                               ShowOverlayNames="{Binding IsSelected, ElementName=TabOverlays}"
+                                                               Overlays="{Binding DataContext.Overlays.Items, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                               SelectedOverlay="{Binding DataContext.Overlays.Selected, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}"
+                                                               SceneBackground="{Binding DataContext.ScenePreviewImage, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                               SceneVideo="{Binding DataContext.ScenePreviewVideo, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                               AutomationProperties.Name="Output preview" />
+                                        </Grid>
+
+                                        <!-- Top-left label chip with optional REC indicator. -->
+                                        <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8" Padding="8,3" CornerRadius="10"
+                                                Background="{DynamicResource Linkast.Surface1}" BorderBrush="{DynamicResource Linkast.BorderSubtle}" BorderThickness="1"
+                                                Opacity="0.92" IsHitTestVisible="False">
+                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,7,0"
+                                                            Visibility="{Binding VerticalPreview.IsMainRecording, Converter={StaticResource BoolToVis}}">
+                                                    <Ellipse Width="7" Height="7" Fill="{DynamicResource Linkast.Error}" VerticalAlignment="Center" Margin="0,0,4,0" />
+                                                    <TextBlock Text="REC" FontSize="10" FontWeight="Bold" Foreground="{DynamicResource Linkast.Error}" VerticalAlignment="Center" />
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding VerticalPreview.MainChipText}" FontSize="11" Foreground="{DynamicResource Linkast.TextPrimary}" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                        </Border>
+                                    </Grid>
+                                </Border>
+
+                                <Border x:Name="VerticalPreviewBorder" Grid.Column="2"
+                                        CornerRadius="{StaticResource Linkast.Radius.Control}" BorderBrush="{DynamicResource Linkast.BorderStrong}"
+                                        BorderThickness="1" Background="{DynamicResource Linkast.Surface1}" Padding="1"
+                                        Visibility="{Binding VerticalPreview.ShowPanel, Converter={StaticResource BoolToVis}}">
+                                    <Grid>
+                                        <!-- Normal editable 9:16 preview -->
+                                        <Grid Visibility="{Binding VerticalPreview.ShowNormalEditor, Converter={StaticResource BoolToVis}}" Background="#FF05060E">
+                                            <Grid DataContext="{Binding VerticalPreview}">
+                                                <views:SceneEditor x:Name="VerticalPreview"
+                                                                   Layers="{Binding Items}" SelectedLayer="{Binding SelectedItem, Mode=TwoWay}"
+                                                                   Overlays="{Binding OverlayItems}" SelectedOverlay="{Binding SelectedOverlay, Mode=TwoWay}"
+                                                                   CanvasWidth="{Binding CanvasWidth}" CanvasHeight="{Binding CanvasHeight}"
+                                                                   BasePlacement="{Binding BasePlacement, Mode=TwoWay}" BaseFit="{Binding BaseFit}" BaseCrop="{Binding BaseCrop, Mode=TwoWay}"
+                                                                   BackgroundSource="{Binding GamePicture}" BasePlaceholderText="{Binding BasePlaceholderText}"
+                                                                   ShowBase="{Binding ShowBase}" IsPreviewOnly="True" LimitPortraitHeight="False"
+                                                                   StackOrder="{Binding StackOrder}"
+                                                                   Snap="{Binding DataContext.Webcam.SnapToGrid, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                   ShowOverlayNames="{Binding IsSelected, ElementName=TabOverlays}"
+                                                                   SceneBackground="{Binding SceneBackground}" SceneVideo="{Binding SceneVideo}"
+                                                                   AutomationProperties.Name="Vertical recording preview" />
+
+                                                <!-- Short-video safe zone overlay (guides only, never recorded) -->
+                                                <Viewbox Stretch="Uniform" IsHitTestVisible="False"
+                                                         Visibility="{Binding ShowSafeZones, Converter={StaticResource BoolToVis}}">
+                                                    <Grid Width="1080" Height="1920">
+                                                        <!-- Top 10% (192 px) -->
+                                                        <Border Height="192" VerticalAlignment="Top" Background="#40E5484D" BorderBrush="#99E5484D" BorderThickness="0,0,0,2">
+                                                            <TextBlock Text="Safe zone (app header)" Foreground="#DDFFFFFF" FontSize="24" Margin="16,12,0,0" />
+                                                        </Border>
+                                                        <!-- Right 15% (162 px), between top 10% and bottom 20% -->
+                                                        <Border Width="162" HorizontalAlignment="Right" Margin="0,192,0,384" Background="#40E5484D" BorderBrush="#99E5484D" BorderThickness="2,0,0,0">
+                                                            <TextBlock Text="Buttons" Foreground="#DDFFFFFF" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                        </Border>
+                                                        <!-- Bottom 20% (384 px) -->
+                                                        <Border Height="384" VerticalAlignment="Bottom" Background="#40E5484D" BorderBrush="#99E5484D" BorderThickness="0,2,0,0">
+                                                            <TextBlock Text="Safe zone (captions)" Foreground="#DDFFFFFF" FontSize="24" Margin="16,12,0,0" />
+                                                        </Border>
+                                                    </Grid>
+                                                </Viewbox>
+                                            </Grid>
+
+                                            <!-- Vertical chip: REC + label + eye hide button + safe zones + quick layouts -->
+                                            <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="6" Padding="7,3" CornerRadius="10"
+                                                    Background="{DynamicResource Linkast.Surface1}" BorderBrush="{DynamicResource Linkast.BorderSubtle}" BorderThickness="1"
+                                                    Opacity="0.94">
+                                                <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,6,0"
+                                                                Visibility="{Binding VerticalPreview.IsRecording, Converter={StaticResource BoolToVis}}">
+                                                        <Ellipse Width="7" Height="7" Fill="{DynamicResource Linkast.Error}" VerticalAlignment="Center" Margin="0,0,4,0" />
+                                                        <TextBlock Text="REC" FontSize="10" FontWeight="Bold" Foreground="{DynamicResource Linkast.Error}" VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                    <TextBlock Text="{Binding VerticalPreview.VerticalChipText}" FontSize="11"
+                                                               Foreground="{DynamicResource Linkast.TextPrimary}" VerticalAlignment="Center" Margin="0,0,4,0" />
+                                                    <Button Style="{StaticResource Linkast.Button.Subtle}" Width="22" Height="22" MinHeight="22" Padding="0" Margin="0,0,2,0"
+                                                            Command="{Binding VerticalPreview.HidePreviewCommand}"
+                                                            ToolTip="Hide the vertical preview" AutomationProperties.Name="Hide vertical preview">
+                                                        <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE7B3;" FontSize="11" />
+                                                    </Button>
+                                                    <ToggleButton Style="{StaticResource Linkast.ToggleButton.Secondary}" MinHeight="22" Padding="6,1" Margin="0,0,2,0" FontSize="11"
+                                                                  IsChecked="{Binding VerticalPreview.ShowSafeZones}"
+                                                                  ToolTip="Areas the apps cover with their buttons and captions. Keep faces and text out of them."
+                                                                  AutomationProperties.Name="Show safe zones" Content="Safe zones" />
+                                                    <Button x:Name="VerticalQuickLayoutBtn" Style="{StaticResource Linkast.Button.Subtle}" MinHeight="22" Padding="6,1" FontSize="11"
+                                                            Click="OnVerticalQuickLayoutMenu" ToolTip="Quick arrangements for the vertical scene"
+                                                            AutomationProperties.Name="Vertical layout presets" Content="Layout ▾" />
+                                                </WrapPanel>
+                                            </Border>
+                                        </Grid>
+
+                                        <!-- Empty state: vertical recording on, no vertical scene yet -->
+                                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="18"
+                                                    Visibility="{Binding VerticalPreview.ShowNoSceneCard, Converter={StaticResource BoolToVis}}">
+                                            <TextBlock Text="No vertical scene yet" FontWeight="SemiBold" HorizontalAlignment="Center" TextAlignment="Center" />
+                                            <TextBlock Style="{StaticResource Linkast.Text.Hint}" Text="Create a 9:16 scene for vertical recording." TextWrapping="Wrap" TextAlignment="Center" Margin="0,4,0,12" />
+                                            <Button Style="{StaticResource Linkast.Button.Secondary}" Content="Add a vertical scene" HorizontalAlignment="Center"
+                                                    Command="{Binding AddVerticalSceneCommand}" />
+                                        </StackPanel>
+
+                                        <!-- Special state: active scene is already vertical -->
+                                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="18"
+                                                    Visibility="{Binding VerticalPreview.ShowStreamIsVerticalNotice, Converter={StaticResource BoolToVis}}">
+                                            <TextBlock Text="Your stream is vertical, so no separate vertical recording is made."
+                                                       Style="{StaticResource Linkast.Text.Hint}" TextWrapping="Wrap" TextAlignment="Center" Margin="0" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </Grid>
                         </DockPanel>
                     </Border>
 
@@ -1347,14 +1481,14 @@
                                                            Text="Recording separately with the CPU encoder uses a lot of CPU. A graphics card encoder is recommended." />
                                             </StackPanel>
                                         </Border>
-                                        <Border Style="{StaticResource TabSection}" IsEnabled="{Binding CanEditSettings}">
+                                        <Border Style="{StaticResource TabSection}">
                                             <StackPanel>
                                                 <TextBlock Text="Vertical recording" Style="{StaticResource Linkast.Card.Title}" />
                                                 <CheckBox Style="{StaticResource Linkast.ToggleSwitch}" Content="Also record vertical (Shorts, Reels, TikTok)"
-                                                          IsChecked="{Binding VerticalRecordingEnabled}" HorizontalAlignment="Left"
+                                                          IsChecked="{Binding VerticalRecordingEnabled}" IsEnabled="{Binding CanEditSettings}" HorizontalAlignment="Left"
                                                           ToolTip="Records a vertical 9:16 file from a vertical scene at the same time as your landscape stream or recording." />
                                                 <StackPanel Visibility="{Binding VerticalRecordingEnabled, Converter={StaticResource BoolToVis}}" Margin="0,10,0,0">
-                                                    <Grid Visibility="{Binding HasVerticalScene, Converter={StaticResource BoolToVis}}">
+                                                    <Grid Visibility="{Binding HasVerticalScene, Converter={StaticResource BoolToVis}}" IsEnabled="{Binding CanEditSettings}">
                                                         <Grid.ColumnDefinitions>
                                                             <ColumnDefinition Width="2*" />
                                                             <ColumnDefinition Width="12" />
@@ -1375,12 +1509,15 @@
                                                             <TextBox x:Name="VerticalBitrateBox" Text="{Binding VerticalRecordingBitrateKbps, UpdateSourceTrigger=PropertyChanged}" />
                                                         </StackPanel>
                                                     </Grid>
-                                                    <StackPanel Visibility="{Binding HasVerticalScene, Converter={x:Static vm:Converters.InverseBoolToVisibility}}">
+                                                    <StackPanel Visibility="{Binding HasVerticalScene, Converter={x:Static vm:Converters.InverseBoolToVisibility}}" IsEnabled="{Binding CanEditSettings}">
                                                         <Button Style="{StaticResource Linkast.Button.Secondary}" Content="Add a vertical scene" HorizontalAlignment="Left"
                                                                 Command="{Binding AddVerticalSceneCommand}" />
                                                     </StackPanel>
+                                                    <CheckBox Style="{StaticResource Linkast.ToggleSwitch}" Content="Show vertical preview" Margin="0,10,0,0"
+                                                              IsChecked="{Binding VerticalPreview.ShowPreview}" HorizontalAlignment="Left"
+                                                              ToolTip="Shows or hides the editable 9:16 vertical preview on the main page. Vertical recording keeps running when hidden." />
                                                     <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,6,0,0"
-                                                               Text="To change what the vertical recording shows, open its scene in the scene strip before going live. Changes made while live apply to the next recording." />
+                                                               Text="Edit the vertical layout directly in the vertical preview on the main page — changes apply live while recording." />
                                                 </StackPanel>
                                             </StackPanel>
                                         </Border>

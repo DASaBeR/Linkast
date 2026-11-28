@@ -157,6 +157,8 @@ public sealed partial class OverlayItemViewModel : ObservableObject, ISceneItem
 
     public bool IsShown => Visible;
 
+    public bool IsOverlay => true;
+
     public ImageSource? Preview => Bitmap;
 
     public double Aspect => IsWeb ? (double)PageWidth / Math.Max(1, PageHeight) : OverlayRenderer.AspectOf(Bitmap);

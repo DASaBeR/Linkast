@@ -855,7 +855,15 @@ public sealed partial class FfmpegStreamEngine : IStreamEngine, ILiveSceneContro
         TelemetryUpdated?.Invoke(this, telemetry);
     }
 
-    public async Task<bool> MoveLayerAsync(string layerId, NormalizedRect placement, CancellationToken cancellationToken = default)
+    public Task<bool> MoveLayerAsync(string layerId, NormalizedRect placement, CancellationToken cancellationToken = default)
+    {
+        return MoveLayerAsyncCore(layerId, placement, cancellationToken);
+    }
+
+    public Task<bool> SetCanvasLayoutAsync(string canvasName, CanvasLayout layout, CancellationToken cancellationToken = default) =>
+        Task.FromResult(false);
+
+    private async Task<bool> MoveLayerAsyncCore(string layerId, NormalizedRect placement, CancellationToken cancellationToken)
     {
         var composition = Volatile.Read(ref _composition);
         var index = composition is null ? -1 : composition.LayerIds.IndexOf(layerId);

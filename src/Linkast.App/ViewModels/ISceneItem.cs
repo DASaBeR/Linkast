@@ -29,4 +29,7 @@ public interface ISceneItem : INotifyPropertyChanged
 
     /// <summary>The latest picture, or null when there is none yet (the editor shows a placeholder).</summary>
     ImageSource? Preview { get; }
+
+    /// <summary>True when this item represents an overlay rather than a camera layer.</summary>
+    bool IsOverlay => false;
 }

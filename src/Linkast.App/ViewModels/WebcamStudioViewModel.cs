@@ -606,7 +606,44 @@ public sealed partial class WebcamStudioViewModel : ObservableObject, IAsyncDisp
         return true;
     }
 
+    /// <summary>Raised after any scene (active or inactive, e.g. vertical) is updated through <see cref="UpdateScene"/>.</summary>
+    public event EventHandler<Guid>? SceneChanged;
+
     public SceneLayout? FindScene(Guid id) => _layouts.Find(l => l.Id == id);
+
+    /// <summary>Applies <paramref name="change"/> to <paramref name="sceneId"/>, saves, and notifies listeners.</summary>
+    public void UpdateScene(Guid sceneId, Func<SceneLayout, SceneLayout> change)
+    {
+        ArgumentNullException.ThrowIfNull(change);
+        var i = _layouts.FindIndex(l => l.Id == sceneId);
+        if (i < 0)
+        {
+            return;
+        }
+
+        var updated = change(_layouts[i]).Clamped();
+        if (updated == _layouts[i])
+        {
+            return;
+        }
+
+        _layouts[i] = updated;
+        if (i == ActiveIndex())
+        {
+            ApplyActiveLayoutToLayers();
+            OnPropertyChanged(nameof(ActiveLayout));
+            OnPropertyChanged(nameof(BasePlacement));
+            OnPropertyChanged(nameof(BaseCrop));
+            OnPropertyChanged(nameof(BaseFit));
+            OnPropertyChanged(nameof(ShowCapture));
+            BaseChanged?.Invoke(this, EventArgs.Empty);
+            OnLayersChanged();
+        }
+
+        OnPropertyChanged(nameof(Layouts));
+        Changed();
+        SceneChanged?.Invoke(this, sceneId);
+    }
 
     /// <summary>Moves a scene to <paramref name="index"/> in the scene list (dragged there).</summary>
     public void MoveSceneTo(LayoutOption option, int index)

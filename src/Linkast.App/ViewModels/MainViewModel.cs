@@ -105,14 +105,20 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _levelMonitor = new AudioLevelMonitor(audioHub, audioLevels);
         _meterTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(66), DispatcherPriority.Background, (_, _) => ReadStreamMeters(), _ui) { IsEnabled = false };
         Webcam = new WebcamStudioViewModel(cameras, _ui, segmentation, backgroundImages, framing, audioLevels);
+        VerticalPreview = new VerticalPreviewViewModel(Webcam, Overlays, ScheduleSave);
         Webcam.SettingsChanged += (_, _) => ScheduleSave();
-        Webcam.BaseChanged += (_, _) => OnBaseChanged();
+        Webcam.BaseChanged += (_, _) =>
+        {
+            OnBaseChanged();
+            VerticalPreview.NotifySceneEdited(Webcam.ActiveLayout.Id);
+        };
         Webcam.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName is nameof(WebcamStudioViewModel.CanvasWidth) or nameof(WebcamStudioViewModel.CanvasHeight))
             {
                 Overlays.SetCanvas(Webcam.CanvasWidth, Webcam.CanvasHeight);
                 RefreshScenePreview();
+                RefreshVerticalPreviewState();
             }
         };
         AttachScenesAndMixer();
@@ -128,6 +134,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         Webcam.LayerPlacementChanged += (_, layer) => QueueLiveMove(layer);
         Webcam.LayersChanged += (_, _) => UpdateAudioLevelMonitor();
         Webcam.LayoutSwitching = OnLayoutSwitchingAsync;
+        Webcam.SceneChanged += (_, sceneId) => OnSceneChangedForVertical(sceneId);
+        Webcam.Layers.CollectionChanged += (_, _) => VerticalPreview.RebuildItems();
+        Overlays.Items.CollectionChanged += (_, _) => VerticalPreview.RebuildItems();
 
         System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged += (_, _) => OnNetworkChanged();
         System.Net.NetworkInformation.NetworkChange.NetworkAvailabilityChanged += (_, _) => OnNetworkChanged();
@@ -142,6 +151,9 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     /// <summary>Pictures and web alerts on top of the stream.</summary>
     public OverlaysViewModel Overlays { get; }
+
+    /// <summary>Editable vertical (9:16) preview alongside the main preview when vertical recording is enabled.</summary>
+    public VerticalPreviewViewModel VerticalPreview { get; }
 
     /// <summary>Settings › Import from OBS.</summary>
     public ObsImportViewModel ObsImport { get; } = new();
@@ -1169,12 +1181,16 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// <summary>The running session writes a file (alone or while streaming).</summary>
     public bool IsRecording => IsActive && _recording;
 
+    /// <summary>The running session writes a file for the main output.</summary>
+    public bool IsMainRecording => IsActive && _mainRecording;
+
     public bool IsRecordingOnly => IsActive && _recordOnly;
 
     public string RecordButtonText => IsRecordingOnly ? "Stop recording" : "Record";
 
     private bool _recordOnly;
     private bool _recording;
+    private bool _mainRecording;
 
     /// <summary>Short, upper-case state pill. Recording without streaming never says LIVE.</summary>
     public string PillText => State switch
@@ -1534,6 +1550,16 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             or nameof(SelectedVerticalSize) or nameof(VerticalRecordingBitrateKbps))
         {
             NotifyRecordingSummaryChanged();
+            RefreshVerticalPreviewState();
+            if (IsPreviewVisible && e.PropertyName is nameof(VerticalRecordingEnabled) or nameof(SelectedVerticalScene))
+            {
+                _ = RefreshEditorBackgroundAsync();
+            }
+        }
+
+        if (e.PropertyName is nameof(State))
+        {
+            RefreshVerticalPreviewState();
         }
 
         if (e.PropertyName is nameof(SelectedInputDevice))
@@ -1645,6 +1671,16 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         var msg = $"{label} stopped: {e.Error.UserMessage} The stream continues.";
         AppendLog(msg);
         WarningText = msg;
+        if (string.Equals(e.OutputName, "vertical", StringComparison.Ordinal))
+        {
+            _liveVerticalSceneId = null;
+            RefreshVerticalPreviewState();
+        }
+        else if (string.Equals(e.OutputName, "recording", StringComparison.Ordinal))
+        {
+            _mainRecording = false;
+            OnPropertyChanged(nameof(IsMainRecording));
+        }
     }
 
     private void ScheduleSave()
@@ -1724,6 +1760,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 VerticalRecordingWidth = SelectedVerticalSize.Width,
                 VerticalRecordingHeight = SelectedVerticalSize.Height,
                 VerticalRecordingBitrateKbps = VerticalRecordingBitrateKbps,
+                ShowVerticalPreview = VerticalPreview.ShowPreview,
+                ShowVerticalSafeZones = VerticalPreview.ShowSafeZones,
                 StartSceneId = StartSceneChoice?.Id,
                 EndSceneId = EndSceneChoice?.Id,
                 EndSceneSeconds = EndSceneSeconds,
@@ -1800,7 +1838,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _pendingVerticalSceneId = s.VerticalRecordingSceneId;
         SelectedVerticalSize = VerticalResolutionOption.For(s.VerticalRecordingWidth, s.VerticalRecordingHeight);
         VerticalRecordingBitrateKbps = s.VerticalRecordingBitrateKbps;
+        VerticalPreview.ShowPreview = s.ShowVerticalPreview;
+        VerticalPreview.ShowSafeZones = s.ShowVerticalSafeZones;
         RebuildVerticalScenes(s.VerticalRecordingSceneId);
+        RefreshVerticalPreviewState(rebuildItems: true);
         EndSceneSeconds = s.EndSceneSeconds;
         SeparateGameAudio = s.SeparateGameAudio;
         _channelVolumes.Clear();
@@ -2070,22 +2111,70 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         if (kind is VideoSourceKind.CameraOnly or VideoSourceKind.TestPattern)
         {
             Webcam.EditorBackground = null;
+        }
+        else
+        {
+            var frame = await Task.Run(() => kind == VideoSourceKind.Window && window is not null
+                ? ScreenSnapshot.CaptureWindow(window.Handle)
+                : monitor is not null ? ScreenSnapshot.CaptureMonitor(monitor) : null);
+            if (frame is not null)
+            {
+                var bitmap = System.Windows.Media.Imaging.BitmapSource.Create(frame.Width, frame.Height, 96, 96,
+                    System.Windows.Media.PixelFormats.Bgra32, null, frame.Pixels, frame.Stride);
+                bitmap.Freeze();
+                Webcam.EditorBackground = bitmap;
+            }
+        }
+
+        await RefreshVerticalGamePictureAsync();
+    }
+
+    private async Task RefreshVerticalGamePictureAsync()
+    {
+        if (VerticalPreview is null || !VerticalRecordingEnabled || !VerticalPreview.ShowPreview
+            || VerticalPreview.Scene is not { } vScene || !vScene.ShowCapture)
+        {
+            VerticalPreview?.GamePicture = null;
             return;
         }
 
-        var frame = await Task.Run(() => kind == VideoSourceKind.Window && window is not null
-            ? ScreenSnapshot.CaptureWindow(window.Handle)
-            : monitor is not null ? ScreenSnapshot.CaptureMonitor(monitor) : null);
+        var vCap = CaptureOf(vScene);
+        var mainCap = CaptureOf(Webcam.ActiveLayout);
+        if (SameCaptureTarget(vCap, mainCap) && Webcam.EditorBackground is not null)
+        {
+            VerticalPreview.GamePicture = Webcam.EditorBackground;
+            return;
+        }
+
+        var frame = await Task.Run(() => vCap.Kind switch
+        {
+            SceneCaptureKind.Display when FindMonitor(vCap) is { } mon => ScreenSnapshot.CaptureMonitor(mon),
+            SceneCaptureKind.Window when FindWindow(vCap) is { } win && VideoSourceCatalog.IsWindowCapturable(win.Handle) => ScreenSnapshot.CaptureWindow(win.Handle),
+            _ => null,
+        });
+
         if (frame is null)
         {
+            VerticalPreview.GamePicture = null;
             return;
         }
 
-        var bitmap = System.Windows.Media.Imaging.BitmapSource.Create(frame.Width, frame.Height, 96, 96,
+        var bmp = System.Windows.Media.Imaging.BitmapSource.Create(frame.Width, frame.Height, 96, 96,
             System.Windows.Media.PixelFormats.Bgra32, null, frame.Pixels, frame.Stride);
-        bitmap.Freeze();
-        Webcam.EditorBackground = bitmap;
+        bmp.Freeze();
+        VerticalPreview.GamePicture = bmp;
     }
+
+    private static bool SameCaptureTarget(SceneCapture a, SceneCapture b) =>
+        a.Kind == b.Kind
+        && a.Kind switch
+        {
+            SceneCaptureKind.Display => string.Equals(a.MonitorDeviceName, b.MonitorDeviceName, StringComparison.OrdinalIgnoreCase),
+            SceneCaptureKind.Window => string.Equals(a.WindowProcess, b.WindowProcess, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(a.WindowTitle, b.WindowTitle, StringComparison.OrdinalIgnoreCase),
+            SceneCaptureKind.TestPattern => true,
+            _ => false,
+        };
 
     // ---- Commands --------------------------------------------------------------------------
 
@@ -2264,8 +2353,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         LogStreamContext(session);
         _sessionSavedFiles.Clear();
         _recordOnly = recordOnly;
+        _mainRecording = session.Recording is not null;
         _recording = session.Recording is not null || session.VerticalRecording is not null;
         RememberLiveSources(session, _builtVerticalSceneId);
+        RefreshVerticalPreviewState();
         try
         {
             await _engine.StartAsync(session);
@@ -2492,6 +2583,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         {
             FpsText = UploadText = EncoderText = "–";
             WarningText = null;
+            _liveVerticalSceneId = null;
+            _mainRecording = false;
             UpdateCaptureBlack(false);
             StopEnding();
         }

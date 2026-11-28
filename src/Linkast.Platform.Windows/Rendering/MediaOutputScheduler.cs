@@ -248,6 +248,9 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
             _logger));
     }
 
+    internal Func<IReadOnlyDictionary<string, NormalizedRect>>? PlacementsProviderOf(string canvasName) =>
+        _canvases.FirstOrDefault(c => string.Equals(c.Name, canvasName, StringComparison.Ordinal))?.PlacementsProvider;
+
     public long FramesRendered => Interlocked.Read(ref _framesRendered);
 
     /// <summary>Times the render loop fell more than two frames behind and skipped ahead.</summary>

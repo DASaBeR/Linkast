@@ -126,4 +126,10 @@ public interface ILiveSceneControl
     /// (null placement hides it). False when nothing is live or the stream has no captured picture.
     /// </summary>
     Task<bool> SetBaseAsync(NormalizedRect? placement, NormalizedRect crop, BaseFit fit, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Replaces the placements, crops and stack order of a named canvas (for example "vertical") while
+    /// running. Returns false when no such canvas is active.
+    /// </summary>
+    Task<bool> SetCanvasLayoutAsync(string canvasName, CanvasLayout layout, CancellationToken cancellationToken = default);
 }

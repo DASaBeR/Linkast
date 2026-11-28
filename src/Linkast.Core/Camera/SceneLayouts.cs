@@ -278,13 +278,25 @@ public sealed record SceneLayout
         return new SceneLayout { Id = LandscapeId, Name = "Gaming", Kind = SceneKind.Gaming, CameraPlacements = map };
     }
 
+    /// <summary>Quick layout 1: gameplay fills the top 56 %, first camera fills the bottom 44 %.</summary>
+    public static readonly NormalizedRect VerticalGameTopBase = new(0, 0, 1, 0.56);
+    public static readonly NormalizedRect VerticalGameTopCamera = new(0, 0.56, 1, 0.44);
+
+    /// <summary>Quick layout 2: first camera fills the top 44 %, gameplay fills the bottom 56 %.</summary>
+    public static readonly NormalizedRect VerticalCameraTopCamera = new(0, 0, 1, 0.44);
+    public static readonly NormalizedRect VerticalCameraTopBase = new(0, 0.44, 1, 0.56);
+
+    /// <summary>Quick layout 3: gameplay fills the whole vertical canvas, first camera in the bottom-right corner.</summary>
+    public static readonly NormalizedRect VerticalFullGameBase = new(0, 0, 1, 1);
+    public static readonly NormalizedRect VerticalFullGameCornerCamera = new(0.58, 0.68, 0.38, 0.24);
+
     /// <summary>The vertical Gaming scene: gameplay fills the top 56 %, first camera underneath.</summary>
     public static SceneLayout DefaultVertical(string? firstLayerId)
     {
         var map = new Dictionary<string, NormalizedRect>();
         if (firstLayerId is not null)
         {
-            map[firstLayerId] = new NormalizedRect(0, 0.56, 1, 0.44);
+            map[firstLayerId] = VerticalGameTopCamera;
         }
 
         return new SceneLayout
@@ -293,7 +305,7 @@ public sealed record SceneLayout
             Name = "Gaming (vertical)",
             Kind = SceneKind.Gaming,
             Orientation = OutputOrientation.Vertical,
-            BasePlacement = new NormalizedRect(0, 0, 1, 0.56),
+            BasePlacement = VerticalGameTopBase,
             BaseFit = BaseFit.Fill,
             CameraPlacements = map,
         };

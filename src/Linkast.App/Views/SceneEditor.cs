@@ -87,7 +87,7 @@ public sealed class SceneEditor : UserControl
         nameof(Layers), typeof(IEnumerable), typeof(SceneEditor), new PropertyMetadata(null, (d, e) => ((SceneEditor)d).OnLayersChanged(e.NewValue as IEnumerable)));
 
     public static readonly DependencyProperty SelectedLayerProperty = DependencyProperty.Register(
-        nameof(SelectedLayer), typeof(CameraLayerViewModel), typeof(SceneEditor),
+        nameof(SelectedLayer), typeof(ISceneItem), typeof(SceneEditor),
         new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.BindsTwoWayByDefault, (d, e) => ((SceneEditor)d).OnSelectedLayerChanged(e.NewValue)));
 
     /// <summary>The overlays (editable): moved and resized like cameras, drawn above them.</summary>
@@ -95,7 +95,7 @@ public sealed class SceneEditor : UserControl
         nameof(Overlays), typeof(IEnumerable), typeof(SceneEditor), new PropertyMetadata(null, (d, e) => ((SceneEditor)d).OnOverlaysChanged(e.NewValue as IEnumerable)));
 
     public static readonly DependencyProperty SelectedOverlayProperty = DependencyProperty.Register(
-        nameof(SelectedOverlay), typeof(OverlayItemViewModel), typeof(SceneEditor),
+        nameof(SelectedOverlay), typeof(ISceneItem), typeof(SceneEditor),
         new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.BindsTwoWayByDefault, (d, e) => ((SceneEditor)d).OnSelectedOverlayChanged(e.NewValue)));
 
     public static readonly DependencyProperty CanvasWidthProperty = DependencyProperty.Register(
@@ -137,6 +137,17 @@ public sealed class SceneEditor : UserControl
     /// <summary>Draws the scene as the stream will: no outlines, labels or placeholders except on the selected or hovered item.</summary>
     public static readonly DependencyProperty IsPreviewOnlyProperty = DependencyProperty.Register(
         nameof(IsPreviewOnly), typeof(bool), typeof(SceneEditor), new PropertyMetadata(false, (d, _) => ((SceneEditor)d).RefreshAll()));
+
+    /// <summary>Caps portrait canvases at 520 px high when used in a standalone layout editor; turn off when matching a sibling preview height.</summary>
+    public static readonly DependencyProperty LimitPortraitHeightProperty = DependencyProperty.Register(
+        nameof(LimitPortraitHeight), typeof(bool), typeof(SceneEditor), new PropertyMetadata(true, (d, _) => ((SceneEditor)d).OnCanvasSize()));
+
+    /// <summary>Optional text drawn inside the game/capture frame when <see cref="BackgroundSource"/> is null.</summary>
+    public static readonly DependencyProperty BasePlaceholderTextProperty = DependencyProperty.Register(
+        nameof(BasePlaceholderText), typeof(string), typeof(SceneEditor), new PropertyMetadata(null, (d, _) => ((SceneEditor)d)._base.Refresh()));
+
+    /// <summary>Raised when the user interacts with or focuses this editor.</summary>
+    public event EventHandler? Interaction;
 
     private readonly Canvas _canvas = new() { ClipToBounds = true, Background = new SolidColorBrush(Color.FromRgb(24, 24, 28)) };
     private readonly Line _vGuide = Guide();
@@ -182,6 +193,8 @@ public sealed class SceneEditor : UserControl
         Content = _viewbox;
         OnCanvasSize();
         Loaded += (_, _) => RefreshAll();
+        GotKeyboardFocus += (_, _) => Interaction?.Invoke(this, EventArgs.Empty);
+        PreviewMouseDown += (_, _) => Interaction?.Invoke(this, EventArgs.Empty);
     }
 
     public IEnumerable? Layers
@@ -190,9 +203,9 @@ public sealed class SceneEditor : UserControl
         set => SetValue(LayersProperty, value);
     }
 
-    public CameraLayerViewModel? SelectedLayer
+    public ISceneItem? SelectedLayer
     {
-        get => (CameraLayerViewModel?)GetValue(SelectedLayerProperty);
+        get => (ISceneItem?)GetValue(SelectedLayerProperty);
         set => SetValue(SelectedLayerProperty, value);
     }
 
@@ -202,9 +215,9 @@ public sealed class SceneEditor : UserControl
         set => SetValue(OverlaysProperty, value);
     }
 
-    public OverlayItemViewModel? SelectedOverlay
+    public ISceneItem? SelectedOverlay
     {
-        get => (OverlayItemViewModel?)GetValue(SelectedOverlayProperty);
+        get => (ISceneItem?)GetValue(SelectedOverlayProperty);
         set => SetValue(SelectedOverlayProperty, value);
     }
 
@@ -280,6 +293,18 @@ public sealed class SceneEditor : UserControl
         set => SetValue(ShowOverlayNamesProperty, value);
     }
 
+    public bool LimitPortraitHeight
+    {
+        get => (bool)GetValue(LimitPortraitHeightProperty);
+        set => SetValue(LimitPortraitHeightProperty, value);
+    }
+
+    public string? BasePlaceholderText
+    {
+        get => (string?)GetValue(BasePlaceholderTextProperty);
+        set => SetValue(BasePlaceholderTextProperty, value);
+    }
+
     /// <summary>Flashes <paramref name="item"/> so it stands out among the others, for example after picking it in a list.</summary>
     public void Locate(ISceneItem item) => _overlays.Concat(_cameras).FirstOrDefault(v => v.Is(item))?.Flash();
 
@@ -304,8 +329,8 @@ public sealed class SceneEditor : UserControl
         _canvas.Width = CanvasWidth;
         _canvas.Height = CanvasHeight;
 
-        // A vertical canvas is shown at a sensible height rather than filling the panel width.
-        _viewbox.MaxHeight = CanvasHeight > CanvasWidth ? 520 : double.PositiveInfinity;
+        // A vertical canvas in a standalone editor is capped in height; side-by-side previews match heights directly.
+        _viewbox.MaxHeight = CanvasHeight > CanvasWidth && LimitPortraitHeight ? 520 : double.PositiveInfinity;
         RefreshAll();
     }
 
@@ -441,33 +466,31 @@ public sealed class SceneEditor : UserControl
     internal void Select(ISceneItem item)
     {
         _baseSelected = false;
-        switch (item)
+        if (item.IsOverlay)
         {
-            case CameraLayerViewModel camera:
-                SelectedOverlay = null;
-                if (!ReferenceEquals(SelectedLayer, camera))
+            if (!ReferenceEquals(SelectedOverlay, item))
+            {
+                _selectingOnCanvas = true;
+                try
                 {
-                    SelectedLayer = camera;
+                    SelectedOverlay = item;
                 }
-
-                break;
-            case OverlayItemViewModel overlay:
-                if (!ReferenceEquals(SelectedOverlay, overlay))
+                finally
                 {
-                    _selectingOnCanvas = true;
-                    try
-                    {
-                        SelectedOverlay = overlay;
-                    }
-                    finally
-                    {
-                        _selectingOnCanvas = false;
-                    }
+                    _selectingOnCanvas = false;
                 }
-
-                break;
+            }
+        }
+        else
+        {
+            SelectedOverlay = null;
+            if (!ReferenceEquals(SelectedLayer, item))
+            {
+                SelectedLayer = item;
+            }
         }
 
+        Interaction?.Invoke(this, EventArgs.Empty);
         RefreshAll();
     }
 
@@ -475,6 +498,7 @@ public sealed class SceneEditor : UserControl
     {
         _baseSelected = true;
         SelectedOverlay = null;
+        Interaction?.Invoke(this, EventArgs.Empty);
         RefreshAll();
     }
 
@@ -845,7 +869,7 @@ public sealed class SceneEditor : UserControl
         public void Refresh()
         {
             var clean = _owner.IsPreviewOnly;
-            var overlay = _item is OverlayItemViewModel;
+            var overlay = _item.IsOverlay;
             var selected = _item.IsSelected && (overlay || _owner.CameraHandlesAllowed);
             var named = overlay && _owner.ShowOverlayNames;
             var preview = _item.Preview;
@@ -970,6 +994,18 @@ public sealed class SceneEditor : UserControl
         private readonly Border _clip = new() { ClipToBounds = true, Background = new SolidColorBrush(Color.FromRgb(36, 36, 42)) };
         private readonly Canvas _picture = new();
         private readonly Image _image = new() { Stretch = Stretch.Fill };
+        private readonly TextBlock _placeholderText = new()
+        {
+            Foreground = new SolidColorBrush(Color.FromArgb(200, 0xFF, 0xFF, 0xFF)),
+            FontSize = 42,
+            FontWeight = FontWeights.SemiBold,
+            TextWrapping = TextWrapping.Wrap,
+            TextAlignment = TextAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(24),
+            IsHitTestVisible = false,
+        };
         private readonly Rectangle _outline = Outline();
         private readonly List<Thumb> _handles = [];
         private Rect _dragRect;
@@ -988,6 +1024,7 @@ public sealed class SceneEditor : UserControl
             body.DragDelta += (_, e) => Commit(_dragRect = _owner.Moved(_dragRect, e.HorizontalChange, e.VerticalChange), _dragCrop);
             body.DragCompleted += (_, _) => _owner.ShowGuides(null, null);
             Root.Children.Add(_clip);
+            Root.Children.Add(_placeholderText);
             Root.Children.Add(_outline);
             Root.Children.Add(body);
             foreach (var side in Enum.GetValues<Side>())
@@ -1048,6 +1085,10 @@ public sealed class SceneEditor : UserControl
             _outline.Visibility = selected || _hover ? Visibility.Visible : Visibility.Collapsed;
             _outline.Stroke = selected ? Accent : Faint;
             _outline.StrokeThickness = selected ? 6 : 3;
+            _placeholderText.Text = _owner.BasePlaceholderText ?? string.Empty;
+            _placeholderText.Visibility = _image.Source is null && !string.IsNullOrEmpty(_owner.BasePlaceholderText)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
             foreach (var h in _handles)
             {
                 h.Visibility = selected ? Visibility.Visible : Visibility.Collapsed;

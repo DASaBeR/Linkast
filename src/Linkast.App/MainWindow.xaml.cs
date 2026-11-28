@@ -28,6 +28,18 @@ public partial class MainWindow : Window
         // Drag a scene or a source to another place in its list.
         Views.DragReorder.Attach(SceneList, SceneDropMarker, (item, index) => _vm.Webcam.MoveSceneTo((LayoutOption)item, index));
         Views.DragReorder.Attach(SourceList, SourceDropMarker, (item, index) => _vm.MoveSource(item, index));
+        OutputPreview.Interaction += (_, _) => _vm.VerticalPreview.IsEditing = false;
+        VerticalPreview.Interaction += (_, _) => _vm.VerticalPreview.IsEditing = true;
+        _vm.VerticalPreview.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(VerticalPreviewViewModel.ShowPanel)
+                or nameof(VerticalPreviewViewModel.ShowFullTooSmallPanel)
+                or nameof(VerticalPreviewViewModel.ShowMainPreview)
+                or nameof(VerticalPreviewViewModel.IsThumbnailMode))
+            {
+                UpdateVerticalPreviewColumns();
+            }
+        };
         viewModel.StreamKeyLoaded += (_, key) =>
         {
             _syncingKey = true;
@@ -162,6 +174,85 @@ public partial class MainWindow : Window
     }
 
     private const double StreamCenterMinWidth = 320;
+
+    private void OnPreviewHostSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (e.WidthChanged)
+        {
+            _vm.VerticalPreview.UpdatePreviewHostWidth(e.NewSize.Width);
+        }
+
+        UpdateVerticalPreviewColumns();
+    }
+
+    private void OnMainPreviewSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (e.HeightChanged)
+        {
+            UpdateVerticalPreviewColumns();
+        }
+    }
+
+    private void UpdateVerticalPreviewColumns()
+    {
+        if (PreviewHost is null || !_vm.VerticalPreview.ShowPanel)
+        {
+            MainPreviewColumn.Width = new GridLength(1, GridUnitType.Star);
+            PreviewGapColumn.Width = new GridLength(0);
+            VerticalPreviewColumn.Width = new GridLength(0);
+            return;
+        }
+
+        if (_vm.VerticalPreview.ShowFullTooSmallPanel)
+        {
+            MainPreviewColumn.Width = new GridLength(0);
+            PreviewGapColumn.Width = new GridLength(0);
+            VerticalPreviewColumn.Width = new GridLength(1, GridUnitType.Star);
+            return;
+        }
+
+        MainPreviewColumn.Width = new GridLength(1, GridUnitType.Star);
+        PreviewGapColumn.Width = new GridLength(10);
+        if (_vm.VerticalPreview.IsThumbnailMode)
+        {
+            VerticalPreviewColumn.Width = new GridLength(180);
+            return;
+        }
+
+        var height = MainPreviewBorder.ActualHeight > 20 ? MainPreviewBorder.ActualHeight : PreviewHost.ActualHeight;
+        var hostWidth = PreviewHost.ActualWidth;
+        var ideal = Math.Max(160, height * 9.0 / 16.0);
+        var maxSideBySide = hostWidth > 40 ? Math.Max(160, (hostWidth - 10) * 0.42) : ideal;
+        VerticalPreviewColumn.Width = new GridLength(Math.Min(ideal, maxSideBySide));
+    }
+
+    private void OnVerticalQuickLayoutMenu(object sender, RoutedEventArgs e)
+    {
+        var menu = new ContextMenu
+        {
+            PlacementTarget = (UIElement)sender,
+            Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom,
+        };
+        menu.Items.Add(new MenuItem
+        {
+            Header = "Game top · camera bottom",
+            Command = _vm.VerticalPreview.ApplyQuickLayoutCommand,
+            CommandParameter = "GameTop",
+        });
+        menu.Items.Add(new MenuItem
+        {
+            Header = "Camera top · game bottom",
+            Command = _vm.VerticalPreview.ApplyQuickLayoutCommand,
+            CommandParameter = "CameraTop",
+        });
+        menu.Items.Add(new MenuItem
+        {
+            Header = "Full game · camera corner",
+            Command = _vm.VerticalPreview.ApplyQuickLayoutCommand,
+            CommandParameter = "FullGame",
+        });
+        menu.IsOpen = true;
+    }
 
     // The mixer row scrolls sideways only, but its ScrollViewer still swallows the wheel. Pass a plain wheel on to
     // the settings page so it scrolls as usual; Shift + wheel scrolls the faders sideways.

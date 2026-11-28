@@ -676,6 +676,77 @@ public class D3D11StreamEngineTests
         }
     }
 
+    [SkippableFact]
+    public async Task D3D11StreamEngine_SetCanvasLayoutAsync_updates_vertical_scheduler_provider()
+    {
+        FfmpegInstallation? ffmpeg = null;
+        try { ffmpeg = await FfmpegLocator.LocateAsync(); } catch { }
+        Skip.If(ffmpeg is null, "FFmpeg not available on machine.");
+
+        using var deviceManager = new D3D11DeviceManager();
+        var tempFolder = Path.Combine(Path.GetTempPath(), "linkast_vert_live_" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(tempFolder);
+        try
+        {
+            await using var engine = new D3D11StreamEngine(
+                ffmpeg,
+                new TestOutputTransport(),
+                deviceManager: deviceManager,
+                options: new EngineOptions { ConnectTimeout = TimeSpan.FromSeconds(10) });
+
+            var initialRect = new NormalizedRect(0, 0.56, 1, 0.44);
+            var initialLayout = new CanvasLayout(
+                new Dictionary<string, NormalizedRect>(StringComparer.Ordinal) { ["camera-1"] = initialRect },
+                new Dictionary<string, NormalizedRect>(StringComparer.Ordinal),
+                ["camera-1"]);
+
+            var session = ValidSession() with
+            {
+                Encoder = new EncoderSettings("libx264", 1280, 720, 30, 2500, Preset: "ultrafast"),
+                Broadcast = false,
+                CanvasWidth = 1280,
+                CanvasHeight = 720,
+                Recording = new RecordingSpec(tempFolder),
+                VerticalRecording = new VerticalRecordingSpec(
+                    tempFolder,
+                    new EncoderSettings("libx264", 720, 1280, 30, 2500, Preset: "ultrafast"),
+                    initialLayout),
+                Reconnect = ReconnectPolicy.Disabled,
+            };
+
+            await engine.StartAsync(session);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (engine.State != StreamState.Live && engine.State != StreamState.Failed && sw.ElapsedMilliseconds < 10000)
+            {
+                await Task.Delay(50);
+            }
+
+            Assert.Equal(StreamState.Live, engine.State);
+            var provider = engine.Scheduler?.PlacementsProviderOf("vertical");
+            Assert.NotNull(provider);
+            Assert.Equal(initialRect, provider!()["camera-1"]);
+
+            var movedRect = new NormalizedRect(0.58, 0.68, 0.38, 0.24);
+            var updatedLayout = new CanvasLayout(
+                new Dictionary<string, NormalizedRect>(StringComparer.Ordinal) { ["camera-1"] = movedRect },
+                new Dictionary<string, NormalizedRect>(StringComparer.Ordinal),
+                ["camera-1"]);
+
+            Assert.True(await engine.SetCanvasLayoutAsync("vertical", updatedLayout));
+            Assert.False(await engine.SetCanvasLayoutAsync("main", updatedLayout));
+            Assert.Equal(movedRect, provider()["camera-1"]);
+
+            await engine.StopAsync();
+        }
+        finally
+        {
+            if (Directory.Exists(tempFolder))
+            {
+                try { Directory.Delete(tempFolder, true); } catch { }
+            }
+        }
+    }
+
     private static TimeSpan ParseDuration(string ffmpegInfo)
     {
         var m = System.Text.RegularExpressions.Regex.Match(ffmpegInfo, @"Duration: (\d\d:\d\d:\d\d\.\d\d)");

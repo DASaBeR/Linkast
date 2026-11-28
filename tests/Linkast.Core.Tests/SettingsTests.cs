@@ -65,7 +65,16 @@ public class SettingsSerializerTests
         var vertical = SceneLayout.DefaultVertical("face").WithPlacement("desk", new NormalizedRect(0.6, 0.05, 0.35, 0.2));
         var s = new LinkastSettings
         {
-            Stream = new StreamSettings { SourceKind = "Window", WindowTitle = "Game", ServerUrl = "rtmp://x/app", VideoBitrateKbps = 4500, FrameRate = 30 },
+            Stream = new StreamSettings
+            {
+                SourceKind = "Window",
+                WindowTitle = "Game",
+                ServerUrl = "rtmp://x/app",
+                VideoBitrateKbps = 4500,
+                FrameRate = 30,
+                ShowVerticalPreview = false,
+                ShowVerticalSafeZones = true,
+            },
             Webcam = new WebcamSettings
             {
                 Layers = [face, desk],
@@ -88,6 +97,8 @@ public class SettingsSerializerTests
         Assert.Contains("\"schemaVersion\": 4", json, StringComparison.Ordinal);
         Assert.Contains("\"shape\": \"Circle\"", json, StringComparison.Ordinal); // enums as names
         Assert.Equal("Window", back.Stream.SourceKind);
+        Assert.False(back.Stream.ShowVerticalPreview);
+        Assert.True(back.Stream.ShowVerticalSafeZones);
         Assert.Equal(["face", "desk"], back.Webcam.Layers.Select(l => l.LayerId));
         var f = back.Webcam.Layers[0];
         Assert.Equal("Face cam", f.Name);

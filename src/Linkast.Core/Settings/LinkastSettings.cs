@@ -138,6 +138,10 @@ public sealed record StreamSettings
 
     public int VerticalRecordingBitrateKbps { get; init; } = 10000;
 
+    public bool ShowVerticalPreview { get; init; } = true;
+
+    public bool ShowVerticalSafeZones { get; init; }
+
     public string ServerUrl { get; init; } = string.Empty;
 
     /// <summary>Per-platform destination settings, so each tab remembers its own values.</summary>

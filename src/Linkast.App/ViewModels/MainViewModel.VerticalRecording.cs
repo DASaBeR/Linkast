@@ -56,11 +56,138 @@ public sealed partial class MainViewModel
                 ?? VerticalScenes.FirstOrDefault();
             OnPropertyChanged(nameof(HasVerticalScene));
             NotifyRecordingSummaryChanged();
+            RefreshVerticalPreviewState(rebuildItems: true);
         }
         finally
         {
             _loading = was;
         }
+    }
+
+    private System.Windows.Threading.DispatcherTimer? _verticalLayoutTimer;
+    private long _lastVerticalLayoutSentTicks;
+    private bool _verticalSendQueued;
+
+    private void RefreshVerticalPreviewState(bool rebuildItems = false)
+    {
+        if (Webcam is null || VerticalPreview is null)
+        {
+            return;
+        }
+
+        VerticalPreview.RefreshState(
+            VerticalRecordingEnabled,
+            Webcam.ActiveLayout.Orientation == OutputOrientation.Vertical,
+            SelectedVerticalScene?.Id,
+            SelectedVerticalSize.Width,
+            SelectedVerticalSize.Height,
+            IsMainRecording,
+            IsActive && _liveVerticalSceneId is not null,
+            rebuildItems);
+        UpdateVerticalLiveSourceNote();
+    }
+
+    private void OnSceneChangedForVertical(Guid sceneId)
+    {
+        if (VerticalPreview is null)
+        {
+            return;
+        }
+
+        VerticalPreview.NotifySceneEdited(sceneId);
+        UpdateVerticalLiveSourceNote();
+
+        if (!IsActive || State != StreamState.Live || _liveVerticalSceneId != sceneId || _engine is null)
+        {
+            return;
+        }
+
+        QueueLiveVerticalLayout();
+    }
+
+    private void UpdateVerticalLiveSourceNote()
+    {
+        if (VerticalPreview is null)
+        {
+            return;
+        }
+
+        if (!IsActive || _liveVerticalSceneId is null || VerticalPreview.Scene is not { } vScene)
+        {
+            VerticalPreview.LiveSourceNote = null;
+            return;
+        }
+
+        foreach (var layerId in vScene.CameraPlacements.Keys)
+        {
+            if (Webcam.Layers.FirstOrDefault(l => l.LayerId == layerId)?.HasCamera == true && !_liveCameraIds.Contains(layerId))
+            {
+                VerticalPreview.LiveSourceNote = "This camera joins the vertical recording next time you go live.";
+                return;
+            }
+        }
+
+        foreach (var overlayId in vScene.Overlays.Keys)
+        {
+            if (!_liveLayerIds.Contains(overlayId))
+            {
+                VerticalPreview.LiveSourceNote = "This overlay joins the vertical recording next time you go live.";
+                return;
+            }
+        }
+
+        if (vScene.ShowCapture && Resolve(CaptureOf(vScene)) is { } cap && !_liveCaptures.Any(c => c.Key == cap.Key))
+        {
+            VerticalPreview.LiveSourceNote = "This game or display joins the vertical recording next time you go live.";
+            return;
+        }
+
+        VerticalPreview.LiveSourceNote = null;
+    }
+
+    private void QueueLiveVerticalLayout()
+    {
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        var elapsedMs = System.Diagnostics.Stopwatch.GetElapsedTime(_lastVerticalLayoutSentTicks, now).TotalMilliseconds;
+        if (_lastVerticalLayoutSentTicks == 0 || elapsedMs >= 50)
+        {
+            _verticalSendQueued = false;
+            _verticalLayoutTimer?.Stop();
+            SendVerticalLayoutNow();
+            return;
+        }
+
+        if (!_verticalSendQueued)
+        {
+            _verticalSendQueued = true;
+            _verticalLayoutTimer ??= new System.Windows.Threading.DispatcherTimer(
+                TimeSpan.FromMilliseconds(50),
+                System.Windows.Threading.DispatcherPriority.Background,
+                (_, _) =>
+                {
+                    _verticalLayoutTimer?.Stop();
+                    if (_verticalSendQueued)
+                    {
+                        _verticalSendQueued = false;
+                        SendVerticalLayoutNow();
+                    }
+                },
+                _ui);
+            _verticalLayoutTimer.Start();
+        }
+    }
+
+    private void SendVerticalLayoutNow()
+    {
+        if (!IsActive || State != StreamState.Live || _engine is null || _liveVerticalSceneId is not { } id
+            || Webcam.FindScene(id) is not { } scene)
+        {
+            return;
+        }
+
+        _lastVerticalLayoutSentTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        var layout = BuildSceneCanvasLayout(scene, SelectedVerticalSize.Width, SelectedVerticalSize.Height);
+        _ = _engine.SetCanvasLayoutAsync("vertical", layout);
     }
 
     public string RecordingSummary

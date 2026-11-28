@@ -53,6 +53,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
     private volatile IReadOnlyList<string> _stackOrder = [];
     private readonly Lock _layoutLock = new();
     private SceneLayout _currentLayout = new();
+    private volatile CanvasLayout? _verticalLayout;
 
     // What the running stream shows now, changed live and kept across automatic reconnects. A reconnect used
     // to rebuild everything from the session as it was at the start: layers dragged, hidden or switched while
@@ -113,6 +114,8 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
     public StreamState State => _state.Current;
 
+    internal MediaOutputScheduler? Scheduler => _scheduler;
+
     public int FfmpegProcessId => Volatile.Read(ref _ffmpegProcessId);
 
     public StreamError? LastError => _lastError;
@@ -168,6 +171,7 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
             _liveCaptures = null;
             _layoutApplied = false;
+            _verticalLayout = session.VerticalRecording?.Layout;
             _liveAudio.Clear();
             _liveGains.Clear();
             foreach (var a in session.Audio)
@@ -312,6 +316,10 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
             var error = new StreamError(ErrorCategory.Unknown, "engine.unexpected", "An unexpected error stopped the stream.", _redactor.Redact(ex.Message));
             _lastError = error;
             _state.TryTransition(StreamState.Failed, error);
+        }
+        finally
+        {
+            _verticalLayout = null;
         }
     }
 
@@ -671,13 +679,13 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
             // Secondary vertical recording (portrait canvas alongside a landscape stream or recording).
             if (verticalSpec is not null && verticalPath is not null && _verticalCompositor is not null)
             {
-                var vLayout = verticalSpec.Layout;
+                _verticalLayout ??= verticalSpec.Layout;
                 scheduler.AddCanvas(new SchedulerCanvas(
                     "vertical",
                     _verticalCompositor,
-                    () => vLayout.Placements,
-                    () => vLayout.Crops,
-                    () => vLayout.Stack,
+                    () => _verticalLayout!.Placements,
+                    () => _verticalLayout!.Crops,
+                    () => _verticalLayout!.Stack,
                     []));
                 await TryStartSecondaryRecordingAsync(
                     "vertical", "vertical", verticalPath, verticalSpec.Encoder, scheduler, mixer, secondaryOutputs, savedRecordingPaths, ct).ConfigureAwait(false);
@@ -1469,6 +1477,18 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
 
     public Task<bool> SetBaseAsync(NormalizedRect? placement, NormalizedRect crop, BaseFit fit, CancellationToken cancellationToken = default) =>
         SetCaptureAsync("capture", placement, crop, fit, cancellationToken);
+
+    public Task<bool> SetCanvasLayoutAsync(string canvasName, CanvasLayout layout, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(layout);
+        if (!string.Equals(canvasName, "vertical", StringComparison.Ordinal) || _verticalLayout is null)
+        {
+            return Task.FromResult(false);
+        }
+
+        _verticalLayout = layout;
+        return Task.FromResult(true);
+    }
 
     public Task<bool> MoveLayerAsync(string layerId, NormalizedRect placement, CancellationToken cancellationToken = default)
     {
