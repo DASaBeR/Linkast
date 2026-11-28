@@ -128,4 +128,90 @@ public class D3D11SceneCompositorTests
             }
         }
     }
+
+    [Fact]
+    public void D3D11OutputTarget_scales_four_quadrants_from_1080p_to_720p()
+    {
+        using var manager = new D3D11DeviceManager();
+        using var canvas = new D3D11SceneCompositor(manager, 1920, 1080);
+        using var reference720 = new D3D11SceneCompositor(manager, 1280, 720);
+        using var scaledStream = new MemoryStream();
+        using var target = new D3D11OutputTarget(manager, "recording", 1280, 720, scaledStream, isPrimary: false);
+
+        void DrawQuadrants(D3D11SceneCompositor c)
+        {
+            c.BeginFrame(new Color4(0, 0, 0, 1));
+            DrawSolidLayer(manager, c, new Color4(1, 0, 0, 1), new NormalizedRect(0, 0, 0.5, 0.5));       // Top-left: red
+            DrawSolidLayer(manager, c, new Color4(0, 1, 0, 1), new NormalizedRect(0.5, 0, 0.5, 0.5));     // Top-right: green
+            DrawSolidLayer(manager, c, new Color4(0, 0, 1, 1), new NormalizedRect(0, 0.5, 0.5, 0.5));     // Bottom-left: blue
+            DrawSolidLayer(manager, c, new Color4(1, 1, 1, 1), new NormalizedRect(0.5, 0.5, 0.5, 0.5));   // Bottom-right: white
+        }
+
+        // Double-buffered NV12 readback: run twice and read the second frame.
+        byte[] refBytes = new byte[reference720.Nv12ByteSize];
+        DrawQuadrants(reference720);
+        reference720.ConvertToNv12(refBytes);
+        DrawQuadrants(reference720);
+        reference720.ConvertToNv12(refBytes);
+
+        DrawQuadrants(canvas);
+        Assert.True(target.WriteFrame(canvas));
+        scaledStream.SetLength(0);
+        DrawQuadrants(canvas);
+        Assert.True(target.WriteFrame(canvas));
+
+        byte[] scaledBytes = scaledStream.ToArray();
+        Assert.Equal(refBytes.Length, scaledBytes.Length);
+
+        (int X, int Y)[] centers = [(320, 180), (960, 180), (320, 540), (960, 540)];
+        foreach (var (x, y) in centers)
+        {
+            int idx = y * 1280 + x;
+            Assert.InRange(scaledBytes[idx], refBytes[idx] - 2, refBytes[idx] + 2);
+        }
+    }
+
+    [Fact]
+    public void D3D11OutputTarget_one_to_one_is_byte_identical_to_ConvertToNv12()
+    {
+        using var manager = new D3D11DeviceManager();
+        using var directCanvas = new D3D11SceneCompositor(manager, 640, 360);
+        using var targetCanvas = new D3D11SceneCompositor(manager, 640, 360);
+        using var directStream = new MemoryStream();
+        using var targetStream = new MemoryStream();
+        using var target = new D3D11OutputTarget(manager, "stream", 640, 360, targetStream, isPrimary: true);
+
+        for (int i = 0; i < 2; i++)
+        {
+            directStream.SetLength(0);
+            targetStream.SetLength(0);
+
+            directCanvas.BeginFrame(new Color4(0.25f, 0.5f, 0.75f, 1f));
+            directCanvas.ConvertToNv12(directStream);
+
+            targetCanvas.BeginFrame(new Color4(0.25f, 0.5f, 0.75f, 1f));
+            target.WriteFrame(targetCanvas);
+        }
+
+        Assert.Equal(directStream.ToArray(), targetStream.ToArray());
+    }
+
+    private static void DrawSolidLayer(D3D11DeviceManager manager, D3D11SceneCompositor compositor, Color4 color, NormalizedRect dest)
+    {
+        var desc = new Texture2DDescription
+        {
+            Width = 16,
+            Height = 16,
+            MipLevels = 1,
+            ArraySize = 1,
+            Format = Format.R8G8B8A8_UNorm,
+            SampleDescription = new SampleDescription(1, 0),
+            Usage = ResourceUsage.Default,
+            BindFlags = BindFlags.RenderTarget | BindFlags.ShaderResource,
+        };
+        using var tex = manager.Device.CreateTexture2D(desc);
+        using var rtv = manager.Device.CreateRenderTargetView(tex);
+        manager.Context.ClearRenderTargetView(rtv, color);
+        compositor.DrawLayer(tex, dest, NormalizedRect.Full);
+    }
 }

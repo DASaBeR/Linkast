@@ -176,6 +176,8 @@ public sealed partial class D3D11SceneCompositor : IDisposable
 
     public ID3D11Texture2D? CanvasTexture => _canvasTexture;
 
+    public ID3D11ShaderResourceView? CanvasSrv => _canvasSrv;
+
     private void InitializeResources()
     {
         lock (_renderGate)

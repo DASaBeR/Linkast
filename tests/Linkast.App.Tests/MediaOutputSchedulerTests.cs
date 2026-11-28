@@ -286,4 +286,109 @@ public class MediaOutputSchedulerTests
         var y = output.ToArray()[(64 * 32) + 32];
         Assert.True(y <= 17, $"Y was {y} (black is 16; the old navy was about 27)");
     }
+
+    [Fact]
+    public void MediaOutputScheduler_writes_to_primary_and_scaled_secondary_targets()
+    {
+        using var manager = new D3D11DeviceManager();
+        using var compositor = new D3D11SceneCompositor(manager, 1920, 1080);
+        using var cache = new SourceFrameCache();
+
+        using var primaryStream = new MemoryStream();
+        using var secondaryStream = new MemoryStream();
+        using var primary = new D3D11OutputTarget(manager, "stream", 1920, 1080, primaryStream, isPrimary: true);
+        using var secondary = new D3D11OutputTarget(manager, "recording", 1280, 720, secondaryStream, isPrimary: false);
+
+        var scheduler = new MediaOutputScheduler(
+            compositor,
+            cache,
+            () => new SceneLayout { Name = "Dual", ShowCapture = false },
+            () => new Dictionary<string, ID3D11SceneSource>(),
+            [primary, secondary],
+            targetFps: 60);
+
+        const int frames = 3;
+        for (int i = 0; i < frames; i++)
+        {
+            Assert.True(scheduler.RenderSingleFrame());
+        }
+
+        Assert.Equal(frames * (long)primary.Nv12ByteSize, primaryStream.Length);
+        Assert.Equal(frames * (long)secondary.Nv12ByteSize, secondaryStream.Length);
+    }
+
+    [Fact]
+    public void MediaOutputScheduler_detaches_failing_secondary_target_without_stopping_primary()
+    {
+        using var manager = new D3D11DeviceManager();
+        using var compositor = new D3D11SceneCompositor(manager, 64, 64);
+        using var cache = new SourceFrameCache();
+
+        using var primaryStream = new MemoryStream();
+        using var secondaryStream = new ThrowingWriteStream();
+        using var primary = new D3D11OutputTarget(manager, "stream", 64, 64, primaryStream, isPrimary: true);
+        using var secondary = new D3D11OutputTarget(manager, "recording", 64, 64, secondaryStream, isPrimary: false);
+
+        var scheduler = new MediaOutputScheduler(
+            compositor,
+            cache,
+            () => new SceneLayout { Name = "Dual", ShowCapture = false },
+            () => new Dictionary<string, ID3D11SceneSource>(),
+            [primary, secondary],
+            targetFps: 60);
+
+        var detached = new List<string>();
+        scheduler.OutputDetached += (_, e) => detached.Add(e.Name);
+
+        Assert.True(scheduler.RenderSingleFrame());
+        Assert.True(scheduler.RenderSingleFrame());
+
+        Assert.False(secondary.IsAttached);
+        Assert.True(primary.IsAttached);
+        Assert.Equal(["recording"], detached);
+        Assert.Equal(2 * (long)primary.Nv12ByteSize, primaryStream.Length);
+    }
+
+    [Fact]
+    public async Task MediaOutputScheduler_ends_render_loop_when_primary_target_throws_IOException()
+    {
+        using var manager = new D3D11DeviceManager();
+        using var compositor = new D3D11SceneCompositor(manager, 64, 64);
+        using var cache = new SourceFrameCache();
+
+        using var primaryStream = new ThrowingWriteStream();
+        using var primary = new D3D11OutputTarget(manager, "stream", 64, 64, primaryStream, isPrimary: true);
+
+        await using var scheduler = new MediaOutputScheduler(
+            compositor,
+            cache,
+            () => new SceneLayout { Name = "FailPrimary", ShowCapture = false },
+            () => new Dictionary<string, ID3D11SceneSource>(),
+            [primary],
+            targetFps: 60);
+
+        scheduler.Start();
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+        while (scheduler.IsRunning && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(20);
+        }
+
+        Assert.False(scheduler.IsRunning);
+    }
+
+    private sealed class ThrowingWriteStream : Stream
+    {
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => 0;
+        public override long Position { get => 0; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new IOException("Broken pipe");
+        public override void Write(ReadOnlySpan<byte> buffer) => throw new IOException("Broken pipe");
+    }
 }

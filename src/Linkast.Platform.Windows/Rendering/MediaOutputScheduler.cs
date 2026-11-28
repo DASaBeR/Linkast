@@ -8,6 +8,13 @@ using Vortice.Mathematics;
 
 namespace Linkast.Platform.Windows.Rendering;
 
+public sealed class OutputDetachedEventArgs(string name, string reason) : EventArgs
+{
+    public string Name { get; } = name;
+
+    public string Reason { get; } = reason;
+}
+
 /// <summary>
 /// High-precision monotonic frame scheduler for scene composition and video output delivery.
 /// Runs on a dedicated render thread, decoupling GPU composition from source capture rates.
@@ -21,7 +28,8 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
     private readonly Func<IReadOnlyDictionary<string, NormalizedRect>>? _cropsProvider;
     private readonly Func<IReadOnlyDictionary<string, NormalizedRect>>? _placementsProvider;
     private readonly Func<IReadOnlyList<string>>? _stackOrderProvider;
-    private readonly Stream _videoPipeStream;
+    private readonly List<D3D11OutputTarget> _targets;
+    private readonly List<D3D11OutputTarget> _ownedTargets = [];
     private readonly int _targetFps;
     private readonly ILogger? _logger;
 
@@ -36,13 +44,40 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
     private long _lostTicks;
     private long _slowFrames;
     private long _longestFrameTicks;
-    private byte[]? _blackFrame;
 
     private IReadOnlyList<string>? _lastStackOrder;
     private int _lastStackCount = -1;
     private int _lastSourcesCount = -1;
     private IReadOnlyList<string>? _cachedOrderedKeys;
     private readonly HashSet<string> _cachedSourceKeys = new(StringComparer.Ordinal);
+
+    /// <summary>Raised when a secondary output target's pipe fails and is detached without stopping the stream.</summary>
+    public event EventHandler<OutputDetachedEventArgs>? OutputDetached;
+
+    public MediaOutputScheduler(
+        D3D11SceneCompositor compositor,
+        SourceFrameCache frameCache,
+        Func<SceneLayout> layoutProvider,
+        Func<IReadOnlyDictionary<string, ID3D11SceneSource>> sourcesProvider,
+        IReadOnlyList<D3D11OutputTarget> targets,
+        int targetFps = 60,
+        ILogger? logger = null,
+        Func<IReadOnlyDictionary<string, NormalizedRect>>? cropsProvider = null,
+        Func<IReadOnlyDictionary<string, NormalizedRect>>? placementsProvider = null,
+        Func<IReadOnlyList<string>>? stackOrderProvider = null)
+    {
+        _compositor = compositor ?? throw new ArgumentNullException(nameof(compositor));
+        _frameCache = frameCache ?? throw new ArgumentNullException(nameof(frameCache));
+        _layoutProvider = layoutProvider ?? throw new ArgumentNullException(nameof(layoutProvider));
+        _sourcesProvider = sourcesProvider ?? throw new ArgumentNullException(nameof(sourcesProvider));
+        ArgumentNullException.ThrowIfNull(targets);
+        _targets = [.. targets];
+        _targetFps = targetFps > 0 ? targetFps : 60;
+        _logger = logger;
+        _cropsProvider = cropsProvider;
+        _placementsProvider = placementsProvider;
+        _stackOrderProvider = stackOrderProvider;
+    }
 
     public MediaOutputScheduler(
         D3D11SceneCompositor compositor,
@@ -55,17 +90,40 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
         Func<IReadOnlyDictionary<string, NormalizedRect>>? cropsProvider = null,
         Func<IReadOnlyDictionary<string, NormalizedRect>>? placementsProvider = null,
         Func<IReadOnlyList<string>>? stackOrderProvider = null)
+        : this(
+            compositor,
+            frameCache,
+            layoutProvider,
+            sourcesProvider,
+            [CreateDefaultTarget(compositor, videoPipeStream, logger)],
+            targetFps,
+            logger,
+            cropsProvider,
+            placementsProvider,
+            stackOrderProvider)
     {
-        _compositor = compositor ?? throw new ArgumentNullException(nameof(compositor));
-        _frameCache = frameCache ?? throw new ArgumentNullException(nameof(frameCache));
-        _layoutProvider = layoutProvider ?? throw new ArgumentNullException(nameof(layoutProvider));
-        _sourcesProvider = sourcesProvider ?? throw new ArgumentNullException(nameof(sourcesProvider));
-        _videoPipeStream = videoPipeStream ?? throw new ArgumentNullException(nameof(videoPipeStream));
-        _targetFps = targetFps > 0 ? targetFps : 60;
-        _logger = logger;
-        _cropsProvider = cropsProvider;
-        _placementsProvider = placementsProvider;
-        _stackOrderProvider = stackOrderProvider;
+        _ownedTargets.Add(_targets[0]);
+    }
+
+    private static D3D11OutputTarget CreateDefaultTarget(D3D11SceneCompositor compositor, Stream videoPipeStream, ILogger? logger)
+    {
+        ArgumentNullException.ThrowIfNull(compositor);
+        ArgumentNullException.ThrowIfNull(videoPipeStream);
+        return new D3D11OutputTarget(
+            compositor.DeviceManager,
+            "stream",
+            compositor.CanvasWidth,
+            compositor.CanvasHeight,
+            videoPipeStream,
+            isPrimary: true,
+            logger);
+    }
+
+    /// <summary>Adds an output target to the main canvas before <see cref="Start"/> is called.</summary>
+    public void AddTarget(D3D11OutputTarget target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        _targets.Add(target);
     }
 
     public long FramesRendered => Interlocked.Read(ref _framesRendered);
@@ -248,92 +306,143 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
     }
 
     /// <summary>
-    /// Renders a single composited frame according to the current layout and outputs it to the video stream.
+    /// Renders a single composited frame according to the current layout and writes it to every attached target.
     /// Supports full scene Z-stacking (captures, cameras, overlays, media backgrounds) and live placement updates.
-    /// False when no frame reached FFmpeg (the device is lost or the frame could not begin).
+    /// False when no frame reached the primary target (the device is lost or the frame could not begin).
     /// </summary>
     public bool RenderSingleFrame()
     {
         lock (_compositor.RenderGate)
         {
-            if (_compositor.DeviceManager.IsDeviceLost)
+            if (!ComposeMainFrame())
             {
                 return false;
             }
 
-            var layout = _layoutProvider();
-            var sources = _sourcesProvider();
-            var placements = _placementsProvider?.Invoke();
-            var crops = _cropsProvider?.Invoke();
-            var stackOrder = _stackOrderProvider?.Invoke();
-
-            // 1. Begin frame: black where no layer is (as the frames sent while the picture is lost)
-            if (!_compositor.BeginFrame(new Color4(0f, 0f, 0f, 1f)))
+            bool primaryWritten = false;
+            foreach (var target in _targets)
             {
-                return false;
-            }
-
-            if (placements is not null)
-            {
-                var orderedKeys = GetOrderedKeys(sources, stackOrder);
-
-                foreach (var key in orderedKeys)
+                if (!target.IsAttached)
                 {
-                    // A lost capture still takes its place, in black (see RenderSource).
-                    if (!sources.TryGetValue(key, out var source) || (source.State == SceneSourceState.Lost && !IsCapture(source)))
-                    {
-                        continue;
-                    }
+                    continue;
+                }
 
-                    if (!placements.TryGetValue(key, out var placement))
+                try
+                {
+                    if (target.WriteFrame(_compositor) && target.IsPrimary)
                     {
-                        continue; // Layer is hidden
+                        primaryWritten = true;
+                        Interlocked.Increment(ref _framesWritten);
                     }
-
-                    var crop = crops is not null && crops.TryGetValue(key, out var c) ? c : NormalizedRect.Full;
-                    RenderSource(key, source, placement, crop);
+                }
+                catch (Exception ex) when (!target.IsPrimary && ex is IOException or ObjectDisposedException)
+                {
+                    DetachTarget(target, ex.Message);
                 }
             }
-            else
+
+            return primaryWritten;
+        }
+    }
+
+    /// <summary>
+    /// Renders a single composited frame and writes it only to <paramref name="only"/>.
+    /// Used for the FFmpeg pipe handshake of a secondary output before the loop starts.
+    /// </summary>
+    public void RenderSingleFrame(D3D11OutputTarget only)
+    {
+        ArgumentNullException.ThrowIfNull(only);
+        lock (_compositor.RenderGate)
+        {
+            if (!ComposeMainFrame())
             {
-                // Legacy / simple layout fallback when placements dictionary is not provided
-                if (layout.ShowCapture)
+                return;
+            }
+
+            only.WriteFrame(_compositor);
+        }
+    }
+
+    private bool ComposeMainFrame()
+    {
+        if (_compositor.DeviceManager.IsDeviceLost)
+        {
+            return false;
+        }
+
+        var layout = _layoutProvider();
+        var sources = _sourcesProvider();
+        var placements = _placementsProvider?.Invoke();
+        var crops = _cropsProvider?.Invoke();
+        var stackOrder = _stackOrderProvider?.Invoke();
+
+        // 1. Begin frame: black where no layer is (as the frames sent while the picture is lost)
+        if (!_compositor.BeginFrame(new Color4(0f, 0f, 0f, 1f)))
+        {
+            return false;
+        }
+
+        if (placements is not null)
+        {
+            var orderedKeys = GetOrderedKeys(sources, stackOrder);
+
+            foreach (var key in orderedKeys)
+            {
+                // A lost capture still takes its place, in black (see RenderSource).
+                if (!sources.TryGetValue(key, out var source) || (source.State == SceneSourceState.Lost && !IsCapture(source)))
                 {
-                    if (sources.TryGetValue("capture", out var defaultCapture))
+                    continue;
+                }
+
+                if (!placements.TryGetValue(key, out var placement))
+                {
+                    continue; // Layer is hidden
+                }
+
+                var crop = crops is not null && crops.TryGetValue(key, out var c) ? c : NormalizedRect.Full;
+                RenderSource(key, source, placement, crop);
+            }
+        }
+        else
+        {
+            // Legacy / simple layout fallback when placements dictionary is not provided
+            if (layout.ShowCapture)
+            {
+                if (sources.TryGetValue("capture", out var defaultCapture))
+                {
+                    RenderSource("capture", defaultCapture, layout.BasePlacement, layout.BaseCrop);
+                }
+                else
+                {
+                    foreach (var (key, src) in sources)
                     {
-                        RenderSource("capture", defaultCapture, layout.BasePlacement, layout.BaseCrop);
-                    }
-                    else
-                    {
-                        foreach (var (key, src) in sources)
+                        if (!layout.CameraPlacements.ContainsKey(key) && src.State != SceneSourceState.Lost)
                         {
-                            if (!layout.CameraPlacements.ContainsKey(key) && src.State != SceneSourceState.Lost)
-                            {
-                                RenderSource(key, src, layout.BasePlacement, layout.BaseCrop);
-                                break;
-                            }
+                            RenderSource(key, src, layout.BasePlacement, layout.BaseCrop);
+                            break;
                         }
                     }
                 }
+            }
 
-                foreach (var (cameraId, placement) in layout.CameraPlacements)
+            foreach (var (cameraId, placement) in layout.CameraPlacements)
+            {
+                if (sources.TryGetValue(cameraId, out var camSource))
                 {
-                    if (sources.TryGetValue(cameraId, out var camSource))
-                    {
-                        var crop = crops is not null && crops.TryGetValue(cameraId, out var c) ? c : NormalizedRect.Full;
-                        RenderSource(cameraId, camSource, placement, crop);
-                    }
+                    var crop = crops is not null && crops.TryGetValue(cameraId, out var c) ? c : NormalizedRect.Full;
+                    RenderSource(cameraId, camSource, placement, crop);
                 }
             }
+        }
 
-            // 4. Convert composited frame to NV12 and write to video pipe stream
-            if (_compositor.ConvertToNv12(_videoPipeStream) <= 0)
-            {
-                return false;
-            }
+        return true;
+    }
 
-            Interlocked.Increment(ref _framesWritten);
-            return true;
+    private void DetachTarget(D3D11OutputTarget target, string reason)
+    {
+        if (target.TryDetach())
+        {
+            OutputDetached?.Invoke(this, new OutputDetachedEventArgs(target.Name, reason));
         }
     }
 
@@ -428,26 +537,34 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
 
     private bool PumpBlackFrame()
     {
-        int requiredSize = (int)_compositor.Nv12ByteSize;
-        if (_blackFrame is null || _blackFrame.Length != requiredSize)
+        bool primaryWritten = false;
+        foreach (var target in _targets)
         {
-            _blackFrame = new byte[requiredSize];
-            int ySize = _compositor.CanvasWidth * _compositor.CanvasHeight;
-            _blackFrame.AsSpan(0, ySize).Fill(16); // BT.709 black Y
-            _blackFrame.AsSpan(ySize).Fill(128);   // BT.709 neutral UV
+            if (!target.IsAttached)
+            {
+                continue;
+            }
+
+            try
+            {
+                target.WriteBlackFrame();
+                if (target.IsPrimary)
+                {
+                    primaryWritten = true;
+                    Interlocked.Increment(ref _framesWritten);
+                }
+            }
+            catch (Exception ex) when (!target.IsPrimary && ex is IOException or ObjectDisposedException)
+            {
+                DetachTarget(target, ex.Message);
+            }
+            catch
+            {
+                // If the primary pipe is broken or disconnected, the outer cancellation/stop flow handles it
+            }
         }
 
-        try
-        {
-            _videoPipeStream.Write(_blackFrame);
-            Interlocked.Increment(ref _framesWritten);
-            return true;
-        }
-        catch
-        {
-            // If the pipe is broken or disconnected, the outer cancellation/stop flow handles it
-            return false;
-        }
+        return primaryWritten;
     }
 
     public async ValueTask DisposeAsync()
@@ -460,6 +577,11 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
         if (_isRunning)
         {
             await _renderLoopFinished.Task.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+        }
+
+        foreach (var target in _ownedTargets)
+        {
+            target.Dispose();
         }
 
         _cts.Dispose();
