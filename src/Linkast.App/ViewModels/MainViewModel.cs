@@ -92,6 +92,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _ui = Application.Current.Dispatcher;
         SelectedSourceKind = SourceKinds[0];
         SelectedResolution = Resolutions[0];
+        SelectedRecordingQuality = RecordingQualities[0];
         SelectedDestinationKind = DestinationKinds[0];
 
         _audioHub = audioHub;
@@ -1080,6 +1081,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     public ObservableCollection<EncoderInfo> Encoders { get; } = [];
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowSoftwareExtraOutputWarning))]
     public partial EncoderInfo? SelectedEncoder { get; set; }
 
     [ObservableProperty]
@@ -1406,6 +1408,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 }
             });
             _engine.RecordingSaved += (_, path) => _ui.InvokeAsync(() => OnRecordingSavedAsync(path));
+            _engine.RecordingFailed += (_, args) => _ui.InvokeAsync(() => OnRecordingFailed(args));
 
             IsReady = SelectedEncoder is not null;
             ReadinessText = IsReady ? "Ready" : "Not ready";
@@ -1459,7 +1462,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         nameof(KeyframeIntervalSeconds), nameof(AudioBitrateKbps), nameof(EncoderPreset),
         nameof(SelectedDestinationKind), nameof(SelectedPlatform), nameof(ServerUrl), nameof(SelectedNetwork), nameof(SelectedTheme),
         nameof(SelectedProxyKind), nameof(ProxyHost), nameof(ProxyPortText), nameof(ProxyUsername),
-        nameof(RecordingFolder), nameof(RecordWhenLive), nameof(RemuxRecordingsToMp4),
+        nameof(RecordingFolder), nameof(RecordWhenLive), nameof(SelectedRecordingQuality), nameof(RecordingBitrateKbps), nameof(RemuxRecordingsToMp4),
     ];
 
     protected override void OnPropertyChanged(System.ComponentModel.PropertyChangedEventArgs e)
@@ -1539,6 +1542,27 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     [ObservableProperty]
     public partial bool RecordWhenLive { get; set; }
 
+    public IReadOnlyList<RecordingQualityOption> RecordingQualities => RecordingQualityOption.All;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsCustomRecordingQuality), nameof(ShowSoftwareExtraOutputWarning))]
+    public partial RecordingQualityOption SelectedRecordingQuality { get; set; }
+
+    [ObservableProperty]
+    public partial int RecordingBitrateKbps { get; set; } = 12000;
+
+    public bool IsCustomRecordingQuality => SelectedRecordingQuality.IsCustom;
+
+    public bool ShowSoftwareExtraOutputWarning => SelectedEncoder?.Kind == EncoderKind.Software && IsCustomRecordingQuality;
+
+    partial void OnSelectedRecordingQualityChanged(RecordingQualityOption value)
+    {
+        if (!_loading && value.IsCustom)
+        {
+            RecordingBitrateKbps = value.DefaultBitrateKbps;
+        }
+    }
+
     [ObservableProperty]
     public partial bool RemuxRecordingsToMp4 { get; set; }
 
@@ -1585,6 +1609,14 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         var mp4 = await Task.Run(() => FfmpegRemuxer.RemuxToMp4Async(ffmpeg, path));
         LastRecordingText = mp4 is null ? "Saved " + Path.GetFileName(path) + " (the MP4 copy failed; the MKV was kept)" : "Saved " + Path.GetFileName(mp4);
         AppendLog(mp4 is null ? "MP4 copy failed; kept " + path : "Recording saved as MP4: " + mp4);
+    }
+
+    private void OnRecordingFailed(RecordingFailedEventArgs e)
+    {
+        var label = string.Equals(e.OutputName, "vertical", StringComparison.Ordinal) ? "Vertical recording" : "Recording";
+        var msg = $"{label} stopped: {e.Error.UserMessage} The stream continues.";
+        AppendLog(msg);
+        WarningText = msg;
     }
 
     private void ScheduleSave()
@@ -1655,6 +1687,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 RecordingFolder = RecordingFolder == RecordingFiles.DefaultFolder ? null : RecordingFolder,
                 RecordWhenLive = RecordWhenLive,
                 RemuxRecordingsToMp4 = RemuxRecordingsToMp4,
+                RecordingQuality = SelectedRecordingQuality.Quality,
+                RecordingWidth = SelectedRecordingQuality.IsCustom ? SelectedRecordingQuality.Width : _loaded.Stream.RecordingWidth,
+                RecordingHeight = SelectedRecordingQuality.IsCustom ? SelectedRecordingQuality.Height : _loaded.Stream.RecordingHeight,
+                RecordingBitrateKbps = RecordingBitrateKbps,
                 StartSceneId = StartSceneChoice?.Id,
                 EndSceneId = EndSceneChoice?.Id,
                 EndSceneSeconds = EndSceneSeconds,
@@ -1725,6 +1761,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         RecordingFolder = string.IsNullOrWhiteSpace(s.RecordingFolder) ? RecordingFiles.DefaultFolder : s.RecordingFolder;
         RecordWhenLive = s.RecordWhenLive;
         RemuxRecordingsToMp4 = s.RemuxRecordingsToMp4;
+        SelectedRecordingQuality = RecordingQualityOption.For(s.RecordingQuality, s.RecordingWidth, s.RecordingHeight);
+        RecordingBitrateKbps = s.RecordingBitrateKbps;
         EndSceneSeconds = s.EndSceneSeconds;
         SeparateGameAudio = s.SeparateGameAudio;
         _channelVolumes.Clear();
@@ -2194,7 +2232,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             await _engine.StartAsync(session);
             if (recordOnly)
             {
-                AppendLog($"Recording to {session.Recording!.Folder} with {SelectedEncoder.DisplayName}, {session.Encoder.Width}x{session.Encoder.Height}@{SelectedFrameRate}, {VideoBitrateKbps} kbps");
+                var recEnc = session.Recording!.Encoder ?? session.Encoder;
+                AppendLog($"Recording to {session.Recording.Folder} with {SelectedEncoder.DisplayName}, {recEnc.Width}x{recEnc.Height}@{SelectedFrameRate}, {recEnc.VideoKbps} kbps");
                 return;
             }
 
@@ -2234,6 +2273,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         sb.AppendLine(CultureInfo.InvariantCulture, $"State: {State}; last error: {LastError}");
+        sb.AppendLine(CultureInfo.InvariantCulture, $"Recording: when live {RecordWhenLive}, quality {SelectedRecordingQuality.Label}{(SelectedRecordingQuality.IsCustom ? $" ({RecordingBitrateKbps} kbps)" : string.Empty)}");
         sb.AppendLine(CultureInfo.InvariantCulture, $"Scene: {Webcam.ActiveLayout.Name} ({Webcam.CanvasDescription}); scenes: {string.Join(", ", Webcam.Layouts.Select(l => l.Name))}");
         sb.AppendLine(CultureInfo.InvariantCulture, $"Mixer: {string.Join(", ", Mixer.Channels.Select(c => $"{c.Key} {c.Volume:0}%{(c.Muted ? " muted" : string.Empty)}{(c.SceneMuted ? " scene-muted" : string.Empty)}"))}");
         foreach (var l in Webcam.Layers)
@@ -2283,17 +2323,38 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         // A vertical layout streams the configured resolution rotated, for example 1080 × 1920.
         var layout = Webcam.ActiveLayout;
-        var (canvasWidth, canvasHeight) = layout.CanvasSize(SelectedResolution.Width, SelectedResolution.Height);
+        var (streamWidth, streamHeight) = layout.CanvasSize(SelectedResolution.Width, SelectedResolution.Height);
+        var preset = string.IsNullOrWhiteSpace(EncoderPreset) ? null : EncoderPreset.Trim();
         var encoder = new EncoderSettings(
             SelectedEncoder!.Id,
-            canvasWidth,
-            canvasHeight,
+            streamWidth,
+            streamHeight,
             SelectedFrameRate,
             VideoBitrateKbps,
             KeyframeIntervalSeconds,
             RateControl.ConstantBitrate,
-            string.IsNullOrWhiteSpace(EncoderPreset) ? null : EncoderPreset.Trim(),
+            preset,
             AudioBitrateKbps);
+
+        EncoderSettings? recordingEncoder = null;
+        if (SelectedRecordingQuality.IsCustom)
+        {
+            var (recWidth, recHeight) = layout.CanvasSize(SelectedRecordingQuality.Width, SelectedRecordingQuality.Height);
+            recordingEncoder = new EncoderSettings(
+                SelectedEncoder.Id,
+                recWidth,
+                recHeight,
+                SelectedFrameRate,
+                RecordingBitrateKbps,
+                KeyframeIntervalSeconds,
+                RateControl.VariableBitrate,
+                preset,
+                AudioBitrateKbps);
+        }
+
+        var (canvasWidth, canvasHeight) = recordingEncoder is { } recEnc && (long)recEnc.Width * recEnc.Height > (long)streamWidth * streamHeight
+            ? (recEnc.Width, recEnc.Height)
+            : (streamWidth, streamHeight);
 
         // Every scene of this orientation is in the stream, so switching between them is instant.
         var scenes = Webcam.Layouts.Where(s => s.Orientation == layout.Orientation).ToList();
@@ -2337,8 +2398,10 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             Captures = captures,
             Stack = BuildStack(starting),
             Broadcast = !recordOnly,
+            CanvasWidth = canvasWidth,
+            CanvasHeight = canvasHeight,
             Recording = recordOnly || RecordWhenLive
-                ? new RecordingSpec(RecordingFolder) { RemuxToMp4 = RemuxRecordingsToMp4 }
+                ? new RecordingSpec(RecordingFolder) { RemuxToMp4 = RemuxRecordingsToMp4, Encoder = recordingEncoder }
                 : null,
         };
 

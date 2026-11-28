@@ -75,3 +75,40 @@ public sealed record NoiseRemovalOption(Linkast.Core.Audio.NoiseRemoval Level, s
 
     public override string ToString() => Label;
 }
+
+/// <summary>Quality choice for the main local recording: either shared with the stream, or encoded separately.</summary>
+public sealed record RecordingQualityOption(
+    RecordingQuality Quality,
+    int Width,
+    int Height,
+    int DefaultBitrateKbps,
+    string Label)
+{
+    public static IReadOnlyList<RecordingQualityOption> All { get; } =
+    [
+        new(RecordingQuality.SameAsStream, 0, 0, 0, "Same as stream (no extra work)"),
+        new(RecordingQuality.Custom, 1920, 1080, 12000, "1080p  (1920 × 1080)"),
+        new(RecordingQuality.Custom, 1280, 720, 7500, "720p  (1280 × 720)"),
+        new(RecordingQuality.Custom, 852, 480, 4000, "480p  (852 × 480)"),
+        new(RecordingQuality.Custom, 2560, 1440, 20000, "1440p  (2560 × 1440)"),
+    ];
+
+    public bool IsCustom => Quality == RecordingQuality.Custom;
+
+    public static RecordingQualityOption For(RecordingQuality quality, int width, int height)
+    {
+        if (quality != RecordingQuality.Custom)
+        {
+            return All[0];
+        }
+
+        if (width == 854 && height == 480)
+        {
+            width = 852;
+        }
+
+        return All.FirstOrDefault(o => o.IsCustom && o.Width == width && o.Height == height) ?? All[1];
+    }
+
+    public override string ToString() => Label;
+}

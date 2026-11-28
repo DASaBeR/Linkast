@@ -89,4 +89,30 @@ public class RecordingArgumentTests
             Directory.Delete(folder, true);
         }
     }
+
+    [Theory]
+    [InlineData("h264_nvenc", "vbr")]
+    [InlineData("h264_amf", "vbr_peak")]
+    [InlineData("h264_mf", "u_vbr")]
+    [InlineData("h264_qsv", "-maxrate")]
+    [InlineData("libx264", "-maxrate")]
+    public void Single_pipe_recording_job_uses_vbr_settings(string encoderId, string expectedToken)
+    {
+        var enc = new EncoderSettings(encoderId, 1920, 1080, 60, 12000, RateControl: RateControl.VariableBitrate);
+        var job = new SinglePipeFfmpegJob(
+            @"\\.\pipe\linkast-video-test",
+            1920,
+            1080,
+            60,
+            @"\\.\pipe\linkast-audio-test",
+            enc,
+            PublishUrl: null,
+            TcUrl: null,
+            RecordingPath: File);
+
+        List<string> args = [.. FfmpegArgumentBuilder.BuildSinglePipe(job)];
+        Assert.Contains(expectedToken, args);
+        Assert.DoesNotContain("cbr", args);
+        Assert.Equal(["-f", "matroska", File], args[^3..]);
+    }
 }
