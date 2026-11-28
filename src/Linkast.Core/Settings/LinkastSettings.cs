@@ -142,6 +142,8 @@ public sealed record StreamSettings
 
     public bool ShowVerticalSafeZones { get; init; }
 
+    public bool ShowVerticalCropFrame { get; init; }
+
     public string ServerUrl { get; init; } = string.Empty;
 
     /// <summary>Per-platform destination settings, so each tab remembers its own values.</summary>

@@ -1545,6 +1545,11 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             Webcam.SetResolution(r.Width, r.Height);
         }
 
+        if (e.PropertyName is nameof(SelectedSourceKind) or nameof(SelectedMonitor) or nameof(SelectedWindow))
+        {
+            RefreshVerticalPreviewState();
+        }
+
         if (e.PropertyName is nameof(SelectedResolution) or nameof(RecordWhenLive) or nameof(SelectedRecordingQuality)
             or nameof(RecordingBitrateKbps) or nameof(VerticalRecordingEnabled) or nameof(SelectedVerticalScene)
             or nameof(SelectedVerticalSize) or nameof(VerticalRecordingBitrateKbps))
@@ -1762,6 +1767,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 VerticalRecordingBitrateKbps = VerticalRecordingBitrateKbps,
                 ShowVerticalPreview = VerticalPreview.ShowPreview,
                 ShowVerticalSafeZones = VerticalPreview.ShowSafeZones,
+                ShowVerticalCropFrame = VerticalPreview.ShowCropFrameOnMain,
                 StartSceneId = StartSceneChoice?.Id,
                 EndSceneId = EndSceneChoice?.Id,
                 EndSceneSeconds = EndSceneSeconds,
@@ -1840,6 +1846,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         VerticalRecordingBitrateKbps = s.VerticalRecordingBitrateKbps;
         VerticalPreview.ShowPreview = s.ShowVerticalPreview;
         VerticalPreview.ShowSafeZones = s.ShowVerticalSafeZones;
+        VerticalPreview.ShowCropFrameOnMain = s.ShowVerticalCropFrame;
+        _defaultCapture = CardCapture();
         RebuildVerticalScenes(s.VerticalRecordingSceneId);
         RefreshVerticalPreviewState(rebuildItems: true);
         EndSceneSeconds = s.EndSceneSeconds;

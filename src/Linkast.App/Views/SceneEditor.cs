@@ -146,6 +146,21 @@ public sealed class SceneEditor : UserControl
     public static readonly DependencyProperty BasePlaceholderTextProperty = DependencyProperty.Register(
         nameof(BasePlaceholderText), typeof(string), typeof(SceneEditor), new PropertyMetadata(null, (d, _) => ((SceneEditor)d)._base.Refresh()));
 
+    /// <summary>When true, dragging inside the game picture pans its crop (<see cref="BaseCrop"/>) instead of moving its box; scrolling the wheel zooms.</summary>
+    public static readonly DependencyProperty IsPanningBaseProperty = DependencyProperty.Register(
+        nameof(IsPanningBase), typeof(bool), typeof(SceneEditor), new PropertyMetadata(false, (d, _) => ((SceneEditor)d)._base.Refresh()));
+
+    /// <summary>Shows a draggable secondary crop frame (for example, the vertical recording slice) over the main capture.</summary>
+    public static readonly DependencyProperty ShowCropFrameProperty = DependencyProperty.Register(
+        nameof(ShowCropFrame), typeof(bool), typeof(SceneEditor), new PropertyMetadata(false, (d, _) => ((SceneEditor)d)._cropGuide.Refresh()));
+
+    public static readonly DependencyProperty CropFrameProperty = DependencyProperty.Register(
+        nameof(CropFrame), typeof(NormalizedRect), typeof(SceneEditor),
+        new FrameworkPropertyMetadata(NormalizedRect.Full, FrameworkPropertyMetadataOptions.BindsTwoWayByDefault, (d, _) => ((SceneEditor)d)._cropGuide.Refresh()));
+
+    public static readonly DependencyProperty CropFrameAspectProperty = DependencyProperty.Register(
+        nameof(CropFrameAspect), typeof(double), typeof(SceneEditor), new PropertyMetadata(9.0 / 16.0, (d, _) => ((SceneEditor)d)._cropGuide.Refresh()));
+
     /// <summary>Raised when the user interacts with or focuses this editor.</summary>
     public event EventHandler? Interaction;
 
@@ -159,6 +174,7 @@ public sealed class SceneEditor : UserControl
     private readonly List<LayerVisual> _cameras = [];
     private readonly List<LayerVisual> _overlays = [];
     private readonly BaseVisual _base;
+    private readonly CropGuideVisual _cropGuide;
     private readonly Viewbox _viewbox;
     private INotifyCollectionChanged? _observedLayers;
     private INotifyCollectionChanged? _observedOverlays;
@@ -171,6 +187,9 @@ public sealed class SceneEditor : UserControl
     {
         _base = new BaseVisual(this);
         _canvas.Children.Add(_base.Root);
+        _cropGuide = new CropGuideVisual(this);
+        _canvas.Children.Add(_cropGuide.Root);
+        Panel.SetZIndex(_cropGuide.Root, ZGuides - 10);
         var media = new Grid();
         media.Children.Add(_sceneImage);
         media.Children.Add(_sceneVideo);
@@ -193,8 +212,20 @@ public sealed class SceneEditor : UserControl
         Content = _viewbox;
         OnCanvasSize();
         Loaded += (_, _) => RefreshAll();
-        GotKeyboardFocus += (_, _) => Interaction?.Invoke(this, EventArgs.Empty);
-        PreviewMouseDown += (_, _) => Interaction?.Invoke(this, EventArgs.Empty);
+        GotKeyboardFocus += (_, _) =>
+        {
+            if (!_cropGuide.Root.IsMouseOver)
+            {
+                Interaction?.Invoke(this, EventArgs.Empty);
+            }
+        };
+        PreviewMouseDown += (_, _) =>
+        {
+            if (!_cropGuide.Root.IsMouseOver)
+            {
+                Interaction?.Invoke(this, EventArgs.Empty);
+            }
+        };
     }
 
     public IEnumerable? Layers
@@ -303,6 +334,30 @@ public sealed class SceneEditor : UserControl
     {
         get => (string?)GetValue(BasePlaceholderTextProperty);
         set => SetValue(BasePlaceholderTextProperty, value);
+    }
+
+    public bool IsPanningBase
+    {
+        get => (bool)GetValue(IsPanningBaseProperty);
+        set => SetValue(IsPanningBaseProperty, value);
+    }
+
+    public bool ShowCropFrame
+    {
+        get => (bool)GetValue(ShowCropFrameProperty);
+        set => SetValue(ShowCropFrameProperty, value);
+    }
+
+    public NormalizedRect CropFrame
+    {
+        get => (NormalizedRect)GetValue(CropFrameProperty);
+        set => SetValue(CropFrameProperty, value);
+    }
+
+    public double CropFrameAspect
+    {
+        get => (double)GetValue(CropFrameAspectProperty);
+        set => SetValue(CropFrameAspectProperty, value);
     }
 
     /// <summary>Flashes <paramref name="item"/> so it stands out among the others, for example after picking it in a list.</summary>
@@ -417,6 +472,7 @@ public sealed class SceneEditor : UserControl
     {
         Panel.SetZIndex(_base.Root, ZOf(Linkast.Core.Camera.SceneStacking.CaptureId, ZBase));
         _base.Refresh();
+        _cropGuide.Refresh();
         foreach (var v in _cameras)
         {
             v.Refresh();
@@ -1008,9 +1064,11 @@ public sealed class SceneEditor : UserControl
         };
         private readonly Rectangle _outline = Outline();
         private readonly List<Thumb> _handles = [];
+        private readonly Thumb _body = new() { Cursor = Cursors.SizeAll, Opacity = 0 };
         private Rect _dragRect;
         private NormalizedRect _dragCrop;
         private bool _trimming;
+        private bool _panning;
         private bool _hover;
 
         public BaseVisual(SceneEditor owner)
@@ -1019,14 +1077,23 @@ public sealed class SceneEditor : UserControl
             Root = new Grid { Focusable = true, FocusVisualStyle = null };
             _picture.Children.Add(_image);
             _clip.Child = _picture;
-            var body = new Thumb { Cursor = Cursors.SizeAll, Opacity = 0 };
-            body.DragStarted += (_, _) => BeginDrag();
-            body.DragDelta += (_, e) => Commit(_dragRect = _owner.Moved(_dragRect, e.HorizontalChange, e.VerticalChange), _dragCrop);
-            body.DragCompleted += (_, _) => _owner.ShowGuides(null, null);
+            _body.DragStarted += (_, _) => BeginDrag();
+            _body.DragDelta += (_, e) =>
+            {
+                if (_panning)
+                {
+                    Pan(e.HorizontalChange, e.VerticalChange);
+                }
+                else
+                {
+                    Commit(_dragRect = _owner.Moved(_dragRect, e.HorizontalChange, e.VerticalChange), _dragCrop);
+                }
+            };
+            _body.DragCompleted += (_, _) => _owner.ShowGuides(null, null);
             Root.Children.Add(_clip);
             Root.Children.Add(_placeholderText);
             Root.Children.Add(_outline);
-            Root.Children.Add(body);
+            Root.Children.Add(_body);
             foreach (var side in Enum.GetValues<Side>())
             {
                 var t = EdgeThumb(side);
@@ -1048,6 +1115,7 @@ public sealed class SceneEditor : UserControl
             }
 
             Root.KeyDown += OnKeyDown;
+            Root.MouseWheel += OnMouseWheel;
             Root.PreviewMouseDown += (_, _) =>
             {
                 _owner.SelectBase();
@@ -1082,20 +1150,36 @@ public sealed class SceneEditor : UserControl
             ArrangePicture(b);
 
             var selected = _owner.IsBaseSelected;
-            _outline.Visibility = selected || _hover ? Visibility.Visible : Visibility.Collapsed;
-            _outline.Stroke = selected ? Accent : Faint;
-            _outline.StrokeThickness = selected ? 6 : 3;
+            _body.Cursor = _owner.IsPanningBase ? Cursors.Hand : Cursors.SizeAll;
+            _outline.Visibility = selected || _hover || _owner.IsPanningBase ? Visibility.Visible : Visibility.Collapsed;
+            _outline.Stroke = selected || _owner.IsPanningBase ? Accent : Faint;
+            _outline.StrokeThickness = selected || _owner.IsPanningBase ? 6 : 3;
             _placeholderText.Text = _owner.BasePlaceholderText ?? string.Empty;
             _placeholderText.Visibility = _image.Source is null && !string.IsNullOrEmpty(_owner.BasePlaceholderText)
                 ? Visibility.Visible
                 : Visibility.Collapsed;
             foreach (var h in _handles)
             {
-                h.Visibility = selected ? Visibility.Visible : Visibility.Collapsed;
+                h.Visibility = selected && !_owner.IsPanningBase ? Visibility.Visible : Visibility.Collapsed;
             }
 
+            _owner._cropGuide.Refresh();
             AutomationProperties.SetName(Root, "Game picture. Drag to move, drag a corner or an edge to resize, hold Alt and drag an edge to trim, or use the arrow keys.");
         }
+
+        internal Rect SourceCanvasRect()
+        {
+            var bounds = Bounds();
+            var crop = _owner.BaseCrop.Clamped(SceneLayout.MinCrop);
+            var region = Region(bounds, crop);
+            var drawnX = bounds.X + region.X;
+            var drawnY = bounds.Y + region.Y;
+            var fullW = region.Width / crop.Width;
+            var fullH = region.Height / crop.Height;
+            return new Rect(drawnX - (crop.X * fullW), drawnY - (crop.Y * fullH), fullW, fullH);
+        }
+
+        internal (double Width, double Height) CaptureSourceSize() => SourceSize();
 
         private Rect Bounds()
         {
@@ -1141,9 +1225,67 @@ public sealed class SceneEditor : UserControl
         {
             _owner.SelectBase();
             _dragRect = Bounds();
-            _dragCrop = _owner.BaseCrop.Clamped(SceneLayout.MinCrop);
-            _trimming = Keyboard.Modifiers.HasFlag(ModifierKeys.Alt);
+            _panning = _owner.IsPanningBase;
+            _dragCrop = _panning ? VisibleCropForPan() : _owner.BaseCrop.Clamped(SceneLayout.MinCrop);
+            _trimming = !_panning && Keyboard.Modifiers.HasFlag(ModifierKeys.Alt);
             Root.Focus();
+        }
+
+        private NormalizedRect VisibleCropForPan()
+        {
+            var (sw, sh) = SourceSize();
+            return SceneLayout.VisibleSourceCrop(
+                _owner.BasePlacement, _owner.BaseCrop, _owner.BaseFit, sw, sh, _owner.CanvasWidth, _owner.CanvasHeight);
+        }
+
+        private void Pan(double dx, double dy)
+        {
+            var b = _dragRect;
+            if (b.Width <= 0 || b.Height <= 0)
+            {
+                return;
+            }
+
+            var dcx = -(dx / b.Width) * _dragCrop.Width;
+            var dcy = -(dy / b.Height) * _dragCrop.Height;
+            var nx = Math.Clamp(_dragCrop.X + dcx, 0, Math.Max(0, 1 - _dragCrop.Width));
+            var ny = Math.Clamp(_dragCrop.Y + dcy, 0, Math.Max(0, 1 - _dragCrop.Height));
+            _dragCrop = new NormalizedRect(nx, ny, _dragCrop.Width, _dragCrop.Height).Clamped(SceneLayout.MinCrop);
+            if (_dragCrop != _owner.BaseCrop)
+            {
+                _owner.BaseCrop = _dragCrop;
+            }
+        }
+
+        private void OnMouseWheel(object sender, MouseWheelEventArgs e)
+        {
+            if (!_owner.IsPanningBase || e.Delta == 0)
+            {
+                return;
+            }
+
+            e.Handled = true;
+            _owner.SelectBase();
+            var c = VisibleCropForPan();
+            var zoomed = ZoomCrop(c, e.Delta > 0 ? 0.90 : 1.0 / 0.90).Clamped(SceneLayout.MinCrop);
+            if (zoomed != _owner.BaseCrop)
+            {
+                _owner.BaseCrop = zoomed;
+            }
+        }
+
+        internal static NormalizedRect ZoomCrop(NormalizedRect c, double factor)
+        {
+            var maxScale = Math.Min(1.0 / Math.Max(SceneLayout.MinCrop, c.Width), 1.0 / Math.Max(SceneLayout.MinCrop, c.Height));
+            var minScale = Math.Max(SceneLayout.MinCrop / Math.Max(SceneLayout.MinCrop, c.Width), SceneLayout.MinCrop / Math.Max(SceneLayout.MinCrop, c.Height));
+            var scale = Math.Clamp(factor, minScale, maxScale);
+            var nw = c.Width * scale;
+            var nh = c.Height * scale;
+            var cx = c.X + (c.Width / 2.0);
+            var cy = c.Y + (c.Height / 2.0);
+            var nx = Math.Clamp(cx - (nw / 2.0), 0, Math.Max(0, 1 - nw));
+            var ny = Math.Clamp(cy - (nh / 2.0), 0, Math.Max(0, 1 - nh));
+            return new NormalizedRect(nx, ny, nw, nh);
         }
 
         private void DragEdge(Side side, double delta)
@@ -1202,6 +1344,173 @@ public sealed class SceneEditor : UserControl
             {
                 _owner.BasePlacement = n;
             }
+        }
+    }
+
+    /// <summary>
+    /// Interactive draggable/resizable guide over the main stream's game picture that controls the
+    /// vertical recording's crop window (<see cref="SceneEditor.CropFrame"/>) without moving the vertical box itself.
+    /// </summary>
+    private sealed class CropGuideVisual
+    {
+        private readonly SceneEditor _owner;
+        private readonly Border _dimTop = DimBar();
+        private readonly Border _dimBottom = DimBar();
+        private readonly Border _dimLeft = DimBar();
+        private readonly Border _dimRight = DimBar();
+        private readonly Grid _frame = new();
+        private readonly Border _tag = new()
+        {
+            Background = new SolidColorBrush(Color.FromArgb(220, 0x91, 0x46, 0xFF)),
+            Padding = new Thickness(12, 4, 12, 4),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top,
+            IsHitTestVisible = false,
+            Child = new TextBlock { Text = "Vertical frame", Foreground = Brushes.White, FontSize = 30, FontWeight = FontWeights.SemiBold },
+        };
+        private Rect _srcRect;
+        private NormalizedRect _dragFrame;
+
+        public CropGuideVisual(SceneEditor owner)
+        {
+            _owner = owner;
+            Root = new Canvas { Visibility = Visibility.Collapsed };
+            var outline = new Rectangle
+            {
+                Stroke = Accent,
+                StrokeThickness = 6,
+                StrokeDashArray = [4, 2],
+                Fill = new SolidColorBrush(Color.FromArgb(0x18, 0x91, 0x46, 0xFF)),
+                IsHitTestVisible = false,
+            };
+            var body = new Thumb { Cursor = Cursors.SizeAll, Opacity = 0 };
+            body.DragStarted += (_, _) => BeginDrag();
+            body.DragDelta += (_, e) => Move(e.HorizontalChange, e.VerticalChange);
+            _frame.MouseWheel += (_, e) =>
+            {
+                if (e.Delta == 0)
+                {
+                    return;
+                }
+
+                e.Handled = true;
+                var current = _owner.CropFrame.Clamped(SceneLayout.MinCrop);
+                _owner.CropFrame = BaseVisual.ZoomCrop(current, e.Delta > 0 ? 0.90 : 1.0 / 0.90);
+                _owner.Interaction?.Invoke(_owner, EventArgs.Empty);
+            };
+            _frame.Children.Add(outline);
+            _frame.Children.Add(body);
+            _frame.Children.Add(_tag);
+
+            foreach (var (h, v) in Corners)
+            {
+                var left = h == HorizontalAlignment.Left;
+                var top = v == VerticalAlignment.Top;
+                var t = RoundThumb(h, v, left == top ? Cursors.SizeNWSE : Cursors.SizeNESW);
+                t.DragStarted += (_, _) => BeginDrag();
+                t.DragDelta += (_, e) => ResizeCorner(left, top, e.HorizontalChange);
+                _frame.Children.Add(t);
+            }
+
+            Root.Children.Add(_dimTop);
+            Root.Children.Add(_dimBottom);
+            Root.Children.Add(_dimLeft);
+            Root.Children.Add(_dimRight);
+            Root.Children.Add(_frame);
+            AutomationProperties.SetName(body, "Vertical recording frame on stream preview. Drag to move FOV, drag corners or scroll wheel to zoom.");
+        }
+
+        public Canvas Root { get; }
+
+        private static Border DimBar() => new() { Background = new SolidColorBrush(Color.FromArgb(115, 0, 0, 0)), IsHitTestVisible = false };
+
+        public void Refresh()
+        {
+            if (!_owner.ShowCropFrame || !_owner.ShowBase)
+            {
+                Root.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            _srcRect = _owner._base.SourceCanvasRect();
+            if (_srcRect.Width <= 0 || _srcRect.Height <= 0)
+            {
+                Root.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            Root.Visibility = Visibility.Visible;
+            Root.Width = _owner.CanvasWidth;
+            Root.Height = _owner.CanvasHeight;
+
+            var f = _owner.CropFrame.Clamped(SceneLayout.MinCrop);
+            var rx = _srcRect.X + (f.X * _srcRect.Width);
+            var ry = _srcRect.Y + (f.Y * _srcRect.Height);
+            var rw = f.Width * _srcRect.Width;
+            var rh = f.Height * _srcRect.Height;
+
+            Canvas.SetLeft(_frame, rx);
+            Canvas.SetTop(_frame, ry);
+            _frame.Width = rw;
+            _frame.Height = rh;
+
+            // Four translucent dimmers around the selected slice inside the capture rectangle.
+            ArrangeBar(_dimTop, _srcRect.X, _srcRect.Y, _srcRect.Width, Math.Max(0, ry - _srcRect.Y));
+            ArrangeBar(_dimBottom, _srcRect.X, ry + rh, _srcRect.Width, Math.Max(0, _srcRect.Bottom - (ry + rh)));
+            ArrangeBar(_dimLeft, _srcRect.X, ry, Math.Max(0, rx - _srcRect.X), rh);
+            ArrangeBar(_dimRight, rx + rw, ry, Math.Max(0, _srcRect.Right - (rx + rw)), rh);
+        }
+
+        private static void ArrangeBar(Border bar, double x, double y, double w, double h)
+        {
+            bar.Visibility = w > 0.5 && h > 0.5 ? Visibility.Visible : Visibility.Collapsed;
+            Canvas.SetLeft(bar, x);
+            Canvas.SetTop(bar, y);
+            bar.Width = Math.Max(0, w);
+            bar.Height = Math.Max(0, h);
+        }
+
+        private void BeginDrag()
+        {
+            _srcRect = _owner._base.SourceCanvasRect();
+            _dragFrame = _owner.CropFrame.Clamped(SceneLayout.MinCrop);
+            _owner.Interaction?.Invoke(_owner, EventArgs.Empty);
+        }
+
+        private void Move(double dx, double dy)
+        {
+            if (_srcRect.Width <= 0 || _srcRect.Height <= 0)
+            {
+                return;
+            }
+
+            var nx = Math.Clamp(_dragFrame.X + (dx / _srcRect.Width), 0, Math.Max(0, 1 - _dragFrame.Width));
+            var ny = Math.Clamp(_dragFrame.Y + (dy / _srcRect.Height), 0, Math.Max(0, 1 - _dragFrame.Height));
+            _dragFrame = new NormalizedRect(nx, ny, _dragFrame.Width, _dragFrame.Height);
+            _owner.CropFrame = _dragFrame;
+        }
+
+        private void ResizeCorner(bool left, bool top, double dx)
+        {
+            if (_srcRect.Width <= 0 || _srcRect.Height <= 0)
+            {
+                return;
+            }
+
+            var (sw, sh) = _owner._base.CaptureSourceSize();
+            var normRatio = Math.Clamp(_owner.CropFrameAspect * sh / Math.Max(1, sw), 0.05, 20.0);
+            var anchorX = left ? _dragFrame.Right : _dragFrame.X;
+            var anchorY = top ? _dragFrame.Bottom : _dragFrame.Y;
+            var maxW = Math.Min(left ? anchorX : 1.0 - anchorX, (top ? anchorY : 1.0 - anchorY) * normRatio);
+            var minW = Math.Min(maxW, Math.Max(SceneLayout.MinCrop, SceneLayout.MinCrop * normRatio));
+            var newW = Math.Clamp(_dragFrame.Width + ((left ? -dx : dx) / _srcRect.Width), minW, maxW);
+            var newH = newW / normRatio;
+            _dragFrame = new NormalizedRect(
+                left ? anchorX - newW : anchorX,
+                top ? anchorY - newH : anchorY,
+                newW,
+                newH);
+            _owner.CropFrame = _dragFrame;
         }
     }
 }

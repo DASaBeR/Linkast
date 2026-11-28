@@ -251,6 +251,25 @@ public partial class MainWindow : Window
             Command = _vm.VerticalPreview.ApplyQuickLayoutCommand,
             CommandParameter = "FullGame",
         });
+        menu.Items.Add(new MenuItem
+        {
+            Header = "Full FOV · centered (16:9)",
+            Command = _vm.VerticalPreview.ApplyQuickLayoutCommand,
+            CommandParameter = "FullFov",
+        });
+        menu.Items.Add(new Separator());
+        menu.Items.Add(new MenuItem
+        {
+            Header = _vm.VerticalPreview.BaseFit == Linkast.Core.Camera.BaseFit.Fit
+                ? "Switch game scaling to Fill (no bars)"
+                : "Switch game scaling to Fit (whole FOV)",
+            Command = _vm.VerticalPreview.ToggleGameFitCommand,
+        });
+        menu.Items.Add(new MenuItem
+        {
+            Header = "Reset game pan & zoom",
+            Command = _vm.VerticalPreview.ResetGameCropCommand,
+        });
         menu.IsOpen = true;
     }
 

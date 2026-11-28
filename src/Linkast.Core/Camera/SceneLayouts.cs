@@ -236,6 +236,67 @@ public sealed record SceneLayout
     /// <summary>Smallest part of the capture that can be kept on each axis.</summary>
     public const double MinCrop = 0.05;
 
+    /// <summary>
+    /// Resolves how a source of pixel size (<paramref name="sourceWidth"/> × <paramref name="sourceHeight"/>) trimmed
+    /// by <paramref name="crop"/> is drawn inside normalized canvas box <paramref name="placement"/> on a canvas of
+    /// (<paramref name="canvasWidth"/> × <paramref name="canvasHeight"/>) using <paramref name="fit"/>.
+    /// Returns the actual normalized destination rectangle on the canvas and source UV crop rectangle.
+    /// </summary>
+    public static (NormalizedRect Dest, NormalizedRect Crop) ResolveCaptureDraw(
+        NormalizedRect placement,
+        NormalizedRect crop,
+        BaseFit fit,
+        double sourceWidth,
+        double sourceHeight,
+        double canvasWidth,
+        double canvasHeight)
+    {
+        var p = placement.Clamped();
+        var c = crop.Clamped(MinCrop);
+        if (sourceWidth <= 0 || sourceHeight <= 0 || canvasWidth <= 0 || canvasHeight <= 0 || p.Width <= 0 || p.Height <= 0)
+        {
+            return (p, c);
+        }
+
+        var bw = p.Width * canvasWidth;
+        var bh = p.Height * canvasHeight;
+        var rw = sourceWidth * c.Width;
+        var rh = sourceHeight * c.Height;
+
+        if (fit == BaseFit.Fill)
+        {
+            var scale = Math.Max(bw / rw, bh / rh);
+            var fracW = Math.Clamp(bw / (rw * scale), MinCrop / c.Width, 1.0);
+            var fracH = Math.Clamp(bh / (rh * scale), MinCrop / c.Height, 1.0);
+            var cw = c.Width * fracW;
+            var ch = c.Height * fracH;
+            var cx = Math.Clamp(c.X + ((c.Width - cw) / 2.0), 0, 1 - cw);
+            var cy = Math.Clamp(c.Y + ((c.Height - ch) / 2.0), 0, 1 - ch);
+            return (p, new NormalizedRect(cx, cy, cw, ch));
+        }
+
+        var fitScale = Math.Min(bw / rw, bh / rh);
+        var dw = rw * fitScale;
+        var dh = rh * fitScale;
+        var dx = p.X + ((bw - dw) / (2.0 * canvasWidth));
+        var dy = p.Y + ((bh - dh) / (2.0 * canvasHeight));
+        return (new NormalizedRect(dx, dy, dw / canvasWidth, dh / canvasHeight).Clamped(), c);
+    }
+
+    /// <summary>
+    /// Returns the normalized source sub-rectangle actually visible inside <paramref name="placement"/>:
+    /// identical to <paramref name="crop"/> in <see cref="BaseFit.Fit"/>, or trimmed to the box's aspect ratio in <see cref="BaseFit.Fill"/>.
+    /// </summary>
+    public static NormalizedRect VisibleSourceCrop(
+        NormalizedRect placement,
+        NormalizedRect crop,
+        BaseFit fit,
+        double sourceWidth,
+        double sourceHeight,
+        double canvasWidth,
+        double canvasHeight) =>
+        ResolveCaptureDraw(placement, crop, fit, sourceWidth, sourceHeight, canvasWidth, canvasHeight).Crop;
+
     public SceneLayout Clamped() => this with
     {
         Name = string.IsNullOrWhiteSpace(Name) ? "Scene" : Name.Trim()[..Math.Min(Name.Trim().Length, 40)],

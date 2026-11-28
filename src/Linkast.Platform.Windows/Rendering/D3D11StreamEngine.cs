@@ -686,7 +686,8 @@ public sealed partial class D3D11StreamEngine : IStreamEngine, ILiveSceneControl
                     () => _verticalLayout!.Placements,
                     () => _verticalLayout!.Crops,
                     () => _verticalLayout!.Stack,
-                    []));
+                    [],
+                    () => _verticalLayout!.Fits));
                 await TryStartSecondaryRecordingAsync(
                     "vertical", "vertical", verticalPath, verticalSpec.Encoder, scheduler, mixer, secondaryOutputs, savedRecordingPaths, ct).ConfigureAwait(false);
             }

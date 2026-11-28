@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using System.ComponentModel;
+using System.Windows;
 using System.Windows.Media;
 using Linkast.App.ViewModels;
+using Linkast.App.Views;
 using Linkast.Core.Camera;
 
 namespace Linkast.App.Tests;
@@ -83,5 +85,47 @@ public class VerticalSceneItemTests
         Assert.Equal(moved, verticalScene.Overlays["overlay-1"].CustomPlacement);
         Assert.Equal(OverlayPosition.Custom, verticalScene.Overlays["overlay-1"].Position);
         Assert.Equal(new NormalizedRect(0.1, 0, 0.8, 1), verticalScene.Overlays["overlay-1"].Crop);
+    }
+
+    [Fact]
+    public void SceneEditor_crop_guide_becomes_visible_when_ShowCropFrame_is_enabled()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var editor = new SceneEditor
+                {
+                    CanvasWidth = 1920,
+                    CanvasHeight = 1080,
+                    ShowBase = true,
+                    CropFrameAspect = 9.0 / 16.0,
+                    CropFrame = new NormalizedRect(0.34, 0, 0.3164, 1),
+                    ShowCropFrame = true,
+                };
+                editor.Measure(new Size(960, 540));
+                editor.Arrange(new Rect(0, 0, 960, 540));
+                editor.UpdateLayout();
+
+                Assert.Equal(Visibility.Visible, editor.ShowCropFrame ? Visibility.Visible : Visibility.Collapsed);
+                var field = typeof(SceneEditor).GetField("_cropGuide", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+                var guide = field.GetValue(editor)!;
+                var root = (FrameworkElement)guide.GetType().GetProperty("Root")!.GetValue(guide)!;
+                Assert.Equal(Visibility.Visible, root.Visibility);
+                Assert.True(root.ActualWidth > 0, $"ActualWidth={root.ActualWidth}");
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join();
+        if (failure is not null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        }
     }
 }

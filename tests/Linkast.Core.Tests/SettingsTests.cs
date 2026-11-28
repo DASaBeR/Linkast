@@ -74,6 +74,7 @@ public class SettingsSerializerTests
                 FrameRate = 30,
                 ShowVerticalPreview = false,
                 ShowVerticalSafeZones = true,
+                ShowVerticalCropFrame = true,
             },
             Webcam = new WebcamSettings
             {
@@ -99,6 +100,7 @@ public class SettingsSerializerTests
         Assert.Equal("Window", back.Stream.SourceKind);
         Assert.False(back.Stream.ShowVerticalPreview);
         Assert.True(back.Stream.ShowVerticalSafeZones);
+        Assert.True(back.Stream.ShowVerticalCropFrame);
         Assert.Equal(["face", "desk"], back.Webcam.Layers.Select(l => l.LayerId));
         var f = back.Webcam.Layers[0];
         Assert.Equal("Face cam", f.Name);

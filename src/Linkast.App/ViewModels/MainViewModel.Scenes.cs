@@ -897,8 +897,6 @@ public sealed partial class MainViewModel
     /// <summary>After scenes and overlays were loaded (start-up, OBS import): the overlays, pickers and mixer follow the active scene.</summary>
     private void ScenesLoaded()
     {
-        // The card holds the saved capture now: scenes without their own use it.
-        _defaultCapture = CardCapture();
         AdoptOrphanOverlays();
         RebuildSceneChoices(_pendingSceneChoices.Start, _pendingSceneChoices.End);
         OnActiveSceneChanged(Webcam.ActiveLayout);

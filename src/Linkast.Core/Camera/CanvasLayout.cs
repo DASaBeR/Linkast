@@ -9,4 +9,5 @@ namespace Linkast.Core.Camera;
 public sealed record CanvasLayout(
     IReadOnlyDictionary<string, NormalizedRect> Placements,
     IReadOnlyDictionary<string, NormalizedRect> Crops,
-    IReadOnlyList<string> Stack);
+    IReadOnlyList<string> Stack,
+    IReadOnlyDictionary<string, BaseFit>? Fits = null);

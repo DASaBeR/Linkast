@@ -21,7 +21,8 @@ internal sealed record SchedulerCanvas(
     Func<IReadOnlyDictionary<string, NormalizedRect>> Placements,
     Func<IReadOnlyDictionary<string, NormalizedRect>> Crops,
     Func<IReadOnlyList<string>> Stack,
-    IReadOnlyList<D3D11OutputTarget> Targets);
+    IReadOnlyList<D3D11OutputTarget> Targets,
+    Func<IReadOnlyDictionary<string, BaseFit>?>? Fits = null);
 
 /// <summary>
 /// High-precision monotonic frame scheduler for scene composition and video output delivery.
@@ -39,7 +40,8 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
             Func<IReadOnlyDictionary<string, NormalizedRect>>? cropsProvider,
             Func<IReadOnlyList<string>>? stackOrderProvider,
             IReadOnlyList<D3D11OutputTarget> targets,
-            ILogger? logger)
+            ILogger? logger,
+            Func<IReadOnlyDictionary<string, BaseFit>?>? fitsProvider = null)
         {
             Name = name;
             Compositor = compositor;
@@ -47,6 +49,7 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
             PlacementsProvider = placementsProvider;
             CropsProvider = cropsProvider;
             StackOrderProvider = stackOrderProvider;
+            FitsProvider = fitsProvider;
             Targets = [.. targets];
             _logger = logger;
         }
@@ -64,6 +67,7 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
         public Func<IReadOnlyDictionary<string, NormalizedRect>>? PlacementsProvider { get; }
         public Func<IReadOnlyDictionary<string, NormalizedRect>>? CropsProvider { get; }
         public Func<IReadOnlyList<string>>? StackOrderProvider { get; }
+        public Func<IReadOnlyDictionary<string, BaseFit>?>? FitsProvider { get; }
         public List<D3D11OutputTarget> Targets { get; }
 
         public bool HasAttachedTargets()
@@ -245,7 +249,8 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
             canvas.Crops,
             canvas.Stack,
             canvas.Targets,
-            _logger));
+            _logger,
+            canvas.Fits));
     }
 
     internal Func<IReadOnlyDictionary<string, NormalizedRect>>? PlacementsProviderOf(string canvasName) =>
@@ -438,7 +443,7 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
     public bool RenderSingleFrame()
     {
         var sources = _sourcesProvider();
-        var snapshots = new List<(CanvasState Canvas, SceneLayout? Layout, IReadOnlyDictionary<string, NormalizedRect>? Placements, IReadOnlyDictionary<string, NormalizedRect>? Crops, IReadOnlyList<string>? StackOrder)>(_canvases.Count);
+        var snapshots = new List<(CanvasState Canvas, SceneLayout? Layout, IReadOnlyDictionary<string, NormalizedRect>? Placements, IReadOnlyDictionary<string, NormalizedRect>? Crops, IReadOnlyList<string>? StackOrder, IReadOnlyDictionary<string, BaseFit>? Fits)>(_canvases.Count);
         var keysNeeded = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var canvas in _canvases)
@@ -452,7 +457,8 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
             var placements = canvas.PlacementsProvider?.Invoke();
             var crops = canvas.CropsProvider?.Invoke();
             var stackOrder = canvas.StackOrderProvider?.Invoke();
-            snapshots.Add((canvas, layout, placements, crops, stackOrder));
+            var fits = canvas.FitsProvider?.Invoke();
+            snapshots.Add((canvas, layout, placements, crops, stackOrder, fits));
             CollectNeededKeys(sources, layout, placements, keysNeeded);
         }
 
@@ -461,11 +467,11 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
 
         // 2. Draw + Output phase per canvas.
         bool primaryWritten = false;
-        foreach (var (canvas, layout, placements, crops, stackOrder) in snapshots)
+        foreach (var (canvas, layout, placements, crops, stackOrder, fits) in snapshots)
         {
             lock (canvas.Compositor.RenderGate)
             {
-                if (!DrawCanvasFrame(canvas, sources, layout, placements, crops, stackOrder))
+                if (!DrawCanvasFrame(canvas, sources, layout, placements, crops, stackOrder, fits))
                 {
                     continue;
                 }
@@ -509,6 +515,7 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
         var placements = canvas.PlacementsProvider?.Invoke();
         var crops = canvas.CropsProvider?.Invoke();
         var stackOrder = canvas.StackOrderProvider?.Invoke();
+        var fits = canvas.FitsProvider?.Invoke();
 
         var keysNeeded = new HashSet<string>(StringComparer.Ordinal);
         CollectNeededKeys(sources, layout, placements, keysNeeded);
@@ -516,7 +523,7 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
 
         lock (canvas.Compositor.RenderGate)
         {
-            if (!DrawCanvasFrame(canvas, sources, layout, placements, crops, stackOrder))
+            if (!DrawCanvasFrame(canvas, sources, layout, placements, crops, stackOrder, fits))
             {
                 return;
             }
@@ -612,7 +619,8 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
         SceneLayout? layout,
         IReadOnlyDictionary<string, NormalizedRect>? placements,
         IReadOnlyDictionary<string, NormalizedRect>? crops,
-        IReadOnlyList<string>? stackOrder)
+        IReadOnlyList<string>? stackOrder,
+        IReadOnlyDictionary<string, BaseFit>? fits = null)
     {
         var compositor = canvas.Compositor;
         if (compositor.DeviceManager.IsDeviceLost || !compositor.BeginFrame(new Color4(0f, 0f, 0f, 1f)))
@@ -636,7 +644,8 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
                 }
 
                 var crop = crops is not null && crops.TryGetValue(key, out var c) ? c : NormalizedRect.Full;
-                DrawCachedSource(compositor, key, source, placement, crop);
+                var fit = fits is not null && fits.TryGetValue(key, out var f) ? f : layout?.BaseFit;
+                DrawCachedSource(compositor, key, source, placement, crop, fit);
             }
         }
         else if (layout is not null)
@@ -645,7 +654,7 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
             {
                 if (sources.TryGetValue("capture", out var defaultCapture))
                 {
-                    DrawCachedSource(compositor, "capture", defaultCapture, layout.BasePlacement, layout.BaseCrop);
+                    DrawCachedSource(compositor, "capture", defaultCapture, layout.BasePlacement, layout.BaseCrop, layout.BaseFit);
                 }
                 else
                 {
@@ -653,7 +662,7 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
                     {
                         if (!layout.CameraPlacements.ContainsKey(key) && src.State != SceneSourceState.Lost)
                         {
-                            DrawCachedSource(compositor, key, src, layout.BasePlacement, layout.BaseCrop);
+                            DrawCachedSource(compositor, key, src, layout.BasePlacement, layout.BaseCrop, layout.BaseFit);
                             break;
                         }
                     }
@@ -678,7 +687,8 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
         string key,
         ID3D11SceneSource source,
         NormalizedRect placement,
-        NormalizedRect crop)
+        NormalizedRect crop,
+        BaseFit? fit = null)
     {
         // A capture that cut out (its window closed, minimized, or restarting after Windows ended it) shows
         // black in its place: not its last picture frozen, nor the layers under it flashing through.
@@ -691,13 +701,25 @@ public sealed partial class MediaOutputScheduler : IAsyncDisposable
         var (tex, srv, _, _) = _frameCache.AcquireWithSrv(key);
         if (source.State != SceneSourceState.Lost)
         {
+            var drawPlacement = placement;
+            var drawCrop = crop;
+            if (fit is { } captureFit && IsCapture(source))
+            {
+                var (srcW, srcH) = _frameCache.GetSize(key);
+                if (srcW > 0 && srcH > 0)
+                {
+                    (drawPlacement, drawCrop) = SceneLayout.ResolveCaptureDraw(
+                        placement, crop, captureFit, srcW, srcH, compositor.CanvasWidth, compositor.CanvasHeight);
+                }
+            }
+
             if (srv is not null)
             {
-                compositor.DrawLayer(srv, placement, crop);
+                compositor.DrawLayer(srv, drawPlacement, drawCrop);
             }
             else if (tex is not null)
             {
-                compositor.DrawLayer(tex, placement, crop);
+                compositor.DrawLayer(tex, drawPlacement, drawCrop);
             }
             else if (IsCapture(source))
             {

@@ -16,6 +16,8 @@ public sealed class SourceFrameCache : IDisposable
     {
         public ID3D11Texture2D? Texture { get; set; }
         public ID3D11ShaderResourceView? Srv { get; set; }
+        public int Width { get; set; }
+        public int Height { get; set; }
         public long TimestampQpc { get; set; }
         public bool IsFresh { get; set; }
 
@@ -57,6 +59,9 @@ public sealed class SourceFrameCache : IDisposable
                 var dev = device ?? _deviceManager?.Device;
                 slot.Srv = dev?.CreateShaderResourceView(texture);
                 slot.Texture = texture;
+                var desc = texture.Description;
+                slot.Width = (int)desc.Width;
+                slot.Height = (int)desc.Height;
             }
 
             slot.TimestampQpc = timestampQpc;
@@ -92,6 +97,20 @@ public sealed class SourceFrameCache : IDisposable
     {
         var (tex, _, ts, fresh) = AcquireWithSrv(sourceId);
         return (tex, ts, fresh);
+    }
+
+    public (int Width, int Height) GetSize(string sourceId)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_slots.TryGetValue(sourceId, out var slot))
+        {
+            return (0, 0);
+        }
+
+        lock (slot)
+        {
+            return (slot.Width, slot.Height);
+        }
     }
 
     /// <summary>Removes a source and releases any cached texture and SRV.</summary>

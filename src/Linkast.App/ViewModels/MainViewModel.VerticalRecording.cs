@@ -75,6 +75,10 @@ public sealed partial class MainViewModel
             return;
         }
 
+        var vScene = SelectedVerticalScene?.Id is { } vId ? Webcam.FindScene(vId) : null;
+        var sameCapture = vScene is not null
+            && (SameCaptureTarget(CaptureOf(vScene), CaptureOf(Webcam.ActiveLayout))
+                || (Resolve(CaptureOf(vScene))?.Key is { } vk && Resolve(CaptureOf(Webcam.ActiveLayout))?.Key is { } mk && vk == mk));
         VerticalPreview.RefreshState(
             VerticalRecordingEnabled,
             Webcam.ActiveLayout.Orientation == OutputOrientation.Vertical,
@@ -83,7 +87,8 @@ public sealed partial class MainViewModel
             SelectedVerticalSize.Height,
             IsMainRecording,
             IsActive && _liveVerticalSceneId is not null,
-            rebuildItems);
+            rebuildItems,
+            sameCapture);
         UpdateVerticalLiveSourceNote();
     }
 
@@ -347,11 +352,13 @@ public sealed partial class MainViewModel
     {
         var placements = new Dictionary<string, NormalizedRect>(StringComparer.Ordinal);
         var crops = new Dictionary<string, NormalizedRect>(StringComparer.Ordinal);
+        var fits = new Dictionary<string, BaseFit>(StringComparer.Ordinal);
 
         if (scene.ShowCapture && Resolve(CaptureOf(scene)) is { } cap)
         {
             placements[cap.Key] = scene.BasePlacement;
             crops[cap.Key] = scene.BaseCrop;
+            fits[cap.Key] = scene.BaseFit;
         }
 
         foreach (var (layerId, rect) in scene.CameraPlacements)
@@ -392,7 +399,7 @@ public sealed partial class MainViewModel
         }
 
         var stack = SceneStacking.BuildStack(mediaIds, [ShownOrder(scene)]);
-        return new CanvasLayout(placements, crops, stack);
+        return new CanvasLayout(placements, crops, stack, fits);
     }
 
     private static OverlaySource? BuildOverlaySource(OverlayItemViewModel item) => item switch

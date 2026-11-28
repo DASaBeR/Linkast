@@ -457,4 +457,31 @@ public class SceneLayoutTests
         var land = SceneLayout.DefaultLandscape("a").CameraPlacements["a"];
         Assert.Equal(land, LayerGeometry.FitInside(land, 16.0 / 9, 1920, 1080));
     }
+
+    [Fact]
+    public void ResolveCaptureDraw_and_VisibleSourceCrop_respect_fit_and_fill_for_vertical_canvas()
+    {
+        // 1920x1080 capture placed full-screen on 1080x1920 with Fill zooms center 9:16 slice (0.3164 width).
+        var (fillDest, fillCrop) = SceneLayout.ResolveCaptureDraw(
+            NormalizedRect.Full, NormalizedRect.Full, BaseFit.Fill, 1920, 1080, 1080, 1920);
+        Assert.Equal(NormalizedRect.Full, fillDest);
+        Assert.InRange(fillCrop.Width, 0.315, 0.318);
+        Assert.Equal(1.0, fillCrop.Height, 6);
+        Assert.InRange(fillCrop.X, 0.340, 0.343);
+
+        // With Fit on the same 1080x1920 canvas, crop stays Full (100% FOV) and destination letterboxes to 1080x607.5.
+        var (fitDest, fitCrop) = SceneLayout.ResolveCaptureDraw(
+            NormalizedRect.Full, NormalizedRect.Full, BaseFit.Fit, 1920, 1080, 1080, 1920);
+        Assert.Equal(NormalizedRect.Full, fitCrop);
+        Assert.Equal(1.0, fitDest.Width, 6);
+        Assert.InRange(fitDest.Height, 0.315, 0.318);
+        Assert.InRange(fitDest.Y, 0.340, 0.343);
+
+        // Custom left-shifted 9:16 crop on Fill keeps that exact pan offset without re-centering.
+        var leftSlice = new NormalizedRect(0.05, 0.0, 0.3164, 1.0);
+        var visibleLeft = SceneLayout.VisibleSourceCrop(
+            NormalizedRect.Full, leftSlice, BaseFit.Fill, 1920, 1080, 1080, 1920);
+        Assert.InRange(visibleLeft.X, 0.049, 0.051);
+        Assert.InRange(visibleLeft.Width, 0.315, 0.318);
+    }
 }

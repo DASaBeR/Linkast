@@ -2,6 +2,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Linkast.App.Services;
@@ -33,6 +34,7 @@ public sealed partial class VerticalPreviewViewModel : ObservableObject
     private int _canvasHeight = 1920;
     private bool _isRecordingMain;
     private bool _isRecordingVertical;
+    private bool _sameCaptureAsMain = true;
     private double _previewHostWidth;
 
     public VerticalPreviewViewModel(
@@ -86,9 +88,21 @@ public sealed partial class VerticalPreviewViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(PreviewHintText))]
     public partial bool IsEditing { get; set; }
 
-    public string PreviewHintText => IsEditing
-        ? "Editing the vertical recording · drag to move · corner to resize · Alt + drag to trim"
-        : "Drag to move · drag a corner to resize · Alt + drag an edge to trim · the screen picture refreshes every 2 s";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PreviewHintText))]
+    public partial bool IsPanningGame { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsMainCropFrameVisible))]
+    public partial bool ShowCropFrameOnMain { get; set; }
+
+    partial void OnShowCropFrameOnMainChanged(bool value) => _scheduleSave();
+
+    public string PreviewHintText => IsPanningGame
+        ? "Panning vertical game view · drag the game picture to slide your FOV · scroll wheel to zoom"
+        : IsEditing
+            ? "Editing the vertical recording · drag to move · corner to resize · Alt + drag to trim"
+            : "Drag to move · drag a corner to resize · Alt + drag an edge to trim · the screen picture refreshes every 2 s";
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(State), nameof(IsVisible), nameof(ShowHiddenRestoreChip), nameof(ShowSideBySidePanel), nameof(ShowFullTooSmallPanel), nameof(ShowTooSmallBar), nameof(ShowNormalEditor), nameof(ShowMainPreview))]
@@ -108,7 +122,11 @@ public sealed partial class VerticalPreviewViewModel : ObservableObject
     [ObservableProperty]
     public partial ImageSource? GamePicture { get; set; }
 
-    partial void OnGamePictureChanged(ImageSource? value) => OnPropertyChanged(nameof(BasePlaceholderText));
+    partial void OnGamePictureChanged(ImageSource? value)
+    {
+        OnPropertyChanged(nameof(BasePlaceholderText));
+        OnPropertyChanged(nameof(MainCropFrame));
+    }
 
     [ObservableProperty]
     public partial ImageSource? SceneBackground { get; set; }
@@ -259,11 +277,13 @@ public sealed partial class VerticalPreviewViewModel : ObservableObject
             return;
         }
 
-        var (baseRect, camRect) = layoutKey switch
+        var fullFov = string.Equals(layoutKey, "FullFov", StringComparison.Ordinal);
+        var (baseRect, camRect, fit) = layoutKey switch
         {
-            "CameraTop" => (SceneLayout.VerticalCameraTopBase, SceneLayout.VerticalCameraTopCamera),
-            "FullGame" => (SceneLayout.VerticalFullGameBase, SceneLayout.VerticalFullGameCornerCamera),
-            _ => (SceneLayout.VerticalGameTopBase, SceneLayout.VerticalGameTopCamera),
+            "CameraTop" => (SceneLayout.VerticalCameraTopBase, SceneLayout.VerticalCameraTopCamera, BaseFit.Fill),
+            "FullGame" => (SceneLayout.VerticalFullGameBase, SceneLayout.VerticalFullGameCornerCamera, BaseFit.Fill),
+            "FullFov" => (new NormalizedRect(0, 0.34, 1, 0.32), new NormalizedRect(0.18, 0.03, 0.64, 0.28), BaseFit.Fit),
+            _ => (SceneLayout.VerticalGameTopBase, SceneLayout.VerticalGameTopCamera, BaseFit.Fill),
         };
 
         var targetCamera = Items.FirstOrDefault(i => i.IsShown)?.LayerId
@@ -274,12 +294,82 @@ public sealed partial class VerticalPreviewViewModel : ObservableObject
             var next = s with
             {
                 ShowCapture = true,
-                BaseFit = BaseFit.Fill,
+                BaseFit = fit,
                 BasePlacement = baseRect,
+                BaseCrop = NormalizedRect.Full,
             };
-            return targetCamera is not null ? next.WithPlacement(targetCamera, camRect) : next;
+            return targetCamera is not null && (fullFov || layoutKey is not null) ? next.WithPlacement(targetCamera, camRect) : next;
         });
         IsEditing = true;
+    }
+
+    [RelayCommand]
+    private void ToggleGameFit()
+    {
+        if (_sceneId is not { } id)
+        {
+            return;
+        }
+
+        _webcam.UpdateScene(id, s => s with { BaseFit = s.BaseFit == BaseFit.Fit ? BaseFit.Fill : BaseFit.Fit });
+        IsEditing = true;
+    }
+
+    [RelayCommand]
+    private void ResetGameCrop()
+    {
+        if (_sceneId is not { } id)
+        {
+            return;
+        }
+
+        _webcam.UpdateScene(id, s => s with { BaseCrop = NormalizedRect.Full });
+        IsEditing = true;
+    }
+
+    public bool IsMainCropFrameVisible =>
+        _verticalEnabled && !_activeIsVertical && Scene is { ShowCapture: true } && ShowCropFrameOnMain && _sameCaptureAsMain;
+
+    public double MainCropFrameAspect
+    {
+        get
+        {
+            if (Scene is not { } s)
+            {
+                return 9.0 / 16.0;
+            }
+
+            var w = Math.Max(1.0, s.BasePlacement.Width * _canvasWidth);
+            var h = Math.Max(1.0, s.BasePlacement.Height * _canvasHeight);
+            return Math.Clamp(w / h, 0.1, 10.0);
+        }
+    }
+
+    public NormalizedRect MainCropFrame
+    {
+        get
+        {
+            if (Scene is not { } s)
+            {
+                return NormalizedRect.Full;
+            }
+
+            var (sw, sh) = GamePicture is BitmapSource { PixelWidth: > 0, PixelHeight: > 0 } bmp
+                ? (bmp.PixelWidth, bmp.PixelHeight)
+                : (_webcam.CanvasWidth, _webcam.CanvasHeight);
+            return SceneLayout.VisibleSourceCrop(s.BasePlacement, s.BaseCrop, s.BaseFit, sw, sh, _canvasWidth, _canvasHeight);
+        }
+        set
+        {
+            if (_sceneId is not { } id)
+            {
+                return;
+            }
+
+            _webcam.UpdateScene(id, s => s with { BaseCrop = value.Clamped(SceneLayout.MinCrop) });
+            IsEditing = true;
+            OnPropertyChanged();
+        }
     }
 
     public void UpdatePreviewHostWidth(double width)
@@ -306,7 +396,8 @@ public sealed partial class VerticalPreviewViewModel : ObservableObject
         int canvasHeight,
         bool isRecordingMain,
         bool isRecordingVertical,
-        bool rebuildItems = false)
+        bool rebuildItems = false,
+        bool sameCaptureAsMain = true)
     {
         var sceneChanged = _sceneId != verticalSceneId || _canvasWidth != canvasWidth || _canvasHeight != canvasHeight;
         _verticalEnabled = verticalEnabled;
@@ -316,6 +407,7 @@ public sealed partial class VerticalPreviewViewModel : ObservableObject
         _canvasHeight = canvasHeight;
         _isRecordingMain = isRecordingMain;
         _isRecordingVertical = isRecordingVertical;
+        _sameCaptureAsMain = sameCaptureAsMain;
 
         if (rebuildItems || sceneChanged)
         {
@@ -441,6 +533,7 @@ public sealed partial class VerticalPreviewViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowNormalEditor));
         OnPropertyChanged(nameof(ShowNoSceneCard));
         OnPropertyChanged(nameof(ShowStreamIsVerticalNotice));
+        OnPropertyChanged(nameof(IsMainCropFrameVisible));
     }
 
     private void NotifySceneProperties()
@@ -452,6 +545,9 @@ public sealed partial class VerticalPreviewViewModel : ObservableObject
         OnPropertyChanged(nameof(BasePlaceholderText));
         OnPropertyChanged(nameof(StackOrder));
         OnPropertyChanged(nameof(VerticalChipText));
+        OnPropertyChanged(nameof(MainCropFrame));
+        OnPropertyChanged(nameof(MainCropFrameAspect));
+        OnPropertyChanged(nameof(IsMainCropFrameVisible));
     }
 
     private void NotifyAllProperties()

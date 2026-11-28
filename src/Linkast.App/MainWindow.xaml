@@ -505,6 +505,9 @@
                                                                SelectedOverlay="{Binding DataContext.Overlays.Selected, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}"
                                                                SceneBackground="{Binding DataContext.ScenePreviewImage, RelativeSource={RelativeSource AncestorType=Window}}"
                                                                SceneVideo="{Binding DataContext.ScenePreviewVideo, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                               ShowCropFrame="{Binding DataContext.VerticalPreview.IsMainCropFrameVisible, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                               CropFrame="{Binding DataContext.VerticalPreview.MainCropFrame, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}"
+                                                               CropFrameAspect="{Binding DataContext.VerticalPreview.MainCropFrameAspect, RelativeSource={RelativeSource AncestorType=Window}}"
                                                                AutomationProperties.Name="Output preview" />
                                         </Grid>
 
@@ -539,6 +542,7 @@
                                                                    BasePlacement="{Binding BasePlacement, Mode=TwoWay}" BaseFit="{Binding BaseFit}" BaseCrop="{Binding BaseCrop, Mode=TwoWay}"
                                                                    BackgroundSource="{Binding GamePicture}" BasePlaceholderText="{Binding BasePlaceholderText}"
                                                                    ShowBase="{Binding ShowBase}" IsPreviewOnly="True" LimitPortraitHeight="False"
+                                                                   IsPanningBase="{Binding IsPanningGame}"
                                                                    StackOrder="{Binding StackOrder}"
                                                                    Snap="{Binding DataContext.Webcam.SnapToGrid, RelativeSource={RelativeSource AncestorType=Window}}"
                                                                    ShowOverlayNames="{Binding IsSelected, ElementName=TabOverlays}"
@@ -586,6 +590,14 @@
                                                                   IsChecked="{Binding VerticalPreview.ShowSafeZones}"
                                                                   ToolTip="Areas the apps cover with their buttons and captions. Keep faces and text out of them."
                                                                   AutomationProperties.Name="Show safe zones" Content="Safe zones" />
+                                                    <ToggleButton Style="{StaticResource Linkast.ToggleButton.Secondary}" MinHeight="22" Padding="6,1" Margin="0,0,2,0" FontSize="11"
+                                                                  IsChecked="{Binding VerticalPreview.IsPanningGame}"
+                                                                  ToolTip="Drag inside the game area to slide which part of the FOV is recorded; scroll wheel zooms in or out."
+                                                                  AutomationProperties.Name="Pan game view" Content="Pan game" />
+                                                    <ToggleButton Style="{StaticResource Linkast.ToggleButton.Secondary}" MinHeight="22" Padding="6,1" Margin="0,0,2,0" FontSize="11"
+                                                                  IsChecked="{Binding VerticalPreview.ShowCropFrameOnMain}"
+                                                                  ToolTip="Show a draggable vertical crop box over the full-FOV Stream preview to pick what fills the vertical frame."
+                                                                  AutomationProperties.Name="Frame on stream" Content="Frame on stream" />
                                                     <Button x:Name="VerticalQuickLayoutBtn" Style="{StaticResource Linkast.Button.Subtle}" MinHeight="22" Padding="6,1" FontSize="11"
                                                             Click="OnVerticalQuickLayoutMenu" ToolTip="Quick arrangements for the vertical scene"
                                                             AutomationProperties.Name="Vertical layout presets" Content="Layout ▾" />
