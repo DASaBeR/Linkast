@@ -454,7 +454,7 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 }
                 else if (IsBroadcasting)
                 {
-                    AppendLog("Recording can't start during a stream. Turn on 'Also record when I go live' before going live.");
+                    AppendLog("Recording can't start during a stream. Turn on 'Also record when I go live' in the Recording tab before going live.");
                 }
 
                 break;
@@ -1527,6 +1527,13 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         if (e.PropertyName is nameof(SelectedResolution) && SelectedResolution is { } r)
         {
             Webcam.SetResolution(r.Width, r.Height);
+        }
+
+        if (e.PropertyName is nameof(SelectedResolution) or nameof(RecordWhenLive) or nameof(SelectedRecordingQuality)
+            or nameof(RecordingBitrateKbps) or nameof(VerticalRecordingEnabled) or nameof(SelectedVerticalScene)
+            or nameof(SelectedVerticalSize) or nameof(VerticalRecordingBitrateKbps))
+        {
+            NotifyRecordingSummaryChanged();
         }
 
         if (e.PropertyName is nameof(SelectedInputDevice))

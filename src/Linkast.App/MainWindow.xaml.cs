@@ -202,6 +202,8 @@ public partial class MainWindow : Window
 
     private void OnOpenQuality(object sender, RoutedEventArgs e) => ShowStreamTab(TabQuality);
 
+    private void OnOpenRecording(object sender, RoutedEventArgs e) => ShowStreamTab(TabRecording);
+
     private void OnOpenNetwork(object sender, RoutedEventArgs e) => ShowStreamTab(TabNetwork);
 
     // The error banner's fix button opens the tab where the problem can be solved (see Converters.ErrorFixTab).
@@ -211,6 +213,7 @@ public partial class MainWindow : Window
         {
             "Destination" => TabDestination,
             "Quality" => TabQuality,
+            "Recording" => TabRecording,
             "Network" => TabNetwork,
             "Capture" => TabSource,
             "Audio" => TabAudio,

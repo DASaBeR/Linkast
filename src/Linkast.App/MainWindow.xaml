@@ -495,7 +495,8 @@
                                 <ListBoxItem Style="{StaticResource Linkast.Tabs.Divider}" />
                                 <ListBoxItem x:Name="TabDestination" Content="Destination" ToolTip="Where you stream: platform, server and stream key" />
                                 <ListBoxItem x:Name="TabNetwork" Content="Network" ToolTip="Which network connection the stream uses" />
-                                <ListBoxItem x:Name="TabQuality" Content="Quality" ToolTip="Resolution, frame rate, bitrate, encoder and recording" />
+                                <ListBoxItem x:Name="TabQuality" Content="Quality" ToolTip="Resolution, frame rate, bitrate and encoder" />
+                                <ListBoxItem x:Name="TabRecording" Content="Recording" ToolTip="Recording quality, vertical recording for Shorts/Reels/TikTok, and where files are saved" />
                             </ListBox>
 
                             <ScrollViewer x:Name="SettingsScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -1206,10 +1207,10 @@
                                         <Border Style="{StaticResource LockedNotice}">
                                             <DockPanel>
                                                 <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE72E;" FontSize="13" Margin="0,0,10,0" Foreground="{DynamicResource Linkast.Info}" />
-                                                <TextBlock TextWrapping="Wrap" Text="Locked while you're live. End the stream to change quality or recording." />
+                                                <TextBlock TextWrapping="Wrap" Text="Locked while you're live. End the stream to change quality." />
                                             </DockPanel>
                                         </Border>
-                                        <Border Style="{StaticResource TabSection}" IsEnabled="{Binding CanEditSettings}">
+                                        <Border Style="{StaticResource TabSection}" BorderThickness="0" IsEnabled="{Binding CanEditSettings}">
                                             <StackPanel>
                                                 <!-- Auto setup: measures this PC and the upload, then suggests one setup to apply. -->
                                                 <Border Background="{DynamicResource Linkast.Surface2}" CornerRadius="{StaticResource Linkast.Radius.Action}" Padding="14,12" Margin="0,0,0,16">
@@ -1305,9 +1306,22 @@
                                                 </Expander>
                                             </StackPanel>
                                         </Border>
-                                        <Border Style="{StaticResource TabSection}" BorderThickness="0" IsEnabled="{Binding CanEditSettings}">
+                                    </StackPanel>
+
+                                    <!-- ===== Recording ===== -->
+                                    <StackPanel Visibility="{Binding IsSelected, ElementName=TabRecording, Converter={StaticResource BoolToVis}}">
+                                        <Border Style="{StaticResource LockedNotice}">
+                                            <DockPanel>
+                                                <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE72E;" FontSize="13" Margin="0,0,10,0" Foreground="{DynamicResource Linkast.Info}" />
+                                                <TextBlock TextWrapping="Wrap" Text="Recording settings can't change during a stream or recording. They apply next time." />
+                                            </DockPanel>
+                                        </Border>
+                                        <Border Style="{StaticResource TabSection}" Padding="16,12">
+                                            <TextBlock Text="{Binding RecordingSummary}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                        </Border>
+                                        <Border Style="{StaticResource TabSection}" IsEnabled="{Binding CanEditSettings}">
                                             <StackPanel>
-                                                <TextBlock Text="Recording" Style="{StaticResource Linkast.Card.Title}" />
+                                                <TextBlock Text="When I go live" Style="{StaticResource Linkast.Card.Title}" />
                                                 <CheckBox Style="{StaticResource Linkast.ToggleSwitch}" Content="Also record when I go live" IsChecked="{Binding RecordWhenLive}" HorizontalAlignment="Left"
                                                           ToolTip="Saves every stream to a file on this PC as well. With 'Same as stream' it costs almost nothing extra." />
                                                 <Grid Margin="0,12,0,0">
@@ -1317,19 +1331,27 @@
                                                         <ColumnDefinition Width="*" />
                                                     </Grid.ColumnDefinitions>
                                                     <StackPanel>
-                                                        <Label Content="Recording quality" Target="{Binding ElementName=RecordingQualityBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
+                                                        <Label Content="Recording _quality" Target="{Binding ElementName=RecordingQualityBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
                                                         <ComboBox x:Name="RecordingQualityBox" ItemsSource="{Binding RecordingQualities}" SelectedItem="{Binding SelectedRecordingQuality}" />
                                                     </StackPanel>
                                                     <StackPanel Grid.Column="2" Visibility="{Binding IsCustomRecordingQuality, Converter={StaticResource BoolToVis}}">
-                                                        <Label Content="Recording bitrate (kbps)" Target="{Binding ElementName=RecordingBitrateBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
+                                                        <Label Content="Recording _bitrate (kbps)" Target="{Binding ElementName=RecordingBitrateBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
                                                         <TextBox x:Name="RecordingBitrateBox" Text="{Binding RecordingBitrateKbps, UpdateSourceTrigger=PropertyChanged}" />
                                                     </StackPanel>
                                                 </Grid>
                                                 <TextBlock Style="{StaticResource Linkast.Text.Hint}"
                                                            Visibility="{Binding IsCustomRecordingQuality, Converter={StaticResource BoolToVis}}"
                                                            Text="The recording is encoded separately, which uses more of the graphics card." />
+                                                <TextBlock Style="{StaticResource Linkast.Text.Hint}" Foreground="{DynamicResource Linkast.Warning}"
+                                                           Visibility="{Binding ShowSoftwareExtraOutputWarning, Converter={StaticResource BoolToVis}}"
+                                                           Text="Recording separately with the CPU encoder uses a lot of CPU. A graphics card encoder is recommended." />
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Style="{StaticResource TabSection}" IsEnabled="{Binding CanEditSettings}">
+                                            <StackPanel>
+                                                <TextBlock Text="Vertical recording" Style="{StaticResource Linkast.Card.Title}" />
                                                 <CheckBox Style="{StaticResource Linkast.ToggleSwitch}" Content="Also record vertical (Shorts, Reels, TikTok)"
-                                                          IsChecked="{Binding VerticalRecordingEnabled}" HorizontalAlignment="Left" Margin="0,12,0,0"
+                                                          IsChecked="{Binding VerticalRecordingEnabled}" HorizontalAlignment="Left"
                                                           ToolTip="Records a vertical 9:16 file from a vertical scene at the same time as your landscape stream or recording." />
                                                 <StackPanel Visibility="{Binding VerticalRecordingEnabled, Converter={StaticResource BoolToVis}}" Margin="0,10,0,0">
                                                     <Grid Visibility="{Binding HasVerticalScene, Converter={StaticResource BoolToVis}}">
@@ -1341,15 +1363,15 @@
                                                             <ColumnDefinition Width="*" />
                                                         </Grid.ColumnDefinitions>
                                                         <StackPanel>
-                                                            <Label Content="Vertical scene" Target="{Binding ElementName=VerticalSceneBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
+                                                            <Label Content="_Vertical scene" Target="{Binding ElementName=VerticalSceneBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
                                                             <ComboBox x:Name="VerticalSceneBox" ItemsSource="{Binding VerticalScenes}" SelectedItem="{Binding SelectedVerticalScene}" />
                                                         </StackPanel>
                                                         <StackPanel Grid.Column="2">
-                                                            <Label Content="Vertical size" Target="{Binding ElementName=VerticalSizeBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
+                                                            <Label Content="Vertical _size" Target="{Binding ElementName=VerticalSizeBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
                                                             <ComboBox x:Name="VerticalSizeBox" ItemsSource="{Binding VerticalSizes}" SelectedItem="{Binding SelectedVerticalSize}" />
                                                         </StackPanel>
                                                         <StackPanel Grid.Column="4">
-                                                            <Label Content="Vertical bitrate (kbps)" Target="{Binding ElementName=VerticalBitrateBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
+                                                            <Label Content="Vertical b_itrate (kbps)" Target="{Binding ElementName=VerticalBitrateBox}" Style="{StaticResource Linkast.Label.Field}" Margin="0,0,0,5" />
                                                             <TextBox x:Name="VerticalBitrateBox" Text="{Binding VerticalRecordingBitrateKbps, UpdateSourceTrigger=PropertyChanged}" />
                                                         </StackPanel>
                                                     </Grid>
@@ -1360,19 +1382,28 @@
                                                     <TextBlock Style="{StaticResource Linkast.Text.Hint}" Margin="0,6,0,0"
                                                                Text="To change what the vertical recording shows, open its scene in the scene strip before going live. Changes made while live apply to the next recording." />
                                                 </StackPanel>
-                                                <TextBlock Style="{StaticResource Linkast.Text.Hint}" Foreground="{DynamicResource Linkast.Warning}"
-                                                           Visibility="{Binding ShowSoftwareExtraOutputWarning, Converter={StaticResource BoolToVis}}"
-                                                           Text="Recording separately with the CPU encoder uses a lot of CPU. A graphics card encoder is recommended." />
-                                                <TextBlock Text="Save recordings in" Style="{StaticResource Linkast.Text.FieldLabel}" Margin="0,12,0,5" />
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Style="{StaticResource TabSection}" BorderThickness="0">
+                                            <StackPanel>
+                                                <TextBlock Text="Files" Style="{StaticResource Linkast.Card.Title}" />
+                                                <TextBlock Text="Save recordings in" Style="{StaticResource Linkast.Text.FieldLabel}" Margin="0,0,0,5" />
                                                 <DockPanel>
                                                     <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Secondary}" Content="Open" Margin="8,0,0,0"
                                                             Command="{Binding OpenRecordingFolderCommand}" ToolTip="Open the recordings folder" />
                                                     <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Secondary}" Content="Change…" Margin="8,0,0,0"
+                                                            IsEnabled="{Binding CanEditSettings}"
                                                             Command="{Binding ChooseRecordingFolderCommand}" ToolTip="Choose where recordings are saved" />
                                                     <TextBox Text="{Binding RecordingFolder, Mode=OneWay}" IsReadOnly="True" AutomationProperties.Name="Recordings folder" />
                                                 </DockPanel>
                                                 <CheckBox Content="Make an MP4 copy when a recording ends" IsChecked="{Binding RemuxRecordingsToMp4}" Margin="0,10,0,0"
+                                                          IsEnabled="{Binding CanEditSettings}"
                                                           ToolTip="Recordings are saved as MKV, which survives a crash or power cut. MP4 plays in more editors and phones; the copy is quick and keeps the quality." />
+                                                <DockPanel Margin="0,12,0,0" Visibility="{Binding LastRecordingText, Converter={x:Static vm:Converters.NotNullToVisibility}}">
+                                                    <Button DockPanel.Dock="Right" Style="{StaticResource Linkast.Button.Secondary}" Content="Open folder" Margin="8,0,0,0"
+                                                            Command="{Binding OpenRecordingFolderCommand}" ToolTip="Open the recordings folder" />
+                                                    <TextBlock Style="{StaticResource Linkast.Text.Hint}" Text="{Binding LastRecordingText}" VerticalAlignment="Center" Margin="0" />
+                                                </DockPanel>
                                             </StackPanel>
                                         </Border>
                                     </StackPanel>
@@ -1426,7 +1457,7 @@
                                 <UniformGrid Columns="3" Margin="0,8,-6,0">
                                     <Button Style="{StaticResource Linkast.Button.Secondary}" Command="{Binding ToggleRecordingCommand}" Margin="0,0,6,0" Padding="4,6"
                                             IsEnabled="{Binding IsBroadcasting, Converter={x:Static vm:Converters.InverseBool}}"
-                                            ToolTip="Save to a file on this PC without going live. To record your streams, turn on 'Also record when I go live' (Quality tab)."
+                                            ToolTip="{Binding RecordButtonTooltip}"
                                             AutomationProperties.Name="{Binding RecordButtonText}">
                                         <StackPanel Orientation="Horizontal">
                                             <TextBlock Style="{StaticResource Linkast.Text.Glyph}" Text="&#xE7C8;" FontSize="12" Margin="0,0,6,0"

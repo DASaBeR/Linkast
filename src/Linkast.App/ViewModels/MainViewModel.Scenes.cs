@@ -310,6 +310,7 @@ public sealed partial class MainViewModel
 
         RefreshMixerChannels();
         RefreshSceneSources();
+        NotifyRecordingSummaryChanged();
         if (!IsActive || _engine is null)
         {
             return;

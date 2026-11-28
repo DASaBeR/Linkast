@@ -29,4 +29,24 @@ public class RecordingOptionsTests
         Assert.Equal((720, 1280), (VerticalResolutionOption.For(720, 1280).Width, VerticalResolutionOption.For(720, 1280).Height));
         Assert.Equal((1080, 1920), (VerticalResolutionOption.For(999, 999).Width, VerticalResolutionOption.For(999, 999).Height));
     }
+
+    [Fact]
+    public void RecordingSummary_formats_main_cases()
+    {
+        Assert.Equal(
+            "When you go live: stream only (recording is off)",
+            MainViewModel.FormatLiveRecordingSummary(1280, 720, false, 1280, 720, false, false, true, 1080, 1920));
+
+        Assert.Equal(
+            "When you go live: stream 1280×720 · recording 1920×1080 · vertical 1080×1920",
+            MainViewModel.FormatLiveRecordingSummary(1280, 720, true, 1920, 1080, true, false, true, 1080, 1920));
+
+        Assert.Equal(
+            "When you go live: stream 720×1280 · recording 720×1280 · vertical recording off for vertical scenes",
+            MainViewModel.FormatLiveRecordingSummary(720, 1280, true, 720, 1280, true, true, true, 1080, 1920));
+
+        Assert.Equal(
+            "Record button: 1920×1080 · vertical 1080×1920",
+            MainViewModel.FormatRecordButtonSummary(1920, 1080, true, false, true, 1080, 1920));
+    }
 }

@@ -34,6 +34,7 @@ public static class Converters
     {
         null => null,
         { Code: var c } when c.StartsWith("destination.", StringComparison.Ordinal) => "Destination",
+        { Code: var c } when c.StartsWith("recording.", StringComparison.Ordinal) || c.StartsWith("vertical.", StringComparison.Ordinal) => "Recording",
         { Code: var c } when c.StartsWith("encoder.", StringComparison.Ordinal) => "Quality",
         { Category: ErrorCategory.Encoder } => "Quality",
         { Category: ErrorCategory.Network } => "Network",

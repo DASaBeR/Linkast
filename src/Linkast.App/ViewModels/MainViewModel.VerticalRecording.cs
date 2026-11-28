@@ -55,12 +55,114 @@ public sealed partial class MainViewModel
             SelectedVerticalScene = VerticalScenes.FirstOrDefault(s => s.Id == preferredId)
                 ?? VerticalScenes.FirstOrDefault();
             OnPropertyChanged(nameof(HasVerticalScene));
+            NotifyRecordingSummaryChanged();
         }
         finally
         {
             _loading = was;
         }
     }
+
+    public string RecordingSummary
+    {
+        get
+        {
+            if (Webcam is null)
+            {
+                return string.Empty;
+            }
+
+            var layout = Webcam.ActiveLayout;
+            var (sw, sh) = layout.CanvasSize(SelectedResolution.Width, SelectedResolution.Height);
+            var (rw, rh) = SelectedRecordingQuality.IsCustom
+                ? layout.CanvasSize(SelectedRecordingQuality.Width, SelectedRecordingQuality.Height)
+                : (sw, sh);
+            return FormatLiveRecordingSummary(
+                sw, sh,
+                RecordWhenLive, rw, rh,
+                VerticalRecordingEnabled,
+                layout.Orientation == OutputOrientation.Vertical,
+                HasVerticalScene,
+                SelectedVerticalSize.Width, SelectedVerticalSize.Height);
+        }
+    }
+
+    public string RecordButtonSummary
+    {
+        get
+        {
+            if (Webcam is null)
+            {
+                return string.Empty;
+            }
+
+            var layout = Webcam.ActiveLayout;
+            var (sw, sh) = layout.CanvasSize(SelectedResolution.Width, SelectedResolution.Height);
+            var (rw, rh) = SelectedRecordingQuality.IsCustom
+                ? layout.CanvasSize(SelectedRecordingQuality.Width, SelectedRecordingQuality.Height)
+                : (sw, sh);
+            return FormatRecordButtonSummary(
+                rw, rh,
+                VerticalRecordingEnabled,
+                layout.Orientation == OutputOrientation.Vertical,
+                HasVerticalScene,
+                SelectedVerticalSize.Width, SelectedVerticalSize.Height);
+        }
+    }
+
+    public string RecordButtonTooltip =>
+        $"{RecordButtonSummary}. Save to a file without going live. To record streams too, turn on 'Also record when I go live' in the Recording tab.";
+
+    internal void NotifyRecordingSummaryChanged()
+    {
+        OnPropertyChanged(nameof(RecordingSummary));
+        OnPropertyChanged(nameof(RecordButtonSummary));
+        OnPropertyChanged(nameof(RecordButtonTooltip));
+    }
+
+    internal static string FormatLiveRecordingSummary(
+        int streamWidth, int streamHeight,
+        bool recordWhenLive, int recordingWidth, int recordingHeight,
+        bool verticalEnabled, bool activeIsVertical, bool hasVerticalScene,
+        int verticalWidth, int verticalHeight)
+    {
+        if (!recordWhenLive && !verticalEnabled)
+        {
+            return "When you go live: stream only (recording is off)";
+        }
+
+        var parts = new List<string>(3) { $"stream {streamWidth}×{streamHeight}" };
+        if (recordWhenLive)
+        {
+            parts.Add($"recording {recordingWidth}×{recordingHeight}");
+        }
+
+        if (verticalEnabled)
+        {
+            parts.Add(FormatVerticalPart(activeIsVertical, hasVerticalScene, verticalWidth, verticalHeight));
+        }
+
+        return "When you go live: " + string.Join(" · ", parts);
+    }
+
+    internal static string FormatRecordButtonSummary(
+        int recordingWidth, int recordingHeight,
+        bool verticalEnabled, bool activeIsVertical, bool hasVerticalScene,
+        int verticalWidth, int verticalHeight)
+    {
+        var parts = new List<string>(2) { $"{recordingWidth}×{recordingHeight}" };
+        if (verticalEnabled)
+        {
+            parts.Add(FormatVerticalPart(activeIsVertical, hasVerticalScene, verticalWidth, verticalHeight));
+        }
+
+        return "Record button: " + string.Join(" · ", parts);
+    }
+
+    private static string FormatVerticalPart(bool activeIsVertical, bool hasVerticalScene, int verticalWidth, int verticalHeight) =>
+        activeIsVertical ? "vertical recording off for vertical scenes"
+        : hasVerticalScene ? $"vertical {verticalWidth}×{verticalHeight}"
+        : "vertical (no scene yet)";
 
     /// <summary>
     /// Builds the vertical recording specification for a landscape stream/recording session, or returns null
